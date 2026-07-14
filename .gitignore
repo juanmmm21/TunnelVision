@@ -1,0 +1,30 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad/
+*.xcscmblueprint
+xcuserdata/
+*.moved-aside
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# CocoaPods (si se usa en algún momento)
+Pods/
+
+# Configuración de editor / SO
+.vscode/
+.idea/
+.DS_Store
+
+# Variables de entorno y secretos
+.env
+.env.*
+!.env.example
+
+# Archivos de contexto para el asistente de IA (nunca se suben al repo)
+AGENTS.md
+CLAUDE.md
+START_HERE.md
