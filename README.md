@@ -4,6 +4,20 @@
 
 TunnelVision shows you every connection your iPhone or iPad makes: which apps reach which servers, on what ports, and how much data they move — live, as it happens. You can follow a connection all the way down to the individual packets and their raw bytes, and save any capture as a standard `.pcap` file. All of it happens on the device; there is no server behind TunnelVision and no account to create.
 
+## See it
+
+| ![The dashboard, with live throughput and the busiest hosts](docs/screenshots/dashboard.png) | ![The timeline of every recorded connection](docs/screenshots/timeline.png) | ![One connection, with its packets listed underneath](docs/screenshots/connection.png) |
+|:--:|:--:|:--:|
+| **Live traffic**, in and out, and who is talking most right now | **Your history**, newest first, and whether each connection was encrypted | **One connection**, packet by packet |
+
+| ![A packet screen showing a decoded DNS reply](docs/screenshots/packet.png) | ![Decrypted HTTPS shown turn by turn](docs/screenshots/decrypted.png) | ![The captures list with the room left on the device](docs/screenshots/captures.png) |
+|:--:|:--:|:--:|
+| **One packet**, headers decoded — here a DNS reply, with the name looked up and the answer | **Inside your own HTTPS**, turn by turn, when you switch it on | **Your capture files**, and whether they are going to fill your phone |
+
+TunnelVision follows the system appearance, so all of it comes in dark too:
+
+<img src="docs/screenshots/dashboard-dark.png" width="260" alt="The dashboard in dark mode">
+
 ## Your privacy comes first
 
 TunnelVision is built to inspect **your own** traffic, and its design deliberately stops there:
@@ -19,9 +33,10 @@ TunnelVision is built to inspect **your own** traffic, and its design deliberate
 - **Scroll through your history.** Every connection, newest first, with the host, ports, data moved, duration, and whether it was plaintext, encrypted, inspected, or not inspectable. Filter by host, protocol, encryption status, or time range.
 - **Jump to a moment.** A time axis above the history shows activity interval by interval; tap one to narrow the list to it, and keep tapping to zoom in.
 - **Open a connection.** Every packet it carried, titled by what it meant for the connection — opened, accepted, data, delivery confirmed, finished, cut off — with the timing of each one relative to the connection's first packet.
-- **Read a single packet.** Its headers, decoded into plain terms (endpoints, protocol, sequence and acknowledgment numbers, window), plus the raw bytes as hex and ASCII, ready to copy or share.
+- **Read a single packet.** Its headers, decoded into plain terms (endpoints, protocol, sequence and acknowledgment numbers, window), plus the raw bytes as hex and ASCII, ready to copy or share. For a DNS lookup it goes one layer further and tells you the name that was queried and what answered.
+- **Look inside your own HTTPS.** Optional, off by default, and yours to switch on: a connection you inspected shows the exchange decoded, turn by turn. Apps that pin their certificates stay private.
 - **Export for later.** Save any capture as a standard `.pcap` file to open in Wireshark or `tcpdump`, or export your connection list as JSON.
-- **Keep storage in check.** Set how long history is kept and how large captures may grow; the limits are enforced while monitoring runs, not only while you are looking.
+- **Keep storage in check.** Set how long history is kept and how large captures may grow; the limits are enforced while monitoring runs, not only while you are looking. The captures list tells you the room left against those limits and when the oldest one expires.
 
 ## How to use it
 
@@ -47,6 +62,36 @@ What has landed recently, in the order it arrived.
 
 **August 2026**
 
+- **Looking inside your own HTTPS, end to end.** Turning on inspection now really decrypts your own
+  encrypted traffic and shows it: a connection you inspected has a *Decrypted content* screen that
+  reads the exchange turn by turn, in the order it happened, and lets you share any single turn.
+  Keeping a copy of what was decoded is a **second** switch, off by default even when inspection is
+  on — inspecting traffic while it happens and storing what was inside it are two different things —
+  and what it stores expires on its own, shorter schedule, with a size ceiling you cannot raise and a
+  delete button that takes only it. Apps that pin their certificates are still passed through
+  untouched and labelled *not inspectable*.
+- **A packet on port 53 tells you what was looked up.** The packet screen now reads DNS messages: the
+  name that was queried, the record type, and what came back — addresses, another name, or the
+  server's answer that there is none. A datagram it cannot read says so, and says which of the two
+  reasons applies, instead of going quiet.
+- **A screen that tells you whether inspection is actually working.** *Settings → Session diagnostics*
+  turns the tunnel's own counters into a sentence: inspection is working, or nothing was offered to
+  it, or everything it met pins its certificates — which is the app doing its job, not a fault. It
+  also reports which DNS servers the tunnel announced, so a network problem stops being silent.
+- **Captures answer "is this going to fill my phone?"** The list now shows the room left against the
+  limits you set, when the oldest capture expires, and whether a limit cannot be met at all — instead
+  of leaving you to compare two figures on two different screens.
+- **Changing network no longer breaks name resolution.** With monitoring on, leaving the house — Wi-Fi
+  to cellular — used to leave pages loading forever. The tunnel now notices the change and re-announces
+  the new network's DNS servers.
+- **A designed app.** Every screen was redrawn on one visual system — colour, type, spacing, density —
+  in light, dark and high-contrast, and then gone over a second time for how much room each thing takes
+  and what is decoration rather than data. Touch targets that were too small to hit were measured and
+  fixed. And it has an icon.
+- **Fixed: the two buttons that manage your certificate.** *Create a new certificate* and *Remove
+  certificate from this device* showed their confirmation and then did nothing at all. They work now,
+  a destructive action that can no longer be carried out says why instead of going quiet, and creating
+  a new certificate clears the instructions for retiring the old one.
 - **Packets you can actually read.** The packet screen no longer shows only a hex dump: it decodes the headers and names the endpoints, the protocol, and TCP's sequence, acknowledgment, and window. When a packet cannot be decoded, it says which of the two reasons applies — bytes cut short when capturing, or bytes that simply do not parse — instead of hiding the section. The dump itself can now be copied or shared as text.
 - **Storage limits hold while you are away.** Retention caps used to apply only while the Settings screen was open, so a tunnel capturing overnight could sit above its limit until the next visit. They are now enforced as captures roll over, with the app closed.
 - **Capture detail applies right away.** Switching between metadata-only and full-payload capture no longer waits for the next session; it starts a new capture file immediately, and the Captures list shows it.
