@@ -119,6 +119,13 @@ What has landed recently, in the order it arrived.
 - **A packet says its bytes are gone. Why?** Either the capture was set to keep headers only, which you can change in Settings, or the capture file it lived in has been deleted. The connection itself stays in your history either way.
 - **Will it drain my battery?** It is built to be light: streaming and call traffic is passed through without heavy processing, and captures are written straight to storage instead of piling up in memory.
 
+## Privacy
+
+TunnelVision collects nothing and has no server to collect it to. The full policy is at
+[**Privacy Policy**](https://juanmmm21.github.io/TunnelVision/privacy.html) — short version: everything
+stays on your device, nothing is sold, used, or disclosed to anyone, and the only way any of it leaves
+your phone is if you share a file yourself.
+
 ## License
 
 Released under the [MIT License](LICENSE). © 2026 juanmmm21.

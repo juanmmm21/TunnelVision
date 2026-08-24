@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — TunnelVision</title>
+<style>
+  :root {
+    --ink: #16191c;
+    --muted: #5b6570;
+    --brand: #0f6f78;
+    --rule: #e3e6e9;
+    --canvas: #ffffff;
+    --surface: #f6f7f8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e8ebee;
+      --muted: #9aa4ae;
+      --brand: #5ec8d0;
+      --rule: #2a2f34;
+      --canvas: #101315;
+      --surface: #191d20;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 3rem 1.25rem 5rem;
+    background: var(--canvas);
+    color: var(--ink);
+    font: 17px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  main { max-width: 42rem; margin: 0 auto; }
+  h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 .35rem; letter-spacing: -0.02em; }
+  h2 {
+    font-size: 1.15rem; margin: 2.75rem 0 .75rem; letter-spacing: -0.01em;
+    padding-top: 1.5rem; border-top: 1px solid var(--rule);
+  }
+  h2:first-of-type { border-top: 0; padding-top: 0; }
+  .updated { color: var(--muted); font-size: .9rem; margin: 0 0 2.5rem; }
+  .lede {
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 12px;
+    padding: 1.1rem 1.25rem; margin: 0 0 2.5rem;
+  }
+  .lede p { margin: 0; }
+  ul { padding-left: 1.15rem; }
+  li { margin: .45rem 0; }
+  a { color: var(--brand); }
+  strong { font-weight: 600; }
+  footer {
+    margin-top: 3.5rem; padding-top: 1.5rem; border-top: 1px solid var(--rule);
+    color: var(--muted); font-size: .9rem;
+  }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Privacy Policy</h1>
+<p class="updated">TunnelVision · Last updated 24 August 2026</p>
+
+<div class="lede">
+  <p><strong>TunnelVision does not collect anything.</strong> There is no server behind it, no account,
+  and no analytics. Everything the app records stays on your device, and the only way any of it leaves
+  is if you choose to share a file yourself.</p>
+</div>
+
+<h2>What TunnelVision records, and where it goes</h2>
+<p>While you have monitoring switched on, TunnelVision records the network connections your device
+makes — the hosts, ports, protocols, timings, byte counts, and, depending on your settings, the
+packets themselves. If you switch on HTTPS inspection and install the certificate it generates, it can
+also record the decrypted content of your own connections.</p>
+<p>All of it is written to storage that belongs to the app on your own device. <strong>None of it is
+transmitted anywhere.</strong> TunnelVision has no backend to transmit it to. The developer of
+TunnelVision cannot see any of it.</p>
+
+<h2>What we do not do</h2>
+<ul>
+  <li>We do not sell, use, or disclose your data to third parties, for any purpose.</li>
+  <li>We do not collect analytics, crash telemetry, advertising identifiers, or usage statistics.</li>
+  <li>We do not track you across apps or websites, and the app contains no tracking SDKs.</li>
+  <li>We do not route your traffic through any server of ours. The VPN interface TunnelVision creates
+      ends on your own device; your traffic goes to its real destination unchanged.</li>
+</ul>
+
+<h2>Your own traffic, and other apps'</h2>
+<p>TunnelVision is a tool for inspecting <strong>your own</strong> device's traffic, with your consent,
+and its design stops there. HTTPS inspection is off by default and requires you to create a
+certificate in the app and install and trust it yourself, in iOS Settings — a deliberate, reversible
+step.</p>
+<p>Apps that pin their certificates are never decrypted: TunnelVision passes their traffic through
+untouched and labels it <em>not inspectable</em>, rather than trying to defeat their security.</p>
+
+<h2>Sharing, which is always your action</h2>
+<p>You can export a capture as a <code>.pcap</code> file, export your connection list as JSON, or share
+a single packet or a single decrypted exchange. In every case the app tells you what the file contains
+before the share sheet opens, and where it goes from there is up to you and the app you send it to.
+<strong>Such a file can contain the addresses your device talked to and, if inspection was on, the
+contents of your own connections — treat it accordingly.</strong></p>
+
+<h2>Deleting it</h2>
+<p>You can delete individual captures, delete all decrypted content on its own, or delete everything,
+at any time, from <em>Settings</em>. Retention limits also delete older data for you: history and
+captures on the schedule you choose, and decrypted content on its own shorter one that cannot be
+switched off. Deleting the app removes all of it.</p>
+
+<h2>Permissions</h2>
+<p>TunnelVision asks iOS for permission to add a VPN configuration. On iOS this is the only way an app
+can see the device's network traffic. It is used solely to run the local tunnel described above.</p>
+
+<h2>Children</h2>
+<p>TunnelVision is a technical tool and is not directed at children.</p>
+
+<h2>Changes</h2>
+<p>If this policy changes, the new version is published at this address with a new date above.</p>
+
+<h2>Contact</h2>
+<p>Questions about this policy: <a href="mailto:martoscuevasjuan@gmail.com">martoscuevasjuan@gmail.com</a></p>
+
+<footer>
+  <a href="./">TunnelVision</a> · © 2026 juanmmm21 · Released under the MIT License
+</footer>
+
+</main>
+</body>
+</html>
