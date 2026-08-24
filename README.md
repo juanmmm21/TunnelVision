@@ -2,7 +2,7 @@
 
 **See exactly what your iPhone is talking to — a private network monitor that runs entirely on your device. No jailbreak, no computer, nothing ever leaves your phone.**
 
-TunnelVision shows you every connection your iPhone or iPad makes: which apps reach which servers, on what ports, and how much data they move — live, as it happens. You can follow a connection all the way down to the individual packets and their raw bytes, and save any capture as a standard `.pcap` file. All of it happens on the device; there is no server behind TunnelVision and no account to create.
+TunnelVision shows you every connection your iPhone makes: which apps reach which servers, on what ports, and how much data they move — live, as it happens. You can follow a connection all the way down to the individual packets and their raw bytes, and save any capture as a standard `.pcap` file. All of it happens on the device; there is no server behind TunnelVision and no account to create.
 
 ## See it
 
@@ -49,7 +49,7 @@ You can stop monitoring at any time, and you can regenerate or remove the inspec
 
 ## What you need
 
-- An **iPhone or iPad running iOS 17 or later**.
+- An **iPhone running iOS 17 or later**. (iPad is not supported in this version: every screen was designed and measured for the phone, and shipping an iPad layout nobody has looked at would be worse than not offering one.)
 - Nothing else. Looking inside HTTPS additionally asks you to install a certificate profile — an in-app, guided, fully reversible step.
 
 ## How it works
