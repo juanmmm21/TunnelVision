@@ -1,6 +1,11 @@
 # Xcode
 build/
 DerivedData/
+# Proyecto generado por XcodeGen desde project.yml (no se commitea).
+*.xcodeproj/
+# El Info.plist de la extensión también lo genera XcodeGen (sección `info:` de project.yml).
+PacketTunnel/Info.plist
+*.xcworkspace/
 *.xcuserstate
 *.xcuserdatad/
 *.xcscmblueprint
@@ -28,3 +33,4 @@ Pods/
 AGENTS.md
 CLAUDE.md
 START_HERE.md
+.claude/
