@@ -1,0 +1,259 @@
+# XcodeGen project definition for TunnelVision.
+# The .xcodeproj is generated from this file and is NOT committed:
+#   xcodegen generate && open TunnelVision.xcodeproj
+# See docs/development/01-environment-and-project-setup.md.
+
+name: TunnelVision
+
+options:
+  bundleIdPrefix: com.juanmmm21
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Rellena tu Development Team (o exporta DEVELOPMENT_TEAM en el entorno).
+    DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+    CODE_SIGN_STYLE: Automatic
+
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: "6.0.0"
+
+targets:
+
+  # Shim C de atómicos para el ring buffer IPC (M5). Aísla las operaciones C11 <stdatomic.h> con
+  # orden de memoria explícito sobre la memoria compartida mmap; el lado Swift la trata como opaca.
+  # Extension-safe (C puro) porque acaba enlazada en la extensión a través de Shared.
+  CTVAtomics:
+    type: library.static
+    platform: iOS
+    sources:
+      - path: CTVAtomics
+    settings:
+      base:
+        APPLICATION_EXTENSION_API_ONLY: "YES"
+        DEFINES_MODULE: "YES"
+        MODULEMAP_FILE: CTVAtomics/include/module.modulemap
+
+  # Shim C para leer los resolvers de DNS que el sistema tiene configurados. Existe por el mismo
+  # motivo que `CTVAtomics`: `<resolv.h>` no está en ningún módulo que Swift pueda importar en el
+  # SDK de iOS, así que los `res_9_*` solo se pueden llamar desde C. Lo enlaza la **extensión** y no
+  # `Shared`: leerlos solo tiene sentido dentro del provider, justo antes de declararse primario.
+  CTVResolv:
+    type: library.static
+    platform: iOS
+    sources:
+      - path: CTVResolv
+    settings:
+      base:
+        APPLICATION_EXTENSION_API_ONLY: "YES"
+        DEFINES_MODULE: "YES"
+        MODULEMAP_FILE: CTVResolv/include/module.modulemap
+
+  # Framework compartido por app y extensión. Debe ser extension-safe porque lo enlaza la extensión.
+  Shared:
+    type: framework
+    platform: iOS
+    sources:
+      - path: Shared
+        excludes: ["**/README.md"]
+    dependencies:
+      - package: GRDB
+      # El ring buffer (Shared/IPC) usa los atómicos del shim C. `link: true` explícito: sin él la
+      # dependencia se declara pero la librería estática no entra en el enlazado del framework y
+      # los símbolos `tvring_*` quedan sin resolver.
+      - target: CTVAtomics
+        link: true
+    settings:
+      base:
+        APPLICATION_EXTENSION_API_ONLY: "YES"
+        PRODUCT_BUNDLE_IDENTIFIER: com.juanmmm21.tunnelvision.Shared
+        # Un framework y un bundle de tests se firman, y firmar exige `Info.plist`. Sin esto el
+        # build falla antes de compilar nada ("Cannot code sign... does not have an Info.plist").
+        GENERATE_INFOPLIST_FILE: "YES"
+      configs:
+        # `@testable import Shared`: el codificador DER (`Shared/TLS`) es interno al framework y sus
+        # tests lo prueban directamente. Sin esto habría que hacerlo público solo para el test, que es
+        # ampliar la API del producto por comodidad del que lo prueba. Solo en Debug, que es donde
+        # corren los tests: en Release la testabilidad estorba a las optimizaciones.
+        Debug:
+          ENABLE_TESTABILITY: "YES"
+
+  # App principal (SwiftUI). Embebe la extensión y enlaza Shared.
+  TunnelVision:
+    type: application
+    platform: iOS
+    sources:
+      - path: TunnelVision
+        excludes: ["**/README.md"]
+    dependencies:
+      - target: Shared
+      - target: PacketTunnel   # app-extension: XcodeGen la embebe automáticamente
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.juanmmm21.tunnelvision
+        # iPhone y sólo iPhone (2026-08-24). No es una limitación técnica: es que **nadie ha mirado
+        # esta app en un iPad**, ni una vez. Todo el sistema visual se midió a 402 pt de ancho y en
+        # vertical —la capacidad del eje de la Timeline, la rejilla de hechos, el volcado hexadecimal—,
+        # así que declararse universal sería prometer un layout que no se ha visto, y con él las cuatro
+        # orientaciones y el multitasking que el iPad exige. Va aquí y no en `settings.base` porque
+        # XcodeGen escribe "1,2" en cada target y eso gana. Añadir iPad después es una versión nueva;
+        # quitarlo después de haberlo prometido es peor.
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_ENTITLEMENTS: TunnelVision/TunnelVision.entitlements
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+        # Sin esto, la subida se rechaza (ITMS-90474). Vertical y nada más, por lo mismo que la
+        # familia de dispositivo: el horizontal tampoco lo ha mirado nadie.
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: "YES"
+        # Declaración de export compliance, decidida por Juan el 2026-08-23. La app cifra —TLS por
+        # Network.framework y certificados por Security.framework— pero toda esa criptografía es la
+        # estándar de la plataforma, que es el caso exento. Declararlo aquí evita que App Store
+        # Connect pregunte por el cifrado en cada build que se suba.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: "NO"
+        # Localización (M11). El inglés vive en el código, como `defaultValue` de `String(localized:)`,
+        # y `TunnelVision/Resources/Localizable.xcstrings` solo acumula traducciones: esto es lo que
+        # hace que el compilador **extraiga** esas llamadas al catálogo en cada build, en vez de
+        # tener que mantener las claves a mano. Solo en la app: `Models/` se compila también dentro
+        # del bundle de tests (por pertenencia de fuentes), pero allí no hay catálogo ni debe haberlo
+        # —el test afirma la copia fuente, que es la que se lee en el propio fichero—.
+        SWIFT_EMIT_LOC_STRINGS: "YES"
+        LOCALIZATION_PREFERS_STRING_CATALOGS: "YES"
+        # El tinte global sale del mismo color del catálogo que el token `.brand` del sistema visual
+        # (paso 8 del roadmap). Nombrarlo aquí es lo que hace que los controles del sistema —botones,
+        # barra de pestañas, switches— usen la marca sin que ninguna vista tenga que teñirlos: una
+        # sola definición de la marca, no dos que se pueden separar.
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: Brand
+        # Xcode genera por su cuenta un símbolo Swift por cada color del catálogo (`Color.brand`…),
+        # y eso abre una **segunda** puerta a la paleta que se salta los tokens: dos nombres para el
+        # mismo color es exactamente la deriva que el sistema visual existe para impedir (y de hecho
+        # chocaban: `Color(.brand)` quedaba ambiguo entre el símbolo generado y `ColorToken`). Que la
+        # única entrada sea `ColorToken`, cuya existencia en el catálogo comprueba un test.
+        ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: "NO"
+        # El icono (paso 9 del roadmap). Vive en el mismo catálogo que la paleta y se dibuja desde
+        # ella: `Tools/AppIcon/RenderAppIcon.swift` escribe los tres PNG del set —el de siempre, el
+        # de oscuro y el teñido en grises— así que la marca del icono y la de las pantallas no son
+        # dos definiciones que puedan separarse. Este ajuste estuvo **vacío** hasta que el icono
+        # existió, porque `actool` exige un `AppIcon` en cuanto hay catálogo y sin él el build cae.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+  # Extensión NEPacketTunnelProvider. Corre en un proceso aparte, solo en dispositivo real.
+  PacketTunnel:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PacketTunnel
+        excludes: ["**/README.md"]
+    dependencies:
+      - target: Shared
+      # El provider lee los resolvers del sistema por este shim. `link: true` explícito por lo mismo
+      # que `CTVAtomics` en `Shared`: sin él la librería estática no entra en el enlazado.
+      - target: CTVResolv
+        link: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.juanmmm21.tunnelvision.PacketTunnel
+        # La misma familia que la app que la embebe, o el bundle se contradice consigo mismo.
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_ENTITLEMENTS: PacketTunnel/PacketTunnel.entitlements
+        GENERATE_INFOPLIST_FILE: "YES"
+        # `res_9_*` viven en libresolv, que no entra sola: el shim los declara pero quien enlaza el
+        # binario final es la extensión, así que la bandera va aquí y no en el target de C.
+        OTHER_LDFLAGS: "-lresolv"
+    info:
+      path: PacketTunnel/Info.plist
+      properties:
+        # Obligatorio en una app-extension: sin él la subida se rechaza (ITMS-90360). Va aquí y no
+        # editando `PacketTunnel/Info.plist` a mano, porque ese fichero lo **reescribe** XcodeGen en
+        # cada `generate` y una edición suelta se pierde sin decir nada.
+        CFBundleDisplayName: TunnelVision
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+
+  # Tests unitarios: parsers, reassembly, pcap, store, ipc, pipeline. Corren en Simulator.
+  # La lógica pura de la extensión (parsers, reassembly, pcap, pipeline) se compila también dentro
+  # del bundle de tests: un app-extension no se puede enlazar en un test bundle, así que se testea
+  # por pertenencia de fuentes. Lo device-only (PacketTunnelProvider) queda fuera a propósito.
+  TunnelVisionTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: TunnelVisionTests
+        excludes: ["**/README.md"]
+      # `PacketTunnel/IP` ya no está aquí: el parser y el emisor viven en `Shared/IP` desde M11 y
+      # entran enlazados con el framework, no por pertenencia de fuentes.
+      - path: PacketTunnel/Flow
+        excludes: ["**/README.md"]
+      # `PacketTunnel/Capture` tampoco está ya: `PcapWriter` vive en `Shared/Capture` desde M11
+      # —el sembrador de capturas sintéticas escribe con él desde la app— y entra enlazado con el
+      # framework, no por pertenencia de fuentes.
+      - path: PacketTunnel/Pipeline
+        excludes: ["**/README.md"]
+      - path: PacketTunnel/Relay
+        excludes: ["**/README.md"]
+      - path: PacketTunnel/TLS
+        excludes: ["**/README.md"]
+      # `PacketTunnel/Provider` no entra: lo único que queda ahí es `PacketTunnelProvider.swift`,
+      # device-only (subclasea NEPacketTunnelProvider y no hay nada que ejercitar sin `packetFlow`).
+      # Su pieza pura, `TunnelAddressing`, vive ahora en `Shared/Models` porque también la usa la app.
+      # De la app entran sus servicios (M9), por la misma razón: el bundle de tests no enlaza la app.
+      # `NETunnelProviderManagerAdapter.swift` queda fuera por lo mismo que `PacketTunnelProvider.swift`
+      # —importa NetworkExtension y necesita dispositivo—; se valida por compilación.
+      - path: TunnelVision/Services
+        excludes: ["**/README.md", "NETunnelProviderManagerAdapter.swift"]
+      # Los tipos de presentación y los view models entran por lo mismo que los servicios: son puros
+      # (Foundation + Shared, sin SwiftUI) y ahí viven las decisiones de la UI. `Views/` y `App/` no
+      # entran: importan SwiftUI y su corrección es visual, no afirmable en un test unitario.
+      - path: TunnelVision/Models
+        excludes: ["**/README.md"]
+      - path: TunnelVision/ViewModels
+        excludes: ["**/README.md"]
+    dependencies:
+      - target: Shared
+      # App host. No se enlaza contra ella (las fuentes de la app que se prueban entran por
+      # pertenencia, como siempre): lo único que aporta es **su proceso**, y con él sus
+      # entitlements. Un bundle de tests sin host se carga en el `xctest` de la plataforma, que
+      # está firmado por Apple, así que cualquier `SecItemAdd` desde un test devolvía
+      # errSecMissingEntitlement (-34018) — y sin llavero no hay `SecIdentity`, que es lo único
+      # que un servidor TLS puede presentar en un handshake.
+      - target: TunnelVision
+        link: false
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.juanmmm21.tunnelvision.Tests
+        GENERATE_INFOPLIST_FILE: "YES"
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/TunnelVision.app/TunnelVision
+
+schemes:
+  TunnelVision:
+    build:
+      targets:
+        TunnelVision: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      # El locale del proceso de tests se fija (M11), y no es cosmético: los tests afirman
+      # **literalmente** la copia que la app enseña, y la app solo habla inglés. Sin fijarlo cada
+      # sesión corría con el idioma de quien la lanza —aquí español—, así que una afirmación sobre
+      # cómo sale un número solo era cierta por casualidad: el español no agrupa los millares de
+      # cuatro dígitos y el inglés sí, y eso escondió `port 8,080` durante tres pantallas.
+      # `en`/`US` y **no** `en_US_POSIX`: el POSIX no agrupa nunca, así que fijarlo ahí volvería a
+      # esconder exactamente el mismo fallo por el otro lado. (El POSIX sigue siendo el correcto
+      # donde el formato es para una máquina y no para una persona: `CaptureFileName`, `FlowExport`.)
+      # Que el pin siga puesto lo afirma `CopyLocaleTests`, porque un scheme se regenera.
+      language: en
+      region: US
+      targets:
+        - TunnelVisionTests

@@ -1,0 +1,4 @@
+module CTVAtomics {
+    header "CTVAtomics.h"
+    export *
+}

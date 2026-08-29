@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Manifiesto de privacidad de la extensión. Va aparte del de la app porque se firma y se
+	  distribuye como bundle propio, y porque es **ella** quien captura: la app sólo lee lo que la
+	  extensión dejó en el contenedor compartido.
+
+	  Las tres listas de abajo están vacías y eso ES la declaración: nada se recoge, nada se rastrea
+	  y no hay servidor al que mandar nada. El túnel entrega los paquetes a su destino real y guarda
+	  lo que ve en el App Group, en el dispositivo de su dueño.
+	-->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<!-- La extensión lee por aquí los ajustes que la app escribió (qué capturar, los topes de
+		     retención, si la inspección está encendida). Es el UserDefaults del App Group, así que la
+		     razón es 1C8F.1 y no CA92.1, que cubre sólo lo que una app se guarda para sí misma. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>1C8F.1</string>
+			</array>
+		</dict>
+		<!-- El escritor de capturas fecha cada fichero al rotarlo y el barrido de retención mira esas
+		     fechas y tamaños para saber qué toca borrar. Todo dentro del contenedor del App Group,
+		     que es lo que C617.1 cubre. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+		<!-- `MonotonicClock` lee `CLOCK_UPTIME_RAW` para sellar cada paquete con un reloj que no salta
+		     si el del sistema se ajusta a mitad de una captura. Es exactamente 35F9.1: medir el
+		     tiempo transcurrido entre cosas que pasan dentro del proceso. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

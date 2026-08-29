@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Manifiesto de privacidad de la app. Obligatorio desde 2024: sin él, App Store Connect avisa
+	  (ITMS-91053) de cada API de "motivo obligatorio" usada sin declarar.
+
+	  Las tres listas de abajo están vacías y eso ES la declaración, no un hueco por rellenar:
+	  TunnelVision no recoge nada, no rastrea y no habla con ningún servidor. Lo que captura se queda
+	  en el contenedor del App Group y sólo sale si su dueño comparte un fichero a mano.
+	-->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<!-- `SettingsStore` guarda los ajustes en el UserDefaults del App Group, que es como la app
+		     y la extensión comparten una sola verdad. La razón del App Group es 1C8F.1 y no CA92.1:
+		     esta última cubre sólo lo que lee y escribe la app para sí misma. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>1C8F.1</string>
+			</array>
+		</dict>
+		<!-- Fechas y tamaños de los ficheros de captura del propio contenedor: es lo que la lista de
+		     Captures enseña y lo que la retención necesita para saber cuál caduca antes. C617.1 cubre
+		     "timestamps, size, or other metadata" dentro del contenedor de la app o del App Group. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+		<!-- `MonotonicAnchor` lee `CLOCK_UPTIME_RAW` para fechar los paquetes con un reloj que no
+		     salta si el del sistema se ajusta. Es exactamente 35F9.1: medir el tiempo transcurrido
+		     entre cosas que pasan dentro de la app. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

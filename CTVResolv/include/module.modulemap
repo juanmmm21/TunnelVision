@@ -1,0 +1,4 @@
+module CTVResolv {
+    header "CTVResolv.h"
+    export *
+}

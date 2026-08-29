@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- La extensión ES el NEPacketTunnelProvider: necesita el mismo entitlement de Network Extension. -->
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+	</array>
+	<!-- Mismo App Group que la app para leer/escribir el store y el ring buffer. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.juanmmm21.tunnelvision</string>
+	</array>
+	<!-- Llavero compartido: la extensión usa la clave privada de la CA para emitir certificados leaf. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.juanmmm21.tunnelvision</string>
+	</array>
+</dict>
+</plist>
