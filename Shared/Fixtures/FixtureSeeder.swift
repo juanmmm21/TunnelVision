@@ -203,6 +203,12 @@ public struct FixtureSeeder: Sendable {
         let replacedCaptureFileCount = try prepareCaptureDirectory()
         try preparePlaintextDirectory()
         try await store.clearAll()
+        // `clearAll` deja los proyectos de auditoría a propósito —vacía el tráfico, no el trabajo de
+        // preparar una auditoría—, pero sembrar **reemplaza**: sin esto, cada siembra dejaría otro
+        // proyecto igual al anterior.
+        for project in try await store.auditProjects() {
+            try await store.deleteAuditProject(id: project.id)
+        }
 
         let written = try await writeCapture(fixture)
         // El contenido descifrado va **después** de la captura y **antes** del historial, por lo
@@ -506,7 +512,13 @@ public struct FixtureSeeder: Sendable {
         plaintext: [[PlaintextChunkMeta]],
         into store: FlowStore
     ) async throws {
+        let audit = try await AuditFixture.project(in: store, anchor: fixture.anchor, flows: fixture.flows)
+
         for (flowIndex, flow) in fixture.flows.enumerated() {
+            // Un flujo pertenece a la sesión de auditoría que esté abierta **cuando se escribe**
+            // (`docs/spec/audit.md`), así que la sesión se abre y se cierra alrededor de sus flujos
+            // en vez de etiquetarlos después: es el mismo camino que recorre la extensión.
+            try await audit.open(before: flowIndex, in: store)
             let id = try await store.upsertFlow(flow.record)
             let metas = flow.packets.enumerated().map { packetIndex, packet in
                 packet.meta(capturedAt: locations[flowIndex][packetIndex])
@@ -517,6 +529,7 @@ public struct FixtureSeeder: Sendable {
             if !chunks.isEmpty {
                 try await store.appendPlaintext(chunks, flowID: id)
             }
+            try await audit.close(after: flowIndex, in: store)
         }
     }
 }
