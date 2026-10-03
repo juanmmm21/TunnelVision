@@ -23,7 +23,7 @@ BUNDLE_ID = "com.juanmmm21.tunnelvision"
 
 # Las cuatro pestañas, en su orden. Dónde cae cada una se calcula sobre el ancho de la barra: es el
 # reparto de un `TabView`, y así el guion vale igual en un 6,3" que en un 6,9".
-TABS = ["dashboard", "timeline", "captures", "settings"]
+TABS = ["dashboard", "timeline", "captures", "audit", "settings"]
 
 # La franja del alto de pantalla en la que un elemento se considera alcanzable por el dedo: por
 # debajo de la barra de navegación y por encima de la de pestañas. En fracciones y no en puntos,

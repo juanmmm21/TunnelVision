@@ -1,6 +1,1518 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "audit.action.newProject" : {
+      "comment" : "Button that opens the form to create an audit project. A project is one audited app with its list of allowed domains; it is not a file or a folder.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "New project"
+          }
+        }
+      }
+    },
+    "audit.badge.recording" : {
+      "comment" : "Badge on the audit project or session that is open right now: every connection the device makes is being tagged with it. Same word in both lists.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Recording"
+          }
+        }
+      }
+    },
+    "audit.banner.action" : {
+      "comment" : "Button on the Dashboard strip that goes to the open audit session.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Open"
+          }
+        }
+      }
+    },
+    "audit.banner.detail" : {
+      "comment" : "Sentence of the Dashboard strip for an open audit session. The placeholder is the audit project's name. 'Every connection' is load-bearing: all traffic is tagged, not only the audited app's.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Every connection is being tagged for %@."
+          }
+        }
+      }
+    },
+    "audit.banner.title" : {
+      "comment" : "Headline of the strip shown on the Dashboard while an audit session is open. It exists so a session left open is noticed where the tunnel is watched.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Audit session recording"
+          }
+        }
+      }
+    },
+    "audit.empty.message" : {
+      "comment" : "Message of the empty audit screen. It says what the feature is for in one sentence — evidence of an app's network behaviour for a security assessment — without naming any standard.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Audit an app's network behaviour: record named sessions for a version and build, list the domains it may contact, and mark the moment consent is given."
+          }
+        }
+      }
+    },
+    "audit.empty.title" : {
+      "comment" : "Title of the card shown when there are no audit projects and nothing is wrong. The audit screen is optional; this must not read as something left undone.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No audit projects yet"
+          }
+        }
+      }
+    },
+    "audit.failure.message" : {
+      "comment" : "Message of the card shown when the audit projects could not be loaded. It reassures that this is a read failure, not data loss.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Nothing has been lost: they are stored with your history, which didn't answer."
+          }
+        }
+      }
+    },
+    "audit.failure.retry" : {
+      "comment" : "Button that re-reads the audit projects after a failure. Kept as its own key like every other screen's retry, so a translator may word it for what is being retried here.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Try again"
+          }
+        }
+      }
+    },
+    "audit.failure.title" : {
+      "comment" : "Title of the card shown when the audit projects could not be loaded at all.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Couldn't read your audit projects"
+          }
+        }
+      }
+    },
+    "audit.form.issue.duplicatePattern" : {
+      "comment" : "Shown when two allowlist lines are the same domain once normalised (case and a trailing dot do not count). The placeholder is the domain.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%@ is already in the list."
+          }
+        }
+      }
+    },
+    "audit.form.issue.emptyName" : {
+      "comment" : "Shown when the audit project form is saved without a name.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Give the project a name."
+          }
+        }
+      }
+    },
+    "audit.form.issue.missingRelease" : {
+      "comment" : "Shown when an audit session is started without a version or a build number.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Enter the version and the build of the app you are auditing."
+          }
+        }
+      }
+    },
+    "audit.form.issue.noteWithoutPattern" : {
+      "comment" : "Shown when an allowlist line has its note filled in and its domain empty.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This line has a note but no domain."
+          }
+        }
+      }
+    },
+    "audit.form.issue.pattern.empty" : {
+      "comment" : "Shown when an allowlist line holds nothing but spaces or a lone wildcard.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Enter a domain name."
+          }
+        }
+      }
+    },
+    "audit.form.issue.pattern.emptyLabel" : {
+      "comment" : "Shown when an allowlist line has two consecutive dots or starts with one.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "There is an empty part between two dots."
+          }
+        }
+      }
+    },
+    "audit.form.issue.pattern.invalidCharacter" : {
+      "comment" : "Shown when an allowlist line contains a character a domain name cannot hold, such as a slash or a colon — typically a pasted URL. The placeholder is the character.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%@ can't be part of a domain name."
+          }
+        }
+      }
+    },
+    "audit.form.issue.pattern.labelTooLong" : {
+      "comment" : "Shown when one dot-separated part of an allowlist line exceeds 63 characters. The placeholder is that part.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%@ is longer than a domain name allows between two dots."
+          }
+        }
+      }
+    },
+    "audit.form.issue.pattern.nameTooLong" : {
+      "comment" : "Shown when an allowlist line exceeds the 253-character limit of a domain name.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This is longer than a domain name can be."
+          }
+        }
+      }
+    },
+    "audit.form.issue.pattern.nonASCII" : {
+      "comment" : "Shown when an allowlist line contains non-ASCII characters. Observed names arrive in punycode ('xn--…'), so a Unicode pattern would never match.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Write international names in their xn-- form: that is how they appear in the traffic."
+          }
+        }
+      }
+    },
+    "audit.form.issue.pattern.wildcard" : {
+      "comment" : "Shown when an allowlist line uses '*' anywhere but as the whole first label. '*.example.com' is a literal example.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "A wildcard only works at the start, as in *.example.com."
+          }
+        }
+      }
+    },
+    "audit.form.save" : {
+      "comment" : "Button that saves the audit project form.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Save"
+          }
+        }
+      }
+    },
+    "audit.marker.consentGiven" : {
+      "comment" : "Marker of an audit session: the user accepted the audited app's consent screen at this instant.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Consent given"
+          }
+        }
+      }
+    },
+    "audit.marker.custom.action" : {
+      "comment" : "Button that asks for the name of a marker the fixed list does not cover. The ellipsis means a prompt follows.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Other…"
+          }
+        }
+      }
+    },
+    "audit.marker.custom.confirm" : {
+      "comment" : "Button that places the free-form audit marker just named, at the current instant.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Add marker"
+          }
+        }
+      }
+    },
+    "audit.marker.custom.field" : {
+      "comment" : "Placeholder of the text field for a free-form audit marker: a few words on what just happened in the audited app.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "What happened"
+          }
+        }
+      }
+    },
+    "audit.marker.custom.title" : {
+      "comment" : "Title of the prompt asking for the label of a free-form audit marker.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Name this marker"
+          }
+        }
+      }
+    },
+    "audit.marker.loggedIn" : {
+      "comment" : "Marker of an audit session: the user signed in to the audited app at this instant.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Logged in"
+          }
+        }
+      }
+    },
+    "audit.marker.loggedOut" : {
+      "comment" : "Marker of an audit session: the user signed out of the audited app at this instant.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Logged out"
+          }
+        }
+      }
+    },
+    "audit.notice.failed" : {
+      "comment" : "Notice when an audit action failed for a reason the user cannot fix from the screen. The technical detail travels apart, as a diagnostic.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "That couldn't be saved. Nothing was changed."
+          }
+        }
+      }
+    },
+    "audit.notice.gone" : {
+      "comment" : "Notice when an action targeted an audit project or session that was already deleted.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "It no longer exists. The list has been refreshed."
+          }
+        }
+      }
+    },
+    "audit.notice.refreshFailed" : {
+      "comment" : "Notice when re-reading the audit projects failed while a list was already drawn. The list stays on screen, so this says what is uncertain about it.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Couldn't re-read your audit projects, so this may be out of date."
+          }
+        }
+      }
+    },
+    "audit.notice.sessionAlreadyEnded" : {
+      "comment" : "Notice when ending an audit session or adding a marker was refused because the session is closed — typically ended elsewhere a moment ago.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This session has already ended, so nothing was changed."
+          }
+        }
+      }
+    },
+    "audit.notice.sessionAlreadyOpen" : {
+      "comment" : "Notice when starting an audit session was refused because one is already open. Only one can be open at a time.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Another session is still recording. End it before starting a new one."
+          }
+        }
+      }
+    },
+    "audit.project.action.delete" : {
+      "comment" : "Destructive menu item and confirmation button that deletes an audit project.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Delete project"
+          }
+        }
+      }
+    },
+    "audit.project.action.edit" : {
+      "comment" : "Menu item that opens the form to change an audit project's name and allowlist.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Edit project"
+          }
+        }
+      }
+    },
+    "audit.project.action.startSession" : {
+      "comment" : "Button on an audit project that opens the form to start recording a session. Recording begins when that form is confirmed, not when this is tapped.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Start session"
+          }
+        }
+      }
+    },
+    "audit.project.allowlist.empty" : {
+      "comment" : "Shown in place of an audit project's allowlist when it has no entries. It states the consequence rather than leaving an empty section.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No allowed domains. Every connection will be reported as unexpected."
+          }
+        }
+      }
+    },
+    "audit.project.allowlist.footer" : {
+      "comment" : "Note under an audit project's allowlist explaining the two accepted forms. '*.example.com' and 'example.com' are literal examples and are not translated. The second sentence is the certificate-wildcard convention and is the rule users get wrong.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "An exact name, or *.example.com for every subdomain. A wildcard does not cover example.com itself."
+          }
+        }
+      }
+    },
+    "audit.project.allowlist.section" : {
+      "comment" : "Heading of an audit project's allowlist: the domains the audited app is expected to contact. Anything else it contacts is reported as unexpected.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Allowed domains"
+          }
+        }
+      }
+    },
+    "audit.project.bundleIdentifier" : {
+      "comment" : "Label of the audited app's bundle identifier on an audit project. It is informational: it says what was audited and never filters traffic.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Bundle ID"
+          }
+        }
+      }
+    },
+    "audit.project.bundleIdentifier.footer" : {
+      "comment" : "Note under the audited app's bundle identifier. It prevents the reading that the identifier filters traffic: the tunnel cannot tell which app sent a packet, and attribution is done by comparing against a baseline session.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The bundle ID says which app was audited. TunnelVision sees packets, not apps, so it does not filter by it: the baseline session is what separates this app's traffic."
+          }
+        }
+      }
+    },
+    "audit.project.delete.prompt" : {
+      "comment" : "Message of the confirmation before deleting an audit project that has sessions. The recorded connections are not deleted — they lose their audit tag, and with it their exemption from the storage limits in Settings.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Its sessions, markers and allowed domains are deleted. The connections they recorded stay in your history, but stop being kept as evidence and expire with your storage limits. This can't be undone."
+          }
+        }
+      }
+    },
+    "audit.project.delete.prompt.empty" : {
+      "comment" : "Message of the confirmation before deleting an audit project that has no sessions: only its allowlist is lost.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Its allowed domains are deleted with it. This can't be undone."
+          }
+        }
+      }
+    },
+    "audit.project.delete.title" : {
+      "comment" : "Title of the confirmation before deleting an audit project. The placeholder is its name.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Delete %@?"
+          }
+        }
+      }
+    },
+    "audit.project.details.section" : {
+      "comment" : "Heading of the section naming the app an audit project is about.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Audited app"
+          }
+        }
+      }
+    },
+    "audit.project.menu" : {
+      "comment" : "Accessibility label of the toolbar menu on an audit project's screen, which is drawn as an ellipsis icon. It holds Edit and Delete.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Project actions"
+          }
+        }
+      }
+    },
+    "audit.project.row.recording.accessibilityValue" : {
+      "comment" : "What VoiceOver reads after an audit project's name when one of its sessions is open. The placeholder is the session count sentence ('2 sessions').",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Recording now. %@"
+          }
+        }
+      }
+    },
+    "audit.project.sessions.empty" : {
+      "comment" : "Note shown on an audit project with no sessions. It names the first step of the method: a baseline session recorded without the audited app, which the later sessions are compared against.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Record a baseline first, without the audited app installed: it is what tells the app's traffic apart from the rest of the device's."
+          }
+        }
+      }
+    },
+    "audit.project.sessions.none" : {
+      "comment" : "Detail of an audit project that has no recorded session. 'Yet' is load-bearing: it is the state of a project that was just created, not a fault.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No sessions yet"
+          }
+        }
+      }
+    },
+    "audit.project.sessions.one" : {
+      "comment" : "Detail of an audit project with exactly one recorded session. See the plural form in the sibling key; a language with more plural forms needs both merged into one key with catalog variations.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "1 session"
+          }
+        }
+      }
+    },
+    "audit.project.sessions.other" : {
+      "comment" : "Detail of an audit project with more than one recorded session. The placeholder is the count, already grouped.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%@ sessions"
+          }
+        }
+      }
+    },
+    "audit.project.sessions.section" : {
+      "comment" : "Heading of the list of recorded sessions on an audit project's screen.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Sessions"
+          }
+        }
+      }
+    },
+    "audit.project.start.blocked.other" : {
+      "comment" : "Note under the disabled 'Start session' button when another project has the open session. The placeholder is that project's name. Only one audit session can be open at a time, across all projects.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "A session of %@ is still recording. End it before starting one here."
+          }
+        }
+      }
+    },
+    "audit.project.start.blocked.own" : {
+      "comment" : "Note under the disabled 'Start session' button when this project already has an open session. Only one audit session can be open at a time.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "End the session that is recording before starting another."
+          }
+        }
+      }
+    },
+    "audit.projectForm.allowlist.add" : {
+      "comment" : "Button that adds an empty line to the allowlist in the audit project form.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Add domain"
+          }
+        }
+      }
+    },
+    "audit.projectForm.allowlist.note" : {
+      "comment" : "VoiceOver name of an allowlist line's note field in the audit project form.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Note"
+          }
+        }
+      }
+    },
+    "audit.projectForm.allowlist.note.prompt" : {
+      "comment" : "Placeholder of an allowlist line's note field: why the domain is expected, such as 'backend' or 'crash reporting'. It goes into the report.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "What it is for (optional)"
+          }
+        }
+      }
+    },
+    "audit.projectForm.allowlist.pattern" : {
+      "comment" : "VoiceOver name of an allowlist line's domain field in the audit project form.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Domain"
+          }
+        }
+      }
+    },
+    "audit.projectForm.allowlist.pattern.prompt" : {
+      "comment" : "Placeholder of an allowlist line's domain field. It is a literal example of a domain name and is not translated.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "api.example.com"
+          }
+        }
+      }
+    },
+    "audit.projectForm.allowlist.remove" : {
+      "comment" : "Swipe action that removes one line from the allowlist in the audit project form.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Remove"
+          }
+        }
+      }
+    },
+    "audit.projectForm.bundle.prompt" : {
+      "comment" : "Placeholder of the audited app's bundle identifier field. 'com.example.app' is a literal example and is not translated; the field may be left empty.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "com.example.app (optional)"
+          }
+        }
+      }
+    },
+    "audit.projectForm.name" : {
+      "comment" : "Label of the field for an audit project's name: usually the audited app's name. It heads the report.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Name"
+          }
+        }
+      }
+    },
+    "audit.projectForm.name.prompt" : {
+      "comment" : "Placeholder of the audit project's name field.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The app you are auditing"
+          }
+        }
+      }
+    },
+    "audit.projectForm.title.edit" : {
+      "comment" : "Title of the form that changes an existing audit project.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Edit project"
+          }
+        }
+      }
+    },
+    "audit.projectForm.title.new" : {
+      "comment" : "Title of the form that creates an audit project.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "New project"
+          }
+        }
+      }
+    },
+    "audit.projects.footer" : {
+      "comment" : "Note under the list of audit projects. It says what a project and a session are, and that recorded sessions are exempt from the storage limits in Settings — they only go when the user deletes them.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "A project is one app you audit. Its sessions record what the device sends while you use that app, and are kept until you delete them."
+          }
+        }
+      }
+    },
+    "audit.projects.section" : {
+      "comment" : "Heading of the list of audit projects on the audit screen.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Projects"
+          }
+        }
+      }
+    },
+    "audit.screen.title" : {
+      "comment" : "Title of the screen listing audit projects: the apps whose network behaviour is being recorded as evidence for a security assessment.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Audit"
+          }
+        }
+      }
+    },
+    "audit.session.action.delete" : {
+      "comment" : "Destructive button and confirmation button that deletes an audit session.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Delete session"
+          }
+        }
+      }
+    },
+    "audit.session.action.end" : {
+      "comment" : "Button and confirmation button that closes an open audit session.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "End session"
+          }
+        }
+      }
+    },
+    "audit.session.addMarker.section" : {
+      "comment" : "Heading over the buttons that place a marker in an open audit session. 'Now' is load-bearing: the marker is stamped with the instant of the tap.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Mark now"
+          }
+        }
+      }
+    },
+    "audit.session.connections.label" : {
+      "comment" : "Label of the row saying how many connections an audit session holds. Its value is a count sentence such as '42 connections'.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Recorded"
+          }
+        }
+      }
+    },
+    "audit.session.connections.one" : {
+      "comment" : "How many connections an audit session holds, when exactly one. See the plural form in the sibling key.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "1 connection"
+          }
+        }
+      }
+    },
+    "audit.session.connections.other" : {
+      "comment" : "How many connections an audit session holds, for any number other than one, zero included. The placeholder is the count, already grouped.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%@ connections"
+          }
+        }
+      }
+    },
+    "audit.session.delete.prompt" : {
+      "comment" : "Message of the confirmation before deleting an audit session. The recorded connections are not deleted — they lose their audit tag, and with it their exemption from the storage limits in Settings.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The session and its markers are deleted. The connections it recorded stay in your history, but stop being kept as evidence and expire with your storage limits. This can't be undone."
+          }
+        }
+      }
+    },
+    "audit.session.delete.title" : {
+      "comment" : "Title of the confirmation before deleting an audit session.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Delete this session?"
+          }
+        }
+      }
+    },
+    "audit.session.end.prompt" : {
+      "comment" : "Message of the confirmation before closing an audit session. Both consequences are irreversible, which is why the action is confirmed.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Connections stop being tagged, and no more markers can be added. A session can't be reopened."
+          }
+        }
+      }
+    },
+    "audit.session.end.title" : {
+      "comment" : "Title of the confirmation before closing an open audit session.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "End this session?"
+          }
+        }
+      }
+    },
+    "audit.session.environment.footer" : {
+      "comment" : "Note under the recording environment of an audit session. The values are not typed by the user and cannot be edited.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Read from this device when the session started. It goes into the report as is."
+          }
+        }
+      }
+    },
+    "audit.session.environment.section" : {
+      "comment" : "Heading of the section listing where an audit session was recorded: device model, system version and the version of this app.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Recorded on"
+          }
+        }
+      }
+    },
+    "audit.session.fact.device" : {
+      "comment" : "Label of the hardware model identifier an audit session was recorded on, such as 'iPhone18,3'.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Device"
+          }
+        }
+      }
+    },
+    "audit.session.fact.ended" : {
+      "comment" : "Label of the instant an audit session was closed. Its value is a date.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Ended"
+          }
+        }
+      }
+    },
+    "audit.session.fact.started" : {
+      "comment" : "Label of the instant an audit session began. Its value is a date.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Started"
+          }
+        }
+      }
+    },
+    "audit.session.fact.system" : {
+      "comment" : "Label of the operating system version an audit session was recorded on. 'iOS' is the product name and is not translated.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "iOS"
+          }
+        }
+      }
+    },
+    "audit.session.fact.tool" : {
+      "comment" : "Label of the version of this app an audit session was recorded with. 'TunnelVision' is the product name and is not translated.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "TunnelVision"
+          }
+        }
+      }
+    },
+    "audit.session.markers.empty" : {
+      "comment" : "Shown in place of the marker list of an audit session that has none.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No markers."
+          }
+        }
+      }
+    },
+    "audit.session.markers.footer.ended" : {
+      "comment" : "Note under the markers of a closed audit session, explaining why none can be added now.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Markers can only be added while a session is recording: one placed afterwards would not be an observation."
+          }
+        }
+      }
+    },
+    "audit.session.markers.footer.recording" : {
+      "comment" : "Note under the markers of an open audit session. It says what a marker is for: splitting the recorded connections into before and after an event.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Mark the moment something happens in the audited app. Every connection is then reported as before or after it — which is how activity before consent is found."
+          }
+        }
+      }
+    },
+    "audit.session.markers.section" : {
+      "comment" : "Heading of the list of instants marked inside an audit session, such as the moment the user gave consent in the audited app.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Markers"
+          }
+        }
+      }
+    },
+    "audit.session.notes.section" : {
+      "comment" : "Heading of the free-text notes written when an audit session was started.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Notes"
+          }
+        }
+      }
+    },
+    "audit.session.pinning.inspectionOff.detail" : {
+      "comment" : "Explains why an audit session recorded with inspection off says nothing about pinning, and what to do about it. It names the Settings screen.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "HTTPS inspection was off when this session started, so no app was offered TunnelVision's certificate and none could refuse it. Turn inspection on in Settings and record another session to assess pinning."
+          }
+        }
+      }
+    },
+    "audit.session.pinning.inspectionOff.headline" : {
+      "comment" : "Headline of the pinning section when the session cannot say anything about pinning. Never 'passed' or 'failed': nothing was observed.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Not assessed"
+          }
+        }
+      }
+    },
+    "audit.session.pinning.readable.detail" : {
+      "comment" : "Explains how pinning is read from an audit session: the app either rejected the user-installed certificate (it pins) or accepted it (it does not). The last sentence is load-bearing — TunnelVision never defeats another app's pinning, it only reports the outcome.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Inspection was on and this device trusted TunnelVision's certificate. A connection that refused it pins its certificates; one that accepted it trusts certificates the user installs. Nothing was bypassed to find out."
+          }
+        }
+      }
+    },
+    "audit.session.pinning.readable.headline" : {
+      "comment" : "Headline of the pinning section when the session was recorded with HTTPS inspection on and the local certificate trusted.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Can be assessed"
+          }
+        }
+      }
+    },
+    "audit.session.pinning.section" : {
+      "comment" : "Heading of the section saying whether an audit session can tell if the audited app pins its certificates.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Certificate pinning"
+          }
+        }
+      }
+    },
+    "audit.session.pinning.untrusted.detail" : {
+      "comment" : "Explains why an audit session recorded without the certificate trusted says nothing about pinning: a refusal then means nothing about the app.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This device did not trust TunnelVision's certificate when this session started, so every app refuses it whether it pins or not. Finish the certificate setup in Settings and record another session."
+          }
+        }
+      }
+    },
+    "audit.session.pinning.untrusted.headline" : {
+      "comment" : "Headline of the pinning section when the session cannot say anything about pinning because the local certificate was not trusted. Same word as the inspection-off case on purpose; separate key because the reason differs.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Not assessed"
+          }
+        }
+      }
+    },
+    "audit.session.status.ended" : {
+      "comment" : "Headline of an audit session that has been closed.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Ended"
+          }
+        }
+      }
+    },
+    "audit.session.status.ended.detail" : {
+      "comment" : "Sentence under the headline of a closed audit session. Audit evidence is exempt from the storage limits set in Settings; deleting the session is what ends that.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Its connections and captures are kept as evidence, outside your storage limits, until you delete this session."
+          }
+        }
+      }
+    },
+    "audit.session.status.recording" : {
+      "comment" : "Headline of an audit session that is open right now.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Recording"
+          }
+        }
+      }
+    },
+    "audit.session.status.recording.detail" : {
+      "comment" : "Sentence under the headline of an open audit session. It must say that everything is tagged, not only the audited app's traffic: the tunnel cannot tell apps apart, and a session left open keeps tagging.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Every connection this device makes is being tagged with this session until you end it, whichever app makes it."
+          }
+        }
+      }
+    },
+    "audit.session.title.baseline" : {
+      "comment" : "Name of an audit session recorded without the audited app installed: the device's background traffic, against which the app's own sessions are read.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Baseline"
+          }
+        }
+      }
+    },
+    "audit.session.title.release" : {
+      "comment" : "Name of an audit session: the version and build number of the audited app it observed, both exactly as the assessor typed them. They identify a binary and are never reformatted.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Version %1$@ (%2$@)"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.build" : {
+      "comment" : "VoiceOver name of the audited app's build number field in the audit session form.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Build"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.build.prompt" : {
+      "comment" : "Placeholder of the audited app's build number field. '187' is a literal example.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Build, such as 187"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.conditions.section" : {
+      "comment" : "Heading of the section of the audit session form that says, before recording starts, whether this session will be able to assess pinning. Same words as the section on the session's own screen.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Certificate pinning"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.notes.prompt" : {
+      "comment" : "Placeholder of the free-text notes field in the audit session form.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Anything the report should say about this run (optional)"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.pinning.inspectionOff.detail" : {
+      "comment" : "Sentence in the audit session form when inspection is off. It is said before recording because a session cannot be fixed afterwards.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "HTTPS inspection is off, so no app will be offered TunnelVision's certificate. To assess pinning, turn inspection on in Settings before you start."
+          }
+        }
+      }
+    },
+    "audit.sessionForm.pinning.inspectionOff.headline" : {
+      "comment" : "Headline in the audit session form, before recording starts, when the session will not be able to say anything about pinning.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Won't be assessed"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.pinning.readable.detail" : {
+      "comment" : "Sentence in the audit session form when the session about to start will be able to tell whether the audited app pins its certificates.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Inspection is on and this device trusts TunnelVision's certificate, so this session will show which connections refuse it."
+          }
+        }
+      }
+    },
+    "audit.sessionForm.pinning.readable.headline" : {
+      "comment" : "Headline in the audit session form, before recording starts, when HTTPS inspection is on and the local certificate is trusted.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Will be assessed"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.pinning.untrusted.detail" : {
+      "comment" : "Sentence in the audit session form when the local certificate is not trusted on this device.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This device doesn't trust TunnelVision's certificate, so every app will refuse it whether it pins or not. To assess pinning, finish the certificate setup in Settings before you start."
+          }
+        }
+      }
+    },
+    "audit.sessionForm.pinning.untrusted.headline" : {
+      "comment" : "Headline in the audit session form when the local certificate is not trusted. Same words as the inspection-off case; separate key because the reason differs.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Won't be assessed"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.release.footer" : {
+      "comment" : "Note under the version and build fields of the audit session form.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Both are needed: two builds of one version are different binaries."
+          }
+        }
+      }
+    },
+    "audit.sessionForm.release.section" : {
+      "comment" : "Heading of the version and build fields in the audit session form.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Audited release"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.role" : {
+      "comment" : "Label of the control choosing between an audit session (the audited app in use) and a baseline (recorded without it).",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Session type"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.role.audit" : {
+      "comment" : "Session type: recorded while using a given version of the audited app.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Audit"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.role.audit.footer" : {
+      "comment" : "Note under the session type control when 'Audit' is chosen. The tunnel cannot tell apps apart, so the method depends on the assessor using only the audited app.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Use only the audited app while this records. Everything the device sends is tagged, so anything else you open ends up in the evidence too."
+          }
+        }
+      }
+    },
+    "audit.sessionForm.role.baseline" : {
+      "comment" : "Session type: recorded without the audited app installed. Same word as the name such a session gets in the list.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Baseline"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.role.baseline.footer" : {
+      "comment" : "Note under the session type control when 'Baseline' is chosen. A baseline is the device's background traffic without the audited app.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Record this before installing the audited app, and leave the device alone while it runs. It captures the traffic the device makes on its own."
+          }
+        }
+      }
+    },
+    "audit.sessionForm.start" : {
+      "comment" : "Button that confirms the audit session form. Tagging starts the moment it is tapped.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Start recording"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.title" : {
+      "comment" : "Title of the form that starts recording an audit session.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Start session"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.version" : {
+      "comment" : "VoiceOver name of the audited app's version field in the audit session form.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Version"
+          }
+        }
+      }
+    },
+    "audit.sessionForm.version.prompt" : {
+      "comment" : "Placeholder of the audited app's version field. '2.4.0' is a literal example.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Version, such as 2.4.0"
+          }
+        }
+      }
+    },
+    "audit.tab" : {
+      "comment" : "Tab bar label of the audit screen. Same word as its title, separate key: the tab bar shares its width with four other items, so it may need a shorter form.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Audit"
+          }
+        }
+      }
+    },
     "captures.action.delete" : {
       "comment" : "Destructive action on a capture, shown both as the row's swipe action and as the confirming button of the dialog it opens. One key for both on purpose: they are the same action, and the second one is what actually deletes the file.",
       "extractionState" : "extracted_with_value",

@@ -11,6 +11,12 @@ struct DashboardView: View {
     let controller: TunnelController
     let viewModel: DashboardViewModel
 
+    /// La auditoría, de la que esta pantalla solo lee una cosa: si hay una sesión grabando.
+    let audit: AuditViewModel
+
+    /// Ir a la sesión abierta. Lo resuelve quien tiene las pestañas.
+    let onOpenAuditSession: (AuditRecordingBanner) -> Void
+
     @State private var isShowingPriming = false
 
     /// En los cuerpos de accesibilidad las tres tarjetas de contadores no caben en una fila: apiladas,
@@ -30,6 +36,13 @@ struct DashboardView: View {
             ScrollView {
                 VStack(spacing: Spacing.card) {
                     MonitoringToggle(presentation: presentation, onAction: perform)
+
+                    // Justo bajo el control del túnel y solo mientras haya una sesión abierta: es
+                    // lo que está pasando con lo que el túnel captura, y una sesión olvidada tiene
+                    // que verse desde donde se mira si el túnel está encendido.
+                    if let banner = audit.recordingBanner {
+                        AuditRecordingStrip(banner: banner) { onOpenAuditSession(banner) }
+                    }
 
                     if viewModel.isDroppingRecords {
                         DropIndicator(droppedRecords: viewModel.snapshot.droppedRecords)
@@ -60,6 +73,7 @@ struct DashboardView: View {
             await controller.refresh()
             await viewModel.tunnelStateDidChange(to: controller.state)
             viewModel.startObserving()
+            await audit.refresh()
         }
         .onDisappear {
             viewModel.stopObserving()

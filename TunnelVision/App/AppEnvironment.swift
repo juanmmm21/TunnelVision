@@ -31,6 +31,10 @@ public final class AppEnvironment {
 
     public let settings: SettingsViewModel
 
+    /// La auditoría. Vive aquí por lo mismo que el diagnóstico: lo que sabe —qué sesión está
+    /// grabando— no es de una pantalla, y la Dashboard lo enseña además de la pestaña que lo gobierna.
+    public let audit: AuditViewModel
+
     /// El diagnóstico de la sesión. Vive aquí, y no en `@State` de la pantalla que lo abre, por lo
     /// mismo que el resto: lo que sabe es de la sesión del túnel —no de la navegación—, así que entrar
     /// y salir de Ajustes no puede vaciarlo.
@@ -79,6 +83,7 @@ public final class AppEnvironment {
         settingsStore: SettingsStore,
         storage: StorageManager,
         certificates: CertificateStatusReader,
+        auditLibrary: AuditLibrary,
         makeHistoryReader: @escaping @Sendable () async throws -> HistoryReader
     ) {
         self.tunnelController = tunnelController
@@ -106,6 +111,18 @@ public final class AppEnvironment {
             // usuario puede retirar la confianza del certificado desde los Ajustes de iOS entre dos
             // visitas a la pantalla, así que es lo contrario de un valor que se pueda guardar.
             availability: { await certificates.availability() }
+        )
+        self.audit = AuditViewModel(
+            library: auditLibrary,
+            environment: { AuditRecordingConditions.environment() },
+            // El mismo almacén y el mismo lector de la CA que Ajustes: lo que una sesión declara
+            // sobre la inspección tiene que ser lo que Ajustes enseña en ese instante.
+            inspection: {
+                AuditRecordingConditions.inspection(
+                    loadSettings: { try settingsStore.load() },
+                    availability: await certificates.availability()
+                )
+            }
         )
         self.diagnostics = AppEnvironment.makeDiagnostics(controller: tunnelController)
         // El mismo lector que alimenta esa closure, y el mismo almacén que edita Ajustes: el flujo
@@ -146,6 +163,7 @@ public final class AppEnvironment {
             // La CA del llavero compartido: los mismos items que usa la extensión para firmar leaves,
             // no una copia publicada de su estado (`CertificateStatusReader`).
             certificates: CertificateStatusReader(),
+            auditLibrary: AuditLibrary(),
             makeHistoryReader: {
                 HistoryReader(store: try FlowStore(appGroupID: AppGroup.identifier))
             }

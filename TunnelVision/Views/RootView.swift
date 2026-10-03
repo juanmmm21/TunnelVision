@@ -9,6 +9,7 @@ enum RootTab: Hashable {
     case dashboard
     case timeline
     case captures
+    case audit
     case settings
 }
 
@@ -19,6 +20,10 @@ struct RootView: View {
 
     @State private var selection: RootTab = .dashboard
 
+    /// La pila de la pestaña de auditoría. Vive aquí y no en su pantalla porque la Dashboard lleva
+    /// a la sesión abierta, y eso es escribir esta pila desde otra pestaña.
+    @State private var auditPath: [AuditRoute] = []
+
     /// Volver a primer plano es cuando el usuario puede haber estado justo en los Ajustes de iOS
     /// retirando la confianza del certificado, así que es cuando hay que volver a preguntar.
     @Environment(\.scenePhase) private var scenePhase
@@ -27,7 +32,9 @@ struct RootView: View {
         TabView(selection: $selection) {
             DashboardView(
                 controller: environment.tunnelController,
-                viewModel: environment.dashboard
+                viewModel: environment.dashboard,
+                audit: environment.audit,
+                onOpenAuditSession: openAuditSession
             )
             // La copia se muda pantalla a pantalla: tres pestañas ya salen del catálogo y solo la de
             // Ajustes sigue con su literal (y con el inglés de clave) hasta que le toque.
@@ -54,6 +61,12 @@ struct RootView: View {
                 Label(CapturesPresentation.tabTitle, systemImage: "externaldrive")
             }
             .tag(RootTab.captures)
+
+            AuditView(viewModel: environment.audit, path: $auditPath)
+                .tabItem {
+                    Label(AuditPresentation.tabTitle, systemImage: "checklist")
+                }
+                .tag(RootTab.audit)
 
             SettingsView(
                 controller: environment.tunnelController,
@@ -104,6 +117,15 @@ struct RootView: View {
     /// y esa regla ya está probada en `MonitoringPresentation`. Lo que sí es de aquí es **llevar al
     /// usuario a donde va a pasar algo**: el intro se puede haber pedido desde Ajustes, y dejar la
     /// petición en una pestaña que no se está mirando la haría invisible.
+    /// Lleva a la sesión de auditoría abierta desde la franja de la Dashboard.
+    ///
+    /// La pila se escribe **entera** —proyecto y sesión— y no solo su final: volver atrás desde la
+    /// sesión tiene que caer en su proyecto, que es de donde se habría llegado andando.
+    private func openAuditSession(_ banner: AuditRecordingBanner) {
+        auditPath = [.project(banner.projectID), .session(banner.sessionID)]
+        selection = .audit
+    }
+
     private func handle(_ outcome: IntroOutcome?) {
         guard let outcome else { return }
         environment.intro.acknowledgeOutcome()
