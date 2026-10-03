@@ -61,6 +61,30 @@
         }
       }
     },
+    "audit.control.status.idle" : {
+      "comment" : "Status line of the Control Center control that places an audit marker, when no audit session is open: pressing it will record nothing.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No session recording"
+          }
+        }
+      }
+    },
+    "audit.control.status.unavailable" : {
+      "comment" : "Status line of the Control Center control that places an audit marker, when the app's database could not be read.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "History unavailable"
+          }
+        }
+      }
+    },
     "audit.empty.message" : {
       "comment" : "Message of the empty audit screen. It says what the feature is for in one sentence — evidence of an app's network behaviour for a security assessment — without naming any standard.",
       "extractionState" : "extracted_with_value",
@@ -261,6 +285,126 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Save"
+          }
+        }
+      }
+    },
+    "audit.intent.description" : {
+      "comment" : "Description of the Shortcuts action that places a marker in the open audit session.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Marks this instant in the audit session that is recording, without opening TunnelVision. If no session is recording, nothing is marked and the action says so."
+          }
+        }
+      }
+    },
+    "audit.intent.error.noOpenSession" : {
+      "comment" : "Error shown by Shortcuts or Siri when the audit marker action ran with no audit session open. It must say plainly that nothing was recorded.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No marker was placed: no audit session is recording. Start one in TunnelVision first."
+          }
+        }
+      }
+    },
+    "audit.intent.error.notPlaced" : {
+      "comment" : "Error shown by Shortcuts or Siri when the audit marker action could not write the marker. It must say plainly that nothing was recorded.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No marker was placed: TunnelVision couldn't write to its history. Open the app and try again."
+          }
+        }
+      }
+    },
+    "audit.intent.marker.consentGiven" : {
+      "comment" : "Audit marker offered by the Shortcuts action and the Control Center control: the user accepted the audited app's consent screen at this instant.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Consent given"
+          }
+        }
+      }
+    },
+    "audit.intent.marker.loggedIn" : {
+      "comment" : "Audit marker offered by the Shortcuts action and the Control Center control: the user signed in to the audited app at this instant.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Logged in"
+          }
+        }
+      }
+    },
+    "audit.intent.marker.loggedOut" : {
+      "comment" : "Audit marker offered by the Shortcuts action and the Control Center control: the user signed out of the audited app at this instant.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Logged out"
+          }
+        }
+      }
+    },
+    "audit.intent.marker.type" : {
+      "comment" : "Name of the kind of value an audit marker is, as the Shortcuts app shows it.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Audit Marker"
+          }
+        }
+      }
+    },
+    "audit.intent.parameter.marker" : {
+      "comment" : "Name of the parameter of the audit marker action that chooses which marker to place.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Marker"
+          }
+        }
+      }
+    },
+    "audit.intent.placed" : {
+      "comment" : "Confirmation after an audit marker was placed from Shortcuts, Siri or a control. First the marker's name, then the time to the second, then the audit project's name.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "“%1$@” marked at %2$@ in %3$@."
+          }
+        }
+      }
+    },
+    "audit.intent.title" : {
+      "comment" : "Name of the Shortcuts action that places a marker in the open audit session.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Place Audit Marker"
           }
         }
       }
@@ -1497,6 +1641,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Version, such as 2.4.0"
+          }
+        }
+      }
+    },
+    "audit.shortcut.title" : {
+      "comment" : "Short name of the app shortcut that places a marker in the open audit session.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Place Audit Marker"
           }
         }
       }
