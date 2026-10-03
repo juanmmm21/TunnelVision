@@ -146,6 +146,30 @@ has to be repeated. And `idb list-targets` **fails** with `No such file or direc
 connection. It is not a broken setup — `idb connect` and `idb ui …` work over the port regardless,
 so use the UDID you already know rather than trying to list it.
 
+**With Xcode 27 the companion can read but not tap** (seen 2026-10-03, idb-companion 1.1.8):
+`idb ui tap` fails with *SimulatorKit is required for HID interactions … does not exist*, because
+Xcode moved `SimulatorKit.framework` from `Contents/Developer/Library/PrivateFrameworks/` to
+`Contents/SharedFrameworks/` and the companion looks only in the old place. `describe-all` keeps
+working, which makes it look like a half-broken setup. The way round that does not touch Xcode is to
+hand the companion a developer directory of symlinks with the framework where it expects it
+(`.build/` is git-ignored):
+
+```bash
+R=/Applications/Xcode.app/Contents; F=$PWD/.build/tmp/FakeXcode.app/Contents
+mkdir -p $F/Developer/Library/PrivateFrameworks
+for e in $R/*;                   do n=$(basename "$e"); [ "$n" = Developer ]         || ln -s "$e" "$F/$n"; done
+for e in $R/Developer/*;         do n=$(basename "$e"); [ "$n" = Library ]           || ln -s "$e" "$F/Developer/$n"; done
+for e in $R/Developer/Library/*; do n=$(basename "$e"); [ "$n" = PrivateFrameworks ] || ln -s "$e" "$F/Developer/Library/$n"; done
+ln -s $R/SharedFrameworks/SimulatorKit.framework $F/Developer/Library/PrivateFrameworks/
+DEVELOPER_DIR=$F/Developer ./bin/idb_companion --udid <UDID> --grpc-port 10882 &
+```
+
+**Stop the companion before running the test suite.** With it attached to the Simulator the relay
+tests — the ones that open real loopback connections — time out one at a time, a different one on
+every run, even on an idle machine: 1826/0 three times in a row with the companion stopped, one red
+test in each of four runs with it running. It reads exactly like the load-induced flake of
+`RelayInspectionTests`, and it is not load.
+
 ### Hearing a screen without ears
 
 The third thing the accessibility pass needs is a way to know **what VoiceOver would say**, and it
