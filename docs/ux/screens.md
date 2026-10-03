@@ -14,6 +14,7 @@ Onboarding (first run only)
    ├─ Dashboard ──▶ Flow Inspector
    ├─ Timeline  ──▶ Flow Inspector ──▶ Packet detail
    ├─ Captures  ──▶ Share (.pcap / JSON)
+   ├─ Audit     ──▶ Project ──▶ Session
    └─ Settings  ──▶ TLS inspection setup (CA flow)
                  ├─ Storage
                  ├─ Introduction ──▶ Onboarding (replayed on demand)
@@ -23,6 +24,9 @@ Onboarding (first run only)
 
 The onboarding is not a one-way door: Settings can bring it back, which is what makes skipping it
 safe (see [`onboarding-and-consent.md`](onboarding-and-consent.md)).
+
+The **Audit** tab has a page of its own, [`audit.md`](audit.md): projects, sessions and markers, and
+the strip the Dashboard shows while a session is recording.
 
 ## Dashboard
 **Purpose:** at-a-glance live view + one-tap monitoring control.

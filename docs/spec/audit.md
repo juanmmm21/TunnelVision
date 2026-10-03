@@ -229,6 +229,7 @@ extension FlowStore {
     public func markers(forSession id: Int64) throws -> [SessionMarker]        // as they happened
 
     public func flows(inAuditSession id: Int64, limit: Int) throws -> [StoredFlow]    // oldest first
+    public func flowCount(inAuditSession id: Int64) throws -> Int
     public func captureFileSequences(inAuditSession id: Int64) throws -> Set<UInt32>
     public func auditEvidenceFileSequences() throws -> Set<UInt32>             // of every session
 }
@@ -248,6 +249,23 @@ extension FlowStore {
 - `flows(inAuditSession:)` is ordered by `first_seen` **ascending**, the opposite of `recentFlows`.
   The Timeline is read from now backwards; evidence is read as it happened.
 - Domain-rule violations throw `AuditStoreError`; an unreadable row throws `StoreError.corruptRow`.
+
+## From the app
+
+The app reaches all of this through `AuditLibrary` (`TunnelVision/Services`), an actor that opens the
+store per operation — like `StorageManager`, and for the same reasons — and classifies what it throws
+into `AuditLibraryError`: a **rule** the screen can do something about (`AuditStoreError`) or a
+**history** that did not answer. The screens are described in [`../ux/audit.md`](../ux/audit.md).
+
+What a session declares about its recording is not typed by anyone: `AuditRecordingConditions` reads
+the hardware model identifier (the simulated one on a Simulator, where `uname` reports the Mac's
+architecture), the system version and the tool version, and derives `InspectionConditions` from the
+saved settings and the trust evaluation of the CA. Settings that cannot be read count as inspection
+**off**, which is what the extension does with them.
+
+`-TVSeedFixture` seeds one project (`AuditFixture`, Debug-only) with a baseline and an audit session,
+both ended, each tagged with a quarter of the synthetic flows by the same path the extension takes —
+the session is open while its flows are written.
 
 ## Tests
 
