@@ -153,6 +153,87 @@ public enum Schema {
             try db.create(index: "plaintext_ts", on: "plaintext", columns: ["ts"])
         }
 
+        // v6 — los **proyectos y sesiones de auditoría** (ADR 0008), y a qué sesión pertenece cada
+        // flujo.
+        //
+        // Por qué una columna nueva y no la `session` que `flows` ya tiene: aquélla es la sesión de
+        // **captura** —el instante en que se abrió el store, un discriminador de la clave única— y
+        // ésta es una grabación que una persona abre, nombra y cierra. Una sesión de auditoría puede
+        // abarcar varias de captura (el túnel se reinicia en medio) y la mayoría de las de captura
+        // no pertenecen a ninguna.
+        migrator.registerMigration("v6") { db in
+            try db.create(table: "audit_projects") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("name", .text).notNull()
+                t.column("bundle_id", .text)
+                t.column("catalogue_version", .text)
+                t.column("created_at", .integer).notNull()
+            }
+
+            try db.create(table: "audit_allowlist") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("project_id", .integer).notNull()
+                    .references("audit_projects", onDelete: .cascade)
+                // El orden en que se escribió, que el `rowid` no garantiza si la lista se reescribe.
+                t.column("position", .integer).notNull()
+                // La forma canónica de `DomainPattern.text`: ya normalizada, así que la unicidad
+                // de abajo no depende de mayúsculas ni de un punto final.
+                t.column("pattern", .text).notNull()
+                t.column("note", .text)
+                t.uniqueKey(["project_id", "pattern"])
+            }
+
+            try db.create(table: "audit_sessions") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("project_id", .integer).notNull()
+                    .references("audit_projects", onDelete: .cascade)
+                t.column("kind", .integer).notNull()
+                // Solo las tiene una sesión de auditoría; una baseline se graba sin la app.
+                t.column("app_version", .text)
+                t.column("build_number", .text)
+                t.column("device_model", .text).notNull()
+                t.column("os_version", .text).notNull()
+                t.column("tool_version", .text).notNull()
+                t.column("inspection_enabled", .boolean).notNull()
+                t.column("ca_trusted", .boolean).notNull()
+                t.column("started_at", .integer).notNull()
+                t.column("ended_at", .integer)
+                t.column("notes", .text).notNull()
+            }
+            try db.create(
+                index: "audit_sessions_project", on: "audit_sessions", columns: ["project_id", "started_at"]
+            )
+            // Como mucho **una** sesión abierta en toda la BD. No es solo higiene: `upsertFlow`
+            // etiqueta cada flujo nuevo con «la sesión abierta», y con dos esa frase no significa
+            // nada. La regla vive en el esquema porque escriben dos procesos.
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX audit_sessions_single_open
+                ON audit_sessions ((ended_at IS NULL)) WHERE ended_at IS NULL
+                """)
+
+            try db.create(table: "audit_markers") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("session_id", .integer).notNull()
+                    .references("audit_sessions", onDelete: .cascade)
+                t.column("ts", .integer).notNull()
+                t.column("kind", .integer).notNull()
+                // Solo para el marcador libre.
+                t.column("label", .text)
+            }
+            try db.create(index: "audit_markers_session", on: "audit_markers", columns: ["session_id", "ts"])
+
+            // `SET NULL` y no cascade: borrar una sesión de auditoría retira la etiqueta, no el
+            // historial. El flujo ocurrió igual, y la Timeline no tiene por qué perderlo porque
+            // alguien descartó un proyecto.
+            try db.alter(table: "flows") { t in
+                t.add(column: "audit_session_id", .integer)
+                    .references("audit_sessions", onDelete: .setNull)
+            }
+            try db.create(
+                index: "flows_audit_session", on: "flows", columns: ["audit_session_id", "first_seen"]
+            )
+        }
+
         return migrator
     }
 }

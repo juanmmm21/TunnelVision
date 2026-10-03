@@ -25,7 +25,8 @@ public actor FlowStore {
         case corruptRow(String)
     }
 
-    private let dbPool: DatabasePool
+    /// Sin `private`: la mitad de auditoría del store vive en `FlowStore+Audit.swift`.
+    let dbPool: DatabasePool
     private let databaseURL: URL
     private let anchor: MonotonicAnchor
 
@@ -77,6 +78,13 @@ public actor FlowStore {
     /// estado agregado: `last_seen`, contadores, `tls_status` y `sni` se fijan a los del record (el
     /// llamante — la tabla de flujos en memoria — mantiene los totales acumulados); `first_seen`
     /// conserva el mínimo. Devuelve el `rowid` del flujo, con el que enlazar sus paquetes.
+    ///
+    /// Si hay una **sesión de auditoría abierta**, el flujo queda etiquetado con ella. La sesión se
+    /// lee de la propia BD en la misma sentencia, así que la extensión no necesita que nadie le avise
+    /// de que la app abrió una: la BD compartida ya es ese aviso. Un flujo que venía de antes y sigue
+    /// vivo se etiqueta en su siguiente volcado —tuvo tráfico durante la sesión, y dejarlo fuera
+    /// sería esconderle al informe una conexión que estaba abierta—, y uno ya etiquetado no cambia de
+    /// sesión aunque sobreviva a la suya.
     @discardableResult
     public func upsertFlow(_ record: FlowRecord) throws -> Int64 {
         let key = record.key
@@ -88,8 +96,10 @@ public actor FlowStore {
                 sql: """
                 INSERT INTO flows
                     (session, proto, addr_a, port_a, addr_b, port_b,
-                     first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
+                     audit_session_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        (SELECT id FROM audit_sessions WHERE ended_at IS NULL))
                 ON CONFLICT (session, proto, addr_a, port_a, addr_b, port_b) DO UPDATE SET
                     last_seen = excluded.last_seen,
                     bytes_out = excluded.bytes_out,
@@ -97,7 +107,8 @@ public actor FlowStore {
                     packet_count = excluded.packet_count,
                     tls_status = excluded.tls_status,
                     sni = excluded.sni,
-                    first_seen = min(flows.first_seen, excluded.first_seen)
+                    first_seen = min(flows.first_seen, excluded.first_seen),
+                    audit_session_id = COALESCE(flows.audit_session_id, excluded.audit_session_id)
                 """,
                 arguments: [
                     session,
@@ -286,6 +297,58 @@ public actor FlowStore {
                 arguments: [id]
             )
             return try row.map(Serialization.storedFlow(from:))
+        }
+    }
+
+    /// Los flujos etiquetados con una sesión de auditoría, del primero que empezó al último.
+    ///
+    /// El orden es el contrario al de `recentFlows` a propósito: la Timeline se lee de ahora hacia
+    /// atrás, y una evidencia se lee como ocurrió — qué conexión fue antes del consentimiento es una
+    /// pregunta sobre el principio.
+    public func flows(inAuditSession id: Int64, limit: Int) throws -> [StoredFlow] {
+        try dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT id, proto, addr_a, port_a, addr_b, port_b,
+                       first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni
+                FROM flows
+                WHERE audit_session_id = ?
+                ORDER BY first_seen ASC, id ASC
+                LIMIT ?
+                """,
+                arguments: [id, limit]
+            )
+            return try rows.map(Serialization.storedFlow(from:))
+        }
+    }
+
+    /// Los ficheros de captura que guardan bytes de una sesión de auditoría.
+    ///
+    /// Los ficheros no llevan la sesión escrita en ningún sitio: se **deriva** de los paquetes de sus
+    /// flujos, que ya dicen en qué fichero están. Una segunda marca en el nombre o en una tabla sería
+    /// el mismo hecho dicho dos veces, y un `.pcap` rota por tamaño, no por sesión, así que uno solo
+    /// puede llevar tráfico de dentro y de fuera.
+    public func captureFileSequences(inAuditSession id: Int64) throws -> Set<UInt32> {
+        try dbPool.read { db in
+            let values = try Int64.fetchAll(
+                db,
+                sql: """
+                SELECT DISTINCT p.pcap_file
+                FROM packets p
+                JOIN flows f ON f.id = p.flow_id
+                WHERE f.audit_session_id = ? AND p.pcap_offset != 0
+                """,
+                arguments: [id]
+            )
+            var sequences: Set<UInt32> = []
+            for value in values {
+                guard let sequence = UInt32(exactly: value) else {
+                    throw StoreError.corruptRow("pcap_file fuera de rango: \(value)")
+                }
+                sequences.insert(sequence)
+            }
+            return sequences
         }
     }
 
