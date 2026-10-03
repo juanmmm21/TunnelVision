@@ -17,4 +17,9 @@ per interval rather than flows alive per interval — a packet falls in exactly 
 spans many — and they honour no filter at all, because the screen's host filter is resolved in memory
 over the displayed host and an axis honouring half the criteria would look filtered without being it.
 
+`FlowStore+Audit.swift` (schema v6) is the audit half: projects with their allowlist, named sessions
+and markers. The app writes it; the extension only reads it in passing, inside `upsertFlow`, which tags
+each flow with the audit session open at that moment — read from the database in the same statement, so
+no message between the processes is needed. Spec: [`../../docs/spec/audit.md`](../../docs/spec/audit.md).
+
 **Spec:** [`../../docs/spec/persistence.md`](../../docs/spec/persistence.md) · **Milestone:** M2

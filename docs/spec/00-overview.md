@@ -10,6 +10,7 @@ change the spec in the same commit.
 Shared (framework, linked into both targets)
 ├── Models        value types: FlowKey, FlowRecord, PacketMeta, headers, enums   → data-model.md
 ├── Persistence   GRDB store (FlowStore actor), schema, migrations               → persistence.md
+├── Audit         audit projects, sessions, markers, domain allowlist            → audit.md
 ├── Capture       streaming pcap writer (moved here in M11)                      → pcap.md
 ├── Plaintext     decrypted-content writer, format and per-flow budget           → plaintext.md
 └── IPC           ring buffer + Darwin signal + control-channel codec            → ipc.md

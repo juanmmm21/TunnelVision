@@ -121,6 +121,11 @@ public enum Schema {
             try db.create(index: "plaintext_flow_id", on: "plaintext", columns: ["flow_id", "ts"])
             try db.create(index: "plaintext_ts", on: "plaintext", columns: ["ts"])
         }
+
+        // v6 — proyectos, sesiones y marcadores de auditoría, y `flows.audit_session_id`.
+        // El layout y el porqué de cada regla están en `audit.md`.
+        m.registerMigration("v6") { db in /* audit_projects, audit_allowlist, audit_sessions,
+                                             audit_markers, flows.audit_session_id */ }
         return m
     }
 }
@@ -273,6 +278,13 @@ introducirá un reloj monotónico cuando lo necesite el código productor (parse
   cover everything stored, including the connections the list is hiding: the host filter is resolved
   in memory over the *displayed* host, so honouring some criteria and not others would leave an axis
   that looks filtered without being it. Saying so belongs to the screen.
+
+## The audit half
+
+Since `v6` the same database holds the audit projects, sessions and markers of the TR-03161 workflow,
+and `upsertFlow` tags every flow it writes with the open audit session, read from the database in the
+same statement. That API (`FlowStore+Audit.swift`), its schema and the rules for which session a flow
+belongs to are specified in [`audit.md`](audit.md).
 
 ## Concurrency
 
