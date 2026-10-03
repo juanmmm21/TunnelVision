@@ -323,6 +323,16 @@ public actor FlowStore {
         }
     }
 
+    /// Cuántos flujos lleva una sesión de auditoría. Es la cifra que su pantalla enseña mientras
+    /// graba: sin ella no hay forma de ver que el etiquetado está pasando.
+    public func flowCount(inAuditSession id: Int64) throws -> Int {
+        try dbPool.read { db in
+            try Int.fetchOne(
+                db, sql: "SELECT COUNT(*) FROM flows WHERE audit_session_id = ?", arguments: [id]
+            ) ?? 0
+        }
+    }
+
     /// Los ficheros de captura que guardan bytes de una sesión de auditoría.
     ///
     /// Los ficheros no llevan la sesión escrita en ningún sitio: se **deriva** de los paquetes de sus

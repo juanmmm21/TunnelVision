@@ -101,6 +101,12 @@ unenforced; files are deleted **before** the history is pruned, because the fail
 one the app already explains; and it throws only when it could not even list the directory — everything
 partial, including a history that would not open, comes back inside the `RetentionOutcome`.
 
+**Audit (TR-03161 workflow).** `AuditLibrary` is the app's door to audit projects, sessions and
+markers over the shared `FlowStore`; it opens the store per operation and types what it throws
+(`AuditLibraryError`). `AuditRecordingConditions` reads what a session declares about its recording —
+device, system, tool version, inspection state — from the device instead of asking for it. Spec:
+`docs/spec/audit.md`; screens: `docs/ux/audit.md`.
+
 **Flow export (M9, done).** `FlowExporter` writes the connection list as JSON for the Captures
 screen's share sheet, over `HistoryReader.flowPage(limit:after:)` — a page read that carries its own
 cursor and touches none of the Timeline's paging state, so exporting cannot move the list the user has
