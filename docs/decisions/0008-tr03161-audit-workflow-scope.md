@@ -1,6 +1,6 @@
 # 0008 — TR-03161 audit workflow: scope, publication and attribution
 
-- Status: Accepted
+- Status: Accepted — decision (2), publication, superseded by [0009](0009-development-in-the-public-repository.md)
 - Date: 2026-10-03
 
 ## Context

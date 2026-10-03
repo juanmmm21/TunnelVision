@@ -246,8 +246,9 @@ Details and fixtures in [`04-testing-strategy.md`](04-testing-strategy.md).
 
   and before every push run `scripts/verify-author.sh` from the templates.
 - **`AGENTS.md`, `CLAUDE.md`, `START_HERE.md` are git-ignored** and must never be tracked.
-- **Never push to the public repo** (`TunnelVision`). This repo (`TunnelVisionDev`) is where
-  development happens.
+- **This repository is where development happens, and it is public**
+  ([ADR 0009](../decisions/0009-development-in-the-public-repository.md)). Push only finished, green
+  increments, and never commit a roadmap, a progress log or a plan with open steps.
 
 ## Definition of done for a unit of work
 
