@@ -331,25 +331,53 @@ public actor FlowStore {
     /// puede llevar tráfico de dentro y de fuera.
     public func captureFileSequences(inAuditSession id: Int64) throws -> Set<UInt32> {
         try dbPool.read { db in
-            let values = try Int64.fetchAll(
-                db,
-                sql: """
-                SELECT DISTINCT p.pcap_file
-                FROM packets p
-                JOIN flows f ON f.id = p.flow_id
-                WHERE f.audit_session_id = ? AND p.pcap_offset != 0
-                """,
-                arguments: [id]
+            try Self.fileSequences(
+                from: Int64.fetchAll(
+                    db,
+                    sql: """
+                    SELECT DISTINCT p.pcap_file
+                    FROM packets p
+                    JOIN flows f ON f.id = p.flow_id
+                    WHERE f.audit_session_id = ? AND p.pcap_offset != 0
+                    """,
+                    arguments: [id]
+                )
             )
-            var sequences: Set<UInt32> = []
-            for value in values {
-                guard let sequence = UInt32(exactly: value) else {
-                    throw StoreError.corruptRow("pcap_file fuera de rango: \(value)")
-                }
-                sequences.insert(sequence)
-            }
-            return sequences
         }
+    }
+
+    /// Los ficheros de captura que guardan bytes de **alguna** sesión de auditoría: los que la
+    /// retención no puede borrar.
+    ///
+    /// Es una consulta propia y no la unión de `captureFileSequences(inAuditSession:)` sesión a
+    /// sesión porque quien la hace es el barrido —también el de la extensión, al rotar— y lo que
+    /// necesita es una sola respuesta tomada en un solo instante: entre dos consultas puede abrirse
+    /// una sesión, y su fichero quedaría fuera de la lista justo cuando se decide a quién borrar.
+    public func auditEvidenceFileSequences() throws -> Set<UInt32> {
+        try dbPool.read { db in
+            try Self.fileSequences(
+                from: Int64.fetchAll(
+                    db,
+                    sql: """
+                    SELECT DISTINCT p.pcap_file
+                    FROM packets p
+                    JOIN flows f ON f.id = p.flow_id
+                    WHERE f.audit_session_id IS NOT NULL AND p.pcap_offset != 0
+                    """
+                )
+            )
+        }
+    }
+
+    private static func fileSequences(from values: [Int64]) throws -> Set<UInt32> {
+        var sequences: Set<UInt32> = []
+        for value in values {
+            guard let sequence = UInt32(exactly: value) else {
+                throw StoreError.corruptRow("pcap_file fuera de rango: \(value)")
+            }
+            sequences.insert(sequence)
+        }
+        return sequences
     }
 
     /// Mayor secuencia de fichero de captura que el historial referencia, o `nil` si ningún paquete
@@ -542,11 +570,15 @@ public actor FlowStore {
     /// también sus paquetes. Devuelve el número de flujos borrados. Aplica el tope de retención que
     /// la app expone en Ajustes → Almacenamiento, que es por **antigüedad real**: por eso el corte es
     /// una fecha y no un sello monotónico, que no sobreviviría a un reinicio del dispositivo.
+    ///
+    /// **Los flujos de una sesión de auditoría no caducan**: son evidencia, y con el tope de fábrica
+    /// de una semana se irían antes de que nadie los exportara. Se quedan hasta que se borre su
+    /// sesión o su proyecto, que es lo que les quita la etiqueta (`docs/spec/audit.md`).
     @discardableResult
     public func prune(before cutoff: Date) throws -> Int {
         try dbPool.write { db in
             try db.execute(
-                sql: "DELETE FROM flows WHERE last_seen < ?",
+                sql: "DELETE FROM flows WHERE last_seen < ? AND audit_session_id IS NULL",
                 arguments: [WallClock.nanosecondsSince1970(from: cutoff)]
             )
             return db.changesCount

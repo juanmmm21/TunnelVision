@@ -44,6 +44,13 @@ public final class CapturesViewModel {
     /// como esta pantalla cuenta lo que no salió sin tapar lo que el usuario está mirando.
     public private(set) var retention: RetentionSettings?
 
+    /// Los ficheros que guardan evidencia de una sesión de auditoría, o `nil` si no se pudo saber.
+    ///
+    /// Sin ellos la pantalla tampoco compara nada, por lo mismo que sin topes: la retención no borra
+    /// evidencia, así que una comparación hecha sin saber cuál es prometería borrados que no van a
+    /// ocurrir.
+    public private(set) var evidenceSequences: Set<UInt32>?
+
     /// El instante de la última lectura, que es contra el que se mide la antigüedad.
     ///
     /// Se guarda en vez de preguntarle la hora al reloj en cada repintado por dos razones que van
@@ -64,6 +71,10 @@ public final class CapturesViewModel {
     /// pantalla tiene que saber pintarse igual cuando eso pasa.
     private let loadRetention: @Sendable () throws -> RetentionSettings
 
+    /// Qué ficheros guardan evidencia de auditoría. Closure por lo mismo que los topes: lo que hay
+    /// detrás es el historial, que puede no dejarse abrir, y la pantalla tiene que pintarse igual.
+    private let loadEvidence: @Sendable () async throws -> Set<UInt32>
+
     /// El reloj. Inyectable porque de él cuelga la única cifra de esta pantalla que cambia sola: la
     /// fecha en que caduca la captura más antigua.
     private let now: @Sendable () -> Date
@@ -73,12 +84,14 @@ public final class CapturesViewModel {
         rotateCapture: @escaping @Sendable () async throws -> ControlResponse,
         exportConnections: @escaping @Sendable () async throws -> FlowExportResult,
         loadRetention: @escaping @Sendable () throws -> RetentionSettings,
+        loadEvidence: @escaping @Sendable () async throws -> Set<UInt32>,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.library = library
         self.rotateCapture = rotateCapture
         self.exportConnections = exportConnections
         self.loadRetention = loadRetention
+        self.loadEvidence = loadEvidence
         self.now = now
     }
 
@@ -115,7 +128,16 @@ public final class CapturesViewModel {
             // El mismo almacén que edita Ajustes, porque es el mismo blob: si esta pantalla leyera
             // los topes de otro sitio, la comparación que enseña y los topes que el usuario eligió
             // podrían ser dos verdades distintas.
-            loadRetention: { try settingsStore.load().retention }
+            loadRetention: { try settingsStore.load().retention },
+            // El historial se abre aquí por lo mismo que en el export: es de donde sale qué ficheros
+            // llevan tráfico de una sesión de auditoría, y un fallo al abrirlo viaja tipado.
+            loadEvidence: {
+                do {
+                    return try await makeHistoryReader().auditEvidenceFileSequences()
+                } catch {
+                    throw HistoryError.classifying(error)
+                }
+            }
         )
     }
 
@@ -130,6 +152,7 @@ public final class CapturesViewModel {
         if files.isEmpty { state = .loading }
         measuredAt = now()
         readRetention()
+        await readEvidence()
         do {
             files = try await library.files()
             state = .loaded
@@ -277,12 +300,13 @@ public final class CapturesViewModel {
     /// La única entrada que sí se congela es el instante (`measuredAt`), porque medir la antigüedad
     /// contra un reloj que corre haría que un repintado cualquiera cambiara la respuesta.
     public var headroom: CaptureHeadroom? {
-        guard let retention else { return nil }
+        guard let retention, let evidenceSequences else { return nil }
         return CaptureHeadroom.reading(
             files: files,
             settings: retention,
             now: measuredAt,
-            recordingSequence: recordingSequence
+            recordingSequence: recordingSequence,
+            evidenceSequences: evidenceSequences
         )
     }
 
@@ -313,6 +337,17 @@ public final class CapturesViewModel {
         } catch {
             retention = nil
             notice = CapturesPresentation.retentionUnreadable(.corruptData(String(describing: error)))
+        }
+    }
+
+    /// Relee qué ficheros son evidencia. Mismo reparto que con los topes: lo que se pierde si falla
+    /// es la comparación, y se dice.
+    private func readEvidence() async {
+        do {
+            evidenceSequences = try await loadEvidence()
+        } catch {
+            evidenceSequences = nil
+            notice = CapturesPresentation.evidenceUnreadable(HistoryError.classifying(error))
         }
     }
 

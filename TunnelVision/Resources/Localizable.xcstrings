@@ -409,6 +409,30 @@
         }
       }
     },
+    "captures.headroom.evidenceUnreadable" : {
+      "comment" : "Notice on the captures screen when the history database cannot be read. Audit evidence is exempt from the storage limits and the database is what says which captures hold it, so the room summary is hidden and the cleanup deletes nothing rather than risk deleting evidence.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Your history couldn't be read, so this can't tell which captures hold audit evidence or how much room is left. No capture is cleaned up until it can."
+          }
+        }
+      }
+    },
+    "captures.headroom.expiry.evidenceOnly" : {
+      "comment" : "Said when an expiry is set but every capture that could expire holds traffic of an audit session. Audit evidence is exempt from the storage limits, so this names the one thing that does remove it.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "These captures hold audit evidence, which doesn't expire. They stay until you delete their audit session."
+          }
+        }
+      }
+    },
     "captures.headroom.expiry.label" : {
       "comment" : "Label of the row saying when the oldest capture will be deleted for being too old. Its value is the date, formatted by the device.",
       "extractionState" : "extracted_with_value",
@@ -554,7 +578,7 @@
       }
     },
     "captures.headroom.unmeetable.headline" : {
-      "comment" : "Headline of the room summary when the size limit cannot be honoured because the capture being recorded is already larger than it, and that file is never deleted.",
+      "comment" : "Headline of the room summary when the size limit cannot be honoured: either the capture being recorded is already larger than it, or the captures kept as audit evidence are. Neither is ever deleted by a cleanup; the sentence under this headline says which one it is.",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
@@ -5841,6 +5865,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Removed %@ connections from your history."
+          }
+        }
+      }
+    },
+    "settings.retention.sizeCapHeldByEvidence" : {
+      "comment" : "Why a size limit cannot be met: the captures that hold traffic of an audit session are exempt from the storage limits and alone are over it. Read in two places — the cleanup result in Settings and the room summary on the captures screen — so it names the only way out, deleting the audit session.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Captures kept as audit evidence already take more than your size limit. They stay until you delete their audit session."
           }
         }
       }

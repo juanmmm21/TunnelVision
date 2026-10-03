@@ -24,18 +24,29 @@ public struct RetentionPlan: Sendable, Equatable {
     /// limpieza no funciona.
     public let sizeCapUnreachable: Bool
 
+    /// El tope de tamaño no se cumple **por la evidencia de auditoría**: sin los ficheros que guardan
+    /// sesiones de auditoría, lo demás cabría. Solo puede ser cierto con `sizeCapUnreachable`.
+    ///
+    /// Va aparte porque las dos causas tienen salidas distintas y la pantalla tiene que nombrar la
+    /// suya: una grabación demasiado grande se arregla cerrando el fichero, y la evidencia solo se va
+    /// borrando su sesión. Cuando la grabación ya se pasa sola del tope, la causa que se dice es la
+    /// grabación, aunque también haya evidencia: es la que se resuelve antes.
+    public let sizeCapHeldByEvidence: Bool
+
     public init(
         historyCutoff: Date?,
         filesToDelete: [UInt32],
         bytesReclaimed: UInt64,
         captureBytesAfter: UInt64,
-        sizeCapUnreachable: Bool
+        sizeCapUnreachable: Bool,
+        sizeCapHeldByEvidence: Bool
     ) {
         self.historyCutoff = historyCutoff
         self.filesToDelete = filesToDelete
         self.bytesReclaimed = bytesReclaimed
         self.captureBytesAfter = captureBytesAfter
         self.sizeCapUnreachable = sizeCapUnreachable
+        self.sizeCapHeldByEvidence = sizeCapHeldByEvidence
     }
 
     /// Si el plan pide algo. Un corte de historial cuenta como trabajo aunque no haya ninguna fila
@@ -60,11 +71,16 @@ public enum RetentionPlanner {
     ///     orden cronológico).
     ///   - recordingSequence: el fichero que la extensión está escribiendo ahora mismo, si hay alguno
     ///     (`CapturesPresentation.recordingSequence`). Nunca entra en el plan.
+    ///   - evidenceSequences: los ficheros que guardan bytes de una sesión de auditoría
+    ///     (`FlowStore.auditEvidenceFileSequences()`). Tampoco entran nunca: la evidencia no caduca
+    ///     ni se va por tamaño, solo cuando se borra su sesión. No tiene valor por defecto a
+    ///     propósito — quien planifica sin haberlo preguntado estaría decidiendo borrar evidencia.
     public static func plan(
         files: [CaptureFileInfo],
         settings: RetentionSettings,
         now: Date,
-        recordingSequence: UInt32?
+        recordingSequence: UInt32?,
+        evidenceSequences: Set<UInt32>
     ) -> RetentionPlan {
         let ordered = files.sorted { $0.sequence < $1.sequence }
         let totalBytes = ordered.reduce(UInt64(0)) { $0 + $1.byteCount }
@@ -79,7 +95,8 @@ public enum RetentionPlanner {
         // lo más reciente, que es la propiedad que de verdad importa: no hay forma de perder una captura
         // reciente conservando otra más vieja.
         if let cutoff {
-            for (index, file) in ordered.enumerated() where file.sequence != recordingSequence {
+            for (index, file) in ordered.enumerated()
+            where file.sequence != recordingSequence && !evidenceSequences.contains(file.sequence) {
                 // Un fichero se deja de escribir cuando aparece el siguiente: el writer solo escribe en
                 // la secuencia más alta y nunca vuelve a una anterior. Así que lo que decide si un
                 // fichero es entero más viejo que el corte es la fecha de **su sucesor**, no la suya:
@@ -93,17 +110,29 @@ public enum RetentionPlanner {
         }
 
         var unreachable = false
+        var heldByEvidence = false
         if let maxBytes = settings.maxCaptureSize.maxBytes {
             var remaining = totalBytes - reclaimed
             // De la más antigua a la más reciente: si hay que perder capturas para caber, se pierden las
             // que menos falta hacen.
-            for file in ordered where !doomed.contains(file.sequence) && file.sequence != recordingSequence {
+            for file in ordered
+            where !doomed.contains(file.sequence)
+                && file.sequence != recordingSequence
+                && !evidenceSequences.contains(file.sequence) {
                 guard remaining > maxBytes else { break }
                 doomed.insert(file.sequence)
                 reclaimed += file.byteCount
                 remaining -= file.byteCount
             }
             unreachable = remaining > maxBytes
+            if unreachable {
+                // La grabación en curso puede ser además evidencia; se cuenta como grabación, que es
+                // la causa que se resuelve antes.
+                let evidenceBytes = ordered
+                    .filter { evidenceSequences.contains($0.sequence) && $0.sequence != recordingSequence }
+                    .reduce(UInt64(0)) { $0 + $1.byteCount }
+                heldByEvidence = remaining - evidenceBytes <= maxBytes
+            }
         }
 
         return RetentionPlan(
@@ -111,7 +140,8 @@ public enum RetentionPlanner {
             filesToDelete: ordered.map(\.sequence).filter { doomed.contains($0) },
             bytesReclaimed: reclaimed,
             captureBytesAfter: totalBytes - reclaimed,
-            sizeCapUnreachable: unreachable
+            sizeCapUnreachable: unreachable,
+            sizeCapHeldByEvidence: heldByEvidence
         )
     }
 }

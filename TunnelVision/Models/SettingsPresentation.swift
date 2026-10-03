@@ -1327,6 +1327,28 @@ public enum SettingsPresentation {
         )
     }
 
+    /// Por qué un tope de tamaño no se puede cumplir cuando lo que estorba es la **evidencia de
+    /// auditoría**: las capturas de una sesión de auditoría no se borran por tamaño ni por antigüedad,
+    /// solo al borrar su sesión.
+    ///
+    /// Pública y compartida con Captures por lo mismo que la de arriba, y aparte de ella porque la
+    /// salida es otra: cerrar el fichero abierto aquí no arregla nada.
+    public static var sizeCapHeldByEvidenceExplanation: String {
+        String(
+            localized: "settings.retention.sizeCapHeldByEvidence",
+            defaultValue: """
+                Captures kept as audit evidence already take more than your size limit. They stay \
+                until you delete their audit session.
+                """,
+            comment: """
+                Why a size limit cannot be met: the captures that hold traffic of an audit session \
+                are exempt from the storage limits and alone are over it. Read in two places — the \
+                cleanup result in Settings and the room summary on the captures screen — so it \
+                names the only way out, deleting the audit session.
+                """
+        )
+    }
+
     // MARK: - Resultado de una limpieza
 
     /// Qué contarle al usuario tras aplicar los topes.
@@ -1379,9 +1401,14 @@ public enum SettingsPresentation {
             )
         }
         // El tope incumplido se dice y se nombra la salida, en vez de dejar al usuario con su tope
-        // sin cumplir y sin explicación: la grabación en curso no se borra nunca.
+        // sin cumplir y sin explicación: ni la grabación en curso ni la evidencia de auditoría se
+        // borran nunca, y cada causa tiene su salida.
         if outcome.sizeCapUnreachable {
-            sentences.append(sizeCapUnreachableExplanation)
+            sentences.append(
+                outcome.sizeCapHeldByEvidence
+                    ? sizeCapHeldByEvidenceExplanation
+                    : sizeCapUnreachableExplanation
+            )
         }
 
         // Los dos barridos comparten frase de fallo: para el usuario lo que ha pasado es uno solo —

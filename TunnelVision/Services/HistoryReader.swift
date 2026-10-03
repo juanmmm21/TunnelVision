@@ -175,6 +175,19 @@ public actor HistoryReader {
         }
     }
 
+    /// Los ficheros de captura que guardan evidencia de una sesión de auditoría, que la retención no
+    /// borra (`FlowStore.auditEvidenceFileSequences()`).
+    ///
+    /// Lo pregunta la pantalla de capturas para que lo que promete sobre los topes sea lo que el
+    /// barrido va a hacer de verdad. Lanza, como el resto de consultas puntuales.
+    public func auditEvidenceFileSequences() async throws -> Set<UInt32> {
+        do {
+            return try await store.auditEvidenceFileSequences()
+        } catch {
+            throw HistoryError.classifying(error)
+        }
+    }
+
     /// Una página del historial hacia atrás en el tiempo, **sin tocar el estado de la pantalla**.
     ///
     /// Es lo que consume el export del listado de conexiones (`FlowExporter`), y existe aparte de

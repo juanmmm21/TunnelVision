@@ -22,18 +22,24 @@ public struct RetentionOutcome: Sendable, Equatable {
     /// Que el tope de tamaño siga incumplido porque la grabación en curso pesa más que él.
     public let sizeCapUnreachable: Bool
 
+    /// Que lo que impide cumplirlo sea la evidencia de auditoría y no la grabación
+    /// (`RetentionPlan.sizeCapHeldByEvidence`).
+    public let sizeCapHeldByEvidence: Bool
+
     public init(
         deletedFiles: [UInt32] = [],
         bytesReclaimed: UInt64 = 0,
         prunedFlows: Int = 0,
         failures: [String] = [],
-        sizeCapUnreachable: Bool = false
+        sizeCapUnreachable: Bool = false,
+        sizeCapHeldByEvidence: Bool = false
     ) {
         self.deletedFiles = deletedFiles
         self.bytesReclaimed = bytesReclaimed
         self.prunedFlows = prunedFlows
         self.failures = failures
         self.sizeCapUnreachable = sizeCapUnreachable
+        self.sizeCapHeldByEvidence = sizeCapHeldByEvidence
     }
 
     /// Si algo cambió en el dispositivo. Que no cambiase nada y que fallase todo se distinguen por
@@ -110,7 +116,8 @@ public enum CaptureRetention {
             bytesReclaimed: reclaimed,
             prunedFlows: prunedFlows,
             failures: failures,
-            sizeCapUnreachable: plan.sizeCapUnreachable
+            sizeCapUnreachable: plan.sizeCapUnreachable,
+            sizeCapHeldByEvidence: plan.sizeCapHeldByEvidence
         )
     }
 }

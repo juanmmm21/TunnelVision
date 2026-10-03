@@ -29,13 +29,21 @@ public enum CaptureSizeStanding: Sendable, Equatable {
     /// respuesta a *¿me va a llenar el móvil?* es que sí, y por eso no se colapsa con `reached`.
     case unmeetable(used: UInt64, limit: UInt64)
 
+    /// El tope tampoco se puede cumplir, pero por otra razón: las capturas que guardan **evidencia
+    /// de auditoría** ya pesan más que él, y ésas no se van hasta que se borre su sesión
+    /// (`RetentionPlan.sizeCapHeldByEvidence`). Es un caso propio y no `unmeetable` porque la salida
+    /// es otra, y una pantalla que mandase a cerrar el fichero abierto estaría dando un consejo que
+    /// no arregla nada.
+    case heldByEvidence(used: UInt64, limit: UInt64)
+
     /// `RetentionSize.unlimited`: nada las corta por tamaño. Sigue habiendo tope de antigüedad — sin
     /// él esto no sería un `CaptureHeadroom.bounded`.
     case unlimited(used: UInt64)
 
     public var used: UInt64 {
         switch self {
-        case .within(let used, _), .reached(let used, _), .unmeetable(let used, _), .unlimited(let used):
+        case .within(let used, _), .reached(let used, _), .unmeetable(let used, _),
+             .heldByEvidence(let used, _), .unlimited(let used):
             used
         }
     }
@@ -43,7 +51,8 @@ public enum CaptureSizeStanding: Sendable, Equatable {
     /// El tope en bytes, o `nil` cuando no lo hay.
     public var limit: UInt64? {
         switch self {
-        case .within(_, let limit), .reached(_, let limit), .unmeetable(_, let limit): limit
+        case .within(_, let limit), .reached(_, let limit), .unmeetable(_, let limit),
+             .heldByEvidence(_, let limit): limit
         case .unlimited: nil
         }
     }
@@ -86,6 +95,11 @@ public enum CaptureExpiry: Sendable, Equatable {
     /// `RetentionAge.unlimited`: nada caduca. Es un tope que el usuario ha quitado a propósito, y por
     /// eso se dice — es la mitad de la respuesta a si esto va a llenar el dispositivo.
     case never
+
+    /// Hay tope de antigüedad, pero todo lo que podría caducar es **evidencia de auditoría**, que no
+    /// caduca. No es `undated`: ahí falta un instante que llegará solo, y aquí no va a llegar ninguno
+    /// mientras existan esas sesiones.
+    case evidenceOnly
 }
 
 /// Lo que la pantalla de capturas sabe decir de los topes, entero.
@@ -119,11 +133,14 @@ public enum CaptureHeadroom: Sendable, Equatable {
     ///   - recordingSequence: el fichero que la extensión está escribiendo, si hay alguno
     ///     (`CapturesPresentation.recordingSequence`). No se borra nunca, así que no caduca ni cuenta
     ///     como sitio recuperable.
+    ///   - evidenceSequences: los ficheros que guardan evidencia de una sesión de auditoría. La
+    ///     retención no los toca, así que tampoco caducan ni cuentan como sitio recuperable.
     public static func reading(
         files: [CaptureFileInfo],
         settings: RetentionSettings,
         now: Date,
-        recordingSequence: UInt32?
+        recordingSequence: UInt32?,
+        evidenceSequences: Set<UInt32>
     ) -> CaptureHeadroom {
         let ordered = files.sorted { $0.sequence < $1.sequence }
         let used = ordered.reduce(UInt64(0)) { $0 + $1.byteCount }
@@ -137,7 +154,8 @@ public enum CaptureHeadroom: Sendable, Equatable {
             files: ordered,
             settings: settings,
             now: now,
-            recordingSequence: recordingSequence
+            recordingSequence: recordingSequence,
+            evidenceSequences: evidenceSequences
         )
 
         return .bounded(
@@ -146,7 +164,8 @@ public enum CaptureHeadroom: Sendable, Equatable {
                 ordered: ordered,
                 maxAge: settings.maxAge.maxAge,
                 now: now,
-                recordingSequence: recordingSequence
+                recordingSequence: recordingSequence,
+                evidenceSequences: evidenceSequences
             )
         )
     }
@@ -155,6 +174,7 @@ public enum CaptureHeadroom: Sendable, Equatable {
 
     private static func standing(used: UInt64, limit: UInt64?, plan: RetentionPlan) -> CaptureSizeStanding {
         guard let limit else { return .unlimited(used: used) }
+        if plan.sizeCapHeldByEvidence { return .heldByEvidence(used: used, limit: limit) }
         if plan.sizeCapUnreachable { return .unmeetable(used: used, limit: limit) }
         guard used < limit else { return .reached(used: used, limit: limit) }
         return .within(used: used, limit: limit)
@@ -168,17 +188,28 @@ public enum CaptureHeadroom: Sendable, Equatable {
         ordered: [CaptureFileInfo],
         maxAge: TimeInterval?,
         now: Date,
-        recordingSequence: UInt32?
+        recordingSequence: UInt32?,
+        evidenceSequences: Set<UInt32>
     ) -> CaptureExpiry {
         guard let maxAge else { return .never }
 
         var dates: [Date] = []
-        for (index, file) in ordered.enumerated() where file.sequence != recordingSequence {
+        var hasCandidates = false
+        for (index, file) in ordered.enumerated()
+        where file.sequence != recordingSequence && !evidenceSequences.contains(file.sequence) {
+            hasCandidates = true
             guard index + 1 < ordered.count, let closedAt = ordered[index + 1].createdAt else { continue }
             dates.append(closedAt.addingTimeInterval(maxAge))
         }
 
-        guard let soonest = dates.min() else { return .undated }
+        guard let soonest = dates.min() else {
+            // Sin ningún fichero que pueda caducar y con evidencia en el directorio, prometer una
+            // fecha «cuando se cierre el fichero» sería prometer algo que no va a pasar.
+            let holdsEvidence = ordered.contains {
+                evidenceSequences.contains($0.sequence) && $0.sequence != recordingSequence
+            }
+            return !hasCandidates && holdsEvidence ? .evidenceOnly : .undated
+        }
 
         // `<` y no `<=`, que es exactamente el corte del planificador (`closedAt < now - maxAge`): una
         // captura que caduca justo ahora todavía no está en ningún plan de borrado.

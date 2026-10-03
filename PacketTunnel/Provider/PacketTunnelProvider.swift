@@ -833,12 +833,25 @@ actor TunnelRuntime {
         let settings = Self.loadSettings().retention
         guard !settings.isUnlimited else { return }
 
+        // La evidencia de auditoría no se barre. Si no se puede saber cuál es, no se borra nada en
+        // esta rotación: un tope pasado unos megas se arregla en la siguiente, una evidencia borrada
+        // no se arregla.
+        let evidence: Set<UInt32>
+        do {
+            evidence = try await store.auditEvidenceFileSequences()
+        } catch {
+            retentionCounters.failures += 1
+            retentionCounters.lastError = "Audit evidence couldn't be read: \(String(describing: error))"
+            return
+        }
+
         let files = CaptureDirectory.fileInfos(in: directory)
         let plan = RetentionPlanner.plan(
             files: files,
             settings: settings,
             now: Date(),
-            recordingSequence: current
+            recordingSequence: current,
+            evidenceSequences: evidence
         )
         guard plan.hasWork else { return }
 

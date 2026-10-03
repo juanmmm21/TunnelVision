@@ -89,7 +89,8 @@ public actor StorageManager {
     /// Aplica los topes de retención ahora.
     ///
     /// Lanza **solo** si no se pudo ni empezar (sin listado no hay plan que hacer); todo lo demás vuelve
-    /// dentro del `RetentionOutcome`, incluido que el historial no se dejase abrir. Es el mismo reparto
+    /// dentro del `RetentionOutcome`, incluido que el historial no se dejase abrir — que desde que hay
+    /// evidencia de auditoría significa que no se borra nada. Es el mismo reparto
     /// que en `HistoryReader`: lo que la pantalla tiene que poder pintar es un resultado, no una
     /// excepción.
     @discardableResult
@@ -99,14 +100,32 @@ public actor StorageManager {
         now: Date = Date()
     ) async throws -> RetentionOutcome {
         let files = try await listFiles()
+
+        // La evidencia de auditoría no se barre (`docs/spec/audit.md`). Si el historial no se deja
+        // leer no se sabe cuál es, y entonces no se borra **nada**: antes un historial ilegible solo
+        // dejaba sin cortar las conexiones, pero ahora borrar ficheros a ciegas podría llevarse
+        // justo los que una sesión todavía no ha exportado.
+        let evidence: Set<UInt32>
+        do {
+            evidence = try await openStore().auditEvidenceFileSequences()
+        } catch {
+            return RetentionOutcome(
+                failures: ["Audit evidence couldn't be read, so nothing was deleted: \(String(describing: error))"]
+            )
+        }
+
         let plan = RetentionPlanner.plan(
             files: files,
             settings: settings,
             now: now,
-            recordingSequence: recordingSequence
+            recordingSequence: recordingSequence,
+            evidenceSequences: evidence
         )
         guard plan.hasWork else {
-            return RetentionOutcome(sizeCapUnreachable: plan.sizeCapUnreachable)
+            return RetentionOutcome(
+                sizeCapUnreachable: plan.sizeCapUnreachable,
+                sizeCapHeldByEvidence: plan.sizeCapHeldByEvidence
+            )
         }
         return await CaptureRetention.execute(plan, files: files, openingHistory: openStore)
     }

@@ -529,14 +529,17 @@ public enum CapturesPresentation {
                     """
             )
 
-        case .unmeetable:
+        case .unmeetable, .heldByEvidence:
+            // Un solo titular para las dos causas: el hecho es el mismo —el tope no se cumple— y
+            // cuál de las dos lo impide lo dice la frase de debajo, que es donde va la salida.
             return String(
                 localized: "captures.headroom.unmeetable.headline",
                 defaultValue: "Limit can't be met",
                 comment: """
-                    Headline of the room summary when the size limit cannot be honoured because \
-                    the capture being recorded is already larger than it, and that file is never \
-                    deleted.
+                    Headline of the room summary when the size limit cannot be honoured: either \
+                    the capture being recorded is already larger than it, or the captures kept as \
+                    audit evidence are. Neither is ever deleted by a cleanup; the sentence under \
+                    this headline says which one it is.
                     """
             )
 
@@ -612,6 +615,10 @@ public enum CapturesPresentation {
             // palabras es cómo una traducción acaba explicando dos mecanismos donde hay uno.
             return SettingsPresentation.sizeCapUnreachableExplanation
 
+        case .heldByEvidence:
+            // Compartida con Ajustes por lo mismo que la de arriba.
+            return SettingsPresentation.sizeCapHeldByEvidenceExplanation
+
         case .unlimited:
             return String(
                 localized: "captures.headroom.noSizeLimit.detail",
@@ -632,6 +639,7 @@ public enum CapturesPresentation {
         case .within: .accent
         case .reached: .neutral
         case .unmeetable: .warning
+        case .heldByEvidence: .warning
         case .unlimited: .neutral
         }
     }
@@ -668,6 +676,22 @@ public enum CapturesPresentation {
                         keeps growing until the next one opens, so until then there is no instant \
                         to count its age from. Saying nothing here would read as an intermittent \
                         fault.
+                        """
+                )
+            )
+
+        case .evidenceOnly:
+            return .stated(
+                String(
+                    localized: "captures.headroom.expiry.evidenceOnly",
+                    defaultValue: """
+                        These captures hold audit evidence, which doesn't expire. They stay until \
+                        you delete their audit session.
+                        """,
+                    comment: """
+                        Said when an expiry is set but every capture that could expire holds \
+                        traffic of an audit session. Audit evidence is exempt from the storage \
+                        limits, so this names the one thing that does remove it.
                         """
                 )
             )
@@ -737,6 +761,37 @@ public enum CapturesPresentation {
             diagnostic: retentionDiagnostic(for: error),
             role: .warning
         )
+    }
+
+    /// No se pudo saber qué capturas guardan evidencia de auditoría, así que tampoco hay comparación
+    /// que enseñar: sin ese dato la sección prometería borrados que la limpieza no va a hacer —
+    /// cuando no puede leer la evidencia, no borra nada.
+    public static func evidenceUnreadable(_ error: HistoryError) -> CapturesNotice {
+        CapturesNotice(
+            message: String(
+                localized: "captures.headroom.evidenceUnreadable",
+                defaultValue: """
+                    Your history couldn't be read, so this can't tell which captures hold audit \
+                    evidence or how much room is left. No capture is cleaned up until it can.
+                    """,
+                comment: """
+                    Notice on the captures screen when the history database cannot be read. Audit \
+                    evidence is exempt from the storage limits and the database is what says \
+                    which captures hold it, so the room summary is hidden and the cleanup deletes \
+                    nothing rather than risk deleting evidence.
+                    """
+            ),
+            diagnostic: evidenceDiagnostic(for: error),
+            role: .warning
+        )
+    }
+
+    /// El detalle técnico de ese fallo, fuera del catálogo como los demás diagnósticos.
+    private static func evidenceDiagnostic(for error: HistoryError) -> String {
+        switch error {
+        case .corruptData(let detail): detail
+        case .queryFailed(let detail): detail
+        }
     }
 
     /// El detalle técnico del fallo de los topes. **No pasa por el catálogo**, por lo mismo que
