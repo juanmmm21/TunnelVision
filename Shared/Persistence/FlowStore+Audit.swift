@@ -27,12 +27,7 @@ extension FlowStore {
     // MARK: - Proyectos
 
     public func createAuditProject(_ draft: AuditProjectDraft, at date: Date) throws -> AuditProject {
-        let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { throw AuditStoreError.emptyProjectName }
-        var seen: Set<DomainPattern> = []
-        for entry in draft.allowlist where !seen.insert(entry.pattern).inserted {
-            throw AuditStoreError.duplicateAllowlistPattern(entry.pattern.text)
-        }
+        let name = try AuditSerialization.validatedName(of: draft)
 
         let createdAt = WallClock.nanosecondsSince1970(from: date)
         return try dbPool.write { db in
@@ -44,12 +39,7 @@ extension FlowStore {
                 arguments: [name, draft.bundleIdentifier, draft.catalogueVersion, createdAt]
             )
             let projectID = db.lastInsertedRowID
-            let statement = try db.makeStatement(
-                sql: "INSERT INTO audit_allowlist (project_id, position, pattern, note) VALUES (?, ?, ?, ?)"
-            )
-            for (position, entry) in draft.allowlist.enumerated() {
-                try statement.execute(arguments: [projectID, position, entry.pattern.text, entry.note])
-            }
+            try AuditSerialization.insertAllowlist(draft.allowlist, forProject: projectID, in: db)
             return AuditProject(
                 id: projectID,
                 name: name,
@@ -77,6 +67,35 @@ extension FlowStore {
         try dbPool.read { db in
             try Row.fetchOne(db, sql: "SELECT * FROM audit_projects WHERE id = ?", arguments: [id])
                 .map { try AuditSerialization.project(from: $0, in: db) }
+        }
+    }
+
+    /// Reescribe lo que un proyecto declara: su nombre, el bundle identifier, el catálogo y la
+    /// allowlist entera, con las mismas reglas que al crearlo. Sus sesiones no se tocan.
+    ///
+    /// La allowlist se **sustituye** y no se parchea entrada a entrada: su orden es parte de lo que
+    /// se guarda, y un borrador ya trae la lista como tiene que quedar. Cambiarla con sesiones ya
+    /// grabadas es legítimo —es contra lo que se juzgan, no parte de lo observado—, así que una
+    /// sesión antigua se lee con la allowlist de hoy, que es justo lo que hace comparables dos
+    /// releases.
+    public func updateAuditProject(id: Int64, with draft: AuditProjectDraft) throws -> AuditProject {
+        let name = try AuditSerialization.validatedName(of: draft)
+
+        return try dbPool.write { db in
+            try db.execute(
+                sql: "UPDATE audit_projects SET name = ?, bundle_id = ?, catalogue_version = ? WHERE id = ?",
+                arguments: [name, draft.bundleIdentifier, draft.catalogueVersion, id]
+            )
+            guard db.changesCount > 0 else { throw AuditStoreError.projectNotFound(id) }
+            try db.execute(sql: "DELETE FROM audit_allowlist WHERE project_id = ?", arguments: [id])
+            try AuditSerialization.insertAllowlist(draft.allowlist, forProject: id, in: db)
+
+            guard let row = try Row.fetchOne(
+                db, sql: "SELECT * FROM audit_projects WHERE id = ?", arguments: [id]
+            ) else {
+                throw AuditStoreError.projectNotFound(id)
+            }
+            return try AuditSerialization.project(from: row, in: db)
         }
     }
 
@@ -149,6 +168,20 @@ extension FlowStore {
                 sql: "UPDATE audit_sessions SET ended_at = ? WHERE id = ?", arguments: [endedAt, id]
             )
             return try AuditSerialization.requireSession(id: id, in: db)
+        }
+    }
+
+    /// Borra una sesión con sus marcadores, abierta o cerrada. Sus **flujos** se quedan en el
+    /// historial sin etiqueta, y con eso dejan de ser evidencia: desde aquí caducan con los topes de
+    /// retención como cualquier otro, y los ficheros de captura que solo los guardaban a ellos
+    /// también (`prune(before:)`, `auditEvidenceFileSequences()`).
+    ///
+    /// Borrar la que está abierta es además lo que deja de etiquetar: no queda ninguna sesión que
+    /// `upsertFlow` pueda leer.
+    public func deleteAuditSession(id: Int64) throws {
+        try dbPool.write { db in
+            try db.execute(sql: "DELETE FROM audit_sessions WHERE id = ?", arguments: [id])
+            guard db.changesCount > 0 else { throw AuditStoreError.sessionNotFound(id) }
         }
     }
 
@@ -236,6 +269,27 @@ private enum AuditSerialization {
     private static let markerLoggedIn = 1
     private static let markerLoggedOut = 2
     private static let markerCustom = 3
+
+    /// Las reglas que un borrador de proyecto tiene que cumplir antes de tocar la base de datos,
+    /// las mismas al crearlo y al reescribirlo. Devuelve el nombre ya recortado.
+    static func validatedName(of draft: AuditProjectDraft) throws -> String {
+        let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw AuditStoreError.emptyProjectName }
+        var seen: Set<DomainPattern> = []
+        for entry in draft.allowlist where !seen.insert(entry.pattern).inserted {
+            throw AuditStoreError.duplicateAllowlistPattern(entry.pattern.text)
+        }
+        return name
+    }
+
+    static func insertAllowlist(_ allowlist: [AllowlistEntry], forProject projectID: Int64, in db: Database) throws {
+        let statement = try db.makeStatement(
+            sql: "INSERT INTO audit_allowlist (project_id, position, pattern, note) VALUES (?, ?, ?, ?)"
+        )
+        for (position, entry) in allowlist.enumerated() {
+            try statement.execute(arguments: [projectID, position, entry.pattern.text, entry.note])
+        }
+    }
 
     static func rawValue(of kind: AuditSessionKind) -> Int {
         switch kind {
