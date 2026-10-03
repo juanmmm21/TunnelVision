@@ -15,6 +15,7 @@ immutable once accepted — to change a decision, add a new ADR that supersedes 
 | [0005](0005-userspace-tcp-for-inspection.md) | Userspace TCP termination for TLS inspection | Accepted |
 | [0006](0006-udp-quic-passthrough.md) | Pass UDP/QUIC through without termination | Accepted |
 | [0007](0007-decrypted-content-retention.md) | Decrypted content: its own switch, its own shorter retention, its own deletion | Accepted |
+| [0008](0008-tr03161-audit-workflow-scope.md) | TR-03161 audit workflow: core scope, published per finished increment, attribution by controlled session + baseline | Accepted |
 
 ## Template
 
