@@ -162,3 +162,132 @@ port-53 datagram cannot be read at all — is in `TunnelVision/Models/DNSPresent
   that promises more answers than it carries (which is what a `snaplen` leaves behind).
 - Escaping, the root name, an unknown type's `TYPE64` name, and a slice whose `startIndex` is not
   zero each have their own case.
+
+## Names from DNS: the address → name map
+
+The ClientHello scanner names a flow only when it is TLS over TCP. QUIC carries its ClientHello
+inside an encrypted Initial packet, and plenty of traffic is not TLS at all, so most flows of a
+present-day phone have an address and nothing else. `ResolvedNameMap` (`Shared/DNS`) is what gives
+them a name: it is handed the DNS messages the dissector has already read and answers *which name
+had the device asked for when it was given this address?*
+
+```swift
+public struct ResolvedNameLimits: Sendable, Hashable {
+    public let capacity: Int                 // address–name pairs held in total
+    public let namesPerAddress: Int          // names remembered for one address
+    public let minimumLifetime: UInt32       // seconds an answer is believed, whatever its TTL
+    public let maximumLifetime: UInt32
+    public init(capacity: Int, namesPerAddress: Int, minimumLifetime: UInt32, maximumLifetime: UInt32)
+    public static let tunnel: ResolvedNameLimits   // 2048 pairs, 4 names, 60 s … 1 day
+}
+
+public struct ResolvedName: Sendable, Hashable {
+    public let name: String                  // the name that was asked for, normalised
+    public let resolvedAt: UInt64            // when the answer went by, on the packet clock
+    public let otherNames: [String]          // other live names of the address, most recent first
+}
+
+public enum DNSNameIngestion: Sendable, Hashable {
+    case recorded(addresses: Int)
+    case ignored(Reason)
+    public enum Reason: Sendable, Hashable {
+        case notAResponse, unsupportedOpcode, errorResponse
+        case unsupportedQuestion, unusableName, noAddresses
+    }
+}
+
+public struct ResolvedNameMap: Sendable {
+    public let limits: ResolvedNameLimits
+    public private(set) var count: Int
+    public init(limits: ResolvedNameLimits)
+    public mutating func ingest(_ message: DNSMessage, at instant: UInt64) -> DNSNameIngestion
+    public mutating func removeExpired(at instant: UInt64) -> Int
+    public func name(for address: IPAddress, at instant: UInt64) -> ResolvedName?
+}
+```
+
+It is a pure value: it reads no clock (every instant is passed in, in the nanoseconds that stamp
+packets, `PacketMeta.timestamp`), touches no disk and knows nothing about flows. `ResolvedNameLimits`
+has no default values — each of its four numbers decides something — and the ones the tunnel uses
+are `ResolvedNameLimits.tunnel`, each with its reason written next to it.
+
+**A resolved name is not an announced SNI.** An SNI is stated by the connection itself; this is an
+inference from an earlier lookup. That is why the result carries when it was resolved and which
+other names the same address had, and why it is a type of its own rather than a string that could
+be mistaken for an SNI.
+
+### What goes in
+
+Only a reply (`QR` set, standard opcode, `NOERROR`) to exactly one question of class `IN`, and from
+it only the addresses (`A`, `AAAA`) **reachable from the question's name** by following the reply's
+own `CNAME` records.
+
+- **The name stored is the one that was asked for**, not the end of the alias chain. An allowlist
+  authorises what the app requested, not the CDN host its provider happens to serve it from.
+- **An address record owned by any other name is not recorded.** It does not answer the question,
+  and recording it would let one message name addresses that are not its own.
+- **The chain is walked from the question**, not trusted to arrive in order: `CNAME`-before-address
+  is a resolver habit, not a guarantee of the format. The walk stops at a loop and has a ceiling.
+- **Names are compared without case.** DNS is case-insensitive and a resolver may echo the question
+  with its letters' case deliberately scrambled (0x20 randomisation).
+- **A name is stored only if it could be written as an exact allowlist entry**: `DomainPattern` is
+  the yardstick ([`audit.md`](audit.md)). That leaves out the root, a name the dissector had to
+  escape, and a literal wildcard, with no second rule set here — and guarantees that whatever the
+  map returns can be compared against an allowlist.
+
+Everything else is reported, not dropped in silence: `ingest` returns why a message recorded
+nothing. *There was nothing to read* is a result that has to be countable — with encrypted DNS no
+reply crosses port 53 at all, and an unnamed flow needs its reason.
+
+### When it expires
+
+A pair lives for the **shortest TTL on the path** from the name to the address — the address
+record's and every `CNAME`'s in between — clamped to the limits. Seeing the same answer again
+renews it. An address listed twice in one reply takes the shorter of its two TTLs.
+
+- **The floor** exists because replies with a TTL of zero or one second are real (load balancers
+  that want no caching), and the connection the lookup was for comes *after* it. Without a floor
+  exactly those flows would go unnamed.
+- **The ceiling** exists because a TTL is a 32-bit integer and nothing stops it from saying 136
+  years, while an address does not belong tomorrow to whoever had it today.
+- **An expired pair names nothing**, and is not listed among `otherNames` either. CDN addresses are
+  recycled; attributing one to its previous holder is worse than saying it is not known.
+- The expiry instant itself is already outside the lifetime, and an expiry past the end of the
+  clock saturates instead of wrapping.
+
+The clock is the monotonic one that stamps packets, which stops while the device sleeps: a pair can
+outlive its TTL by however long the device was asleep. That errs towards keeping a name the device
+itself may still be using from its own cache, and it keeps the map free of wall-clock jumps.
+
+### The tie-break on a shared address
+
+One address can have several live names at once — that is what a CDN is. The rule:
+
+1. **The most recently resolved live name wins.** A device looks a name up immediately before it
+   connects, so the latest lookup that returned this address is the likeliest reason for the flow.
+2. At the same instant, the lexicographically smaller name wins — so the answer never depends on
+   which message was ingested first or on dictionary order.
+3. **The losers are not hidden**: they are `otherNames`, most recent first. An empty list means the
+   attribution is uncontested; a non-empty one means `name` is the best candidate, not the only one,
+   and whoever judges the flow against an allowlist can see every name it might have been.
+
+Resolving an older name again makes it the most recent. An address remembers at most
+`namesPerAddress` names and forgets the least recently resolved beyond that.
+
+### How much it holds
+
+Never more than `capacity` pairs. A full map makes room by dropping what has expired first and,
+if nothing has, the single least recently resolved pair (ties broken by address, again so that two
+runs over the same messages end in the same map). Renewing a pair that is already there evicts
+nothing. With the tunnel's limits the worst case — 2048 names of 253 bytes — is under 1 MB.
+
+### Tests
+
+`ResolvedNameMapTests` builds `DNSMessage` values directly, since the map reads what the dissector
+read and several cases need records `DNSMessageFixture` cannot write (an address owned by a name
+that is not the question). They cover: what is recorded and each of the six reasons for recording
+nothing; the alias chain in order, out of order, looping, and with scrambled case; an unrelated
+address left out; the lifetime at its exact edge, through a chain, floored, capped, renewed and
+saturated; the tie-break in both arrival orders, an expired winner giving way, and the per-address
+limit; and the capacity — expired first, then least recent, never exceeded under a flood, and the
+same victim whatever the dictionary order. One case goes from bytes through the parser to a name.
