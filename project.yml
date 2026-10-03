@@ -97,6 +97,7 @@ targets:
     dependencies:
       - target: Shared
       - target: PacketTunnel   # app-extension: XcodeGen la embebe automáticamente
+      - target: AuditControls
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.juanmmm21.tunnelvision
@@ -180,6 +181,39 @@ targets:
           NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
 
+  # Extensión de WidgetKit con el control que pone un marcador de auditoría sin salir de la app
+  # auditada (`docs/spec/audit.md` § *Marking from outside the app*). Los controles existen desde
+  # iOS 18, así que el deployment target es **el de este target** y no una comprobación de
+  # disponibilidad en cada tipo: en un iPhone con iOS 17 la extensión simplemente no se ofrece, y la
+  # app que la embebe sigue arrancando.
+  AuditControls:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: AuditControls
+        excludes: ["**/README.md"]
+      # El intent que el control ejecuta es el mismo tipo que la app ofrece a Atajos: entra por
+      # pertenencia de fuentes en los dos, que es lo que App Intents pide para extraer sus metadatos
+      # en cada target. El proveedor de atajos es solo de la app.
+      - path: TunnelVision/Intents
+        excludes: ["**/README.md", "AuditShortcuts.swift"]
+    dependencies:
+      - target: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.juanmmm21.tunnelvision.AuditControls
+        # La misma familia que la app que la embebe, como la extensión del túnel.
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_ENTITLEMENTS: AuditControls/AuditControls.entitlements
+        GENERATE_INFOPLIST_FILE: "YES"
+    info:
+      path: AuditControls/Info.plist
+      properties:
+        CFBundleDisplayName: TunnelVision
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
   # Tests unitarios: parsers, reassembly, pcap, store, ipc, pipeline. Corren en Simulator.
   # La lógica pura de la extensión (parsers, reassembly, pcap, pipeline) se compila también dentro
   # del bundle de tests: un app-extension no se puede enlazar en un test bundle, así que se testea
@@ -218,6 +252,10 @@ targets:
         excludes: ["**/README.md"]
       - path: TunnelVision/ViewModels
         excludes: ["**/README.md"]
+      # El intent del marcador y lo que dice. `AuditShortcuts.swift` no entra: un segundo proveedor
+      # de atajos dentro del proceso de la app sería declarar los mismos atajos dos veces.
+      - path: TunnelVision/Intents
+        excludes: ["**/README.md", "AuditShortcuts.swift"]
     dependencies:
       - target: Shared
       # App host. No se enlaza contra ella (las fuentes de la app que se prueban entran por

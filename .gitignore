@@ -5,6 +5,7 @@ DerivedData/
 *.xcodeproj/
 # El Info.plist de la extensión también lo genera XcodeGen (sección `info:` de project.yml).
 PacketTunnel/Info.plist
+AuditControls/Info.plist
 *.xcworkspace/
 *.xcuserstate
 *.xcuserdatad/
