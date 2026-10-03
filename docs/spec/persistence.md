@@ -262,6 +262,8 @@ introducirá un reloj monotónico cuando lo necesite el código productor (parse
 - **Retention:** `prune(before:)` enforces the user's storage cap; the app exposes it in Settings →
   Storage. The cutoff is a `Date` precisely because retention is about *real* age, which a monotonic
   stamp cannot express across a reboot. `ON DELETE CASCADE` removes a flow's packets automatically.
+  **A flow tagged with an audit session is skipped**, however old: it is evidence, and stays until its
+  session is deleted ([`audit.md`](audit.md) § *Retention*).
   `flowCount()` goes with it (M9): it is the figure Settings shows next to the bytes, because a database
   size means nothing to a user and a number of connections does, and what `clearAll()` is about to remove
   can only be counted *before* it runs. Deleting rows never deletes capture files — that half belongs to

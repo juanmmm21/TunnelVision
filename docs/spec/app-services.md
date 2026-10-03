@@ -864,18 +864,20 @@ public struct RetentionPlan: Sendable, Equatable {
     public let bytesReclaimed: UInt64
     public let captureBytesAfter: UInt64
     public let sizeCapUnreachable: Bool
+    public let sizeCapHeldByEvidence: Bool // the cap is unmet because of audit evidence
     public var hasWork: Bool { get }
 }
 
 public enum RetentionPlanner {
     public static func plan(files: [CaptureFileInfo], settings: RetentionSettings,
-                            now: Date, recordingSequence: UInt32?) -> RetentionPlan
+                            now: Date, recordingSequence: UInt32?,
+                            evidenceSequences: Set<UInt32>) -> RetentionPlan
 }
 ```
 
 Deciding *who* goes is separated from *deleting* them so the whole policy can be asserted over made-up
 listings — gigabyte-sized files without writing a byte — and so the screen can say what will happen
-before it happens, which is what an irreversible action requires. Four decisions live in the planner:
+before it happens, which is what an irreversible action requires. Five decisions live in the planner:
 
 - **A file is aged out by its successor's date, not its own.** The writer only ever writes to the
   highest sequence and never returns to an earlier one, so a file stops being written the moment the
@@ -888,6 +890,13 @@ before it happens, which is what an irreversible action requires. Four decisions
   delete it. When that makes the size cap impossible to meet — the recording alone weighs more than the
   cap — the plan says so (`sizeCapUnreachable`) instead of leaving the user with a cap silently
   unenforced.
+- **A file holding audit evidence is never in the plan either** ([`audit.md`](audit.md) § *Retention*).
+  `evidenceSequences` is what `FlowStore.auditEvidenceFileSequences()` returns, and the parameter has
+  no default on purpose: planning without having asked is deciding to delete evidence. Both passes skip
+  those files — the size pass takes the next oldest instead — and when the evidence alone is over the
+  cap the plan says *that* (`sizeCapHeldByEvidence`), because its way out is deleting the audit session,
+  not closing the open capture. A recording that is itself over the cap is reported as the recording,
+  evidence or not: it is the cause that resolves first.
 - **Age is applied first and size measures what age already freed**, so the size pass never asks for
   one deletion more than needed. Both cut oldest-first, which is the property that actually matters:
   there is no way to lose a recent capture while an older one survives.
@@ -903,6 +912,7 @@ public struct RetentionOutcome: Sendable, Equatable {
     public let prunedFlows: Int
     public let failures: [String]
     public let sizeCapUnreachable: Bool
+    public let sizeCapHeldByEvidence: Bool
     public var didChangeAnything: Bool { get }
 }
 
@@ -926,6 +936,10 @@ public actor StorageManager {
   everything else — including a history that would not open, and a file that would not delete — comes
   back inside the `RetentionOutcome`, because losing the count of what *was* freed is worse than not
   reporting the part that failed. Same split as `HistoryReader`'s state-versus-throw rule.
+- **If it cannot tell which captures are audit evidence, it deletes nothing.** That list comes from the
+  history database. A history that would not open used to cost only the pruning of connections; deleting
+  files blind could now take exactly the captures a session has not exported yet, so the cleanup stops
+  and says so in `failures`. The extension's sweep on rotation does the same and counts it as a failure.
 - **One deletion that fails does not abort the rest.** A locked file is no reason to leave the cap
   unenforced everywhere else.
 - **It keeps no state, and opens the store per operation.** The captures are written by another process,

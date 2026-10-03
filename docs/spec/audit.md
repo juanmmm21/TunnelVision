@@ -163,6 +163,40 @@ rotates by size, not by session, so one file can hold traffic from inside and ou
 on the file would be the same fact said twice and wrong half of the time. Slicing a capture to the
 session is the evidence bundle's job.
 
+## Retention
+
+**Audit evidence is exempt from the storage limits until its session is deleted.** The limits in
+Settings → Storage default to one week and 1 GB, and they are applied with nobody watching — by the
+extension every time the capture rotates. An audit session recorded on a Monday and exported the week
+after would have lost its traffic in between.
+
+- **Connections.** `FlowStore.prune(before:)` skips every flow that carries an audit session, open or
+  ended.
+- **Capture files.** `auditEvidenceFileSequences()` returns the files that hold bytes of *any* session;
+  `RetentionPlanner` never puts them in a plan, by age or by size
+  ([`app-services.md`](app-services.md) § *Storage manager*). The whole file is kept, including the
+  traffic from outside the session it may also hold — a `.pcap` cannot be trimmed in place.
+- **What ends the exemption is deleting the session** (`deleteAuditSession`) or its project. The flows
+  lose their tag, become ordinary history, and the next cleanup treats them and their files like
+  anything else. Ending a session does not: an ended session is exactly the one waiting to be exported.
+- **When the size limit cannot be met because of evidence, that is said**, with its own cause
+  (`sizeCapHeldByEvidence`) and its own sentence on both screens that report it. The limit stays unmet;
+  evidence is not sacrificed to it.
+- **If the evidence cannot be read, nothing is cleaned up.** Both the app and the extension stop the
+  cleanup rather than plan without the list.
+
+Three things this deliberately does **not** cover:
+
+- **Decrypted content still expires on its own schedule**
+  ([ADR 0007](../decisions/0007-decrypted-content-retention.md)). It is not part of the evidence
+  bundle unless explicitly chosen, and a session of a medical app is the last place to keep it longer
+  than promised.
+- **What the user deletes by hand is still deleted**: a capture removed on the Captures screen, or
+  *Delete everything* in Settings (`clearAll()` keeps projects and sessions, and empties them). The
+  exemption is from the automatic sweep, not from the owner of the device.
+- **A capture file with no successor is not aged out anyway**, evidence or not — the planner's
+  existing rule.
+
 ## Store API
 
 ```swift
@@ -181,10 +215,12 @@ extension FlowStore {
     public func createAuditProject(_ draft: AuditProjectDraft, at date: Date) throws -> AuditProject
     public func auditProjects() throws -> [AuditProject]                       // newest first
     public func auditProject(id: Int64) throws -> AuditProject?
+    public func updateAuditProject(id: Int64, with draft: AuditProjectDraft) throws -> AuditProject
     public func deleteAuditProject(id: Int64) throws
 
     public func startAuditSession(_ draft: AuditSessionDraft, at date: Date) throws -> AuditSession
     public func endAuditSession(id: Int64, at date: Date) throws -> AuditSession
+    public func deleteAuditSession(id: Int64) throws                           // open or ended
     public func openAuditSession() throws -> AuditSession?
     public func auditSession(id: Int64) throws -> AuditSession?
     public func auditSessions(forProject projectID: Int64) throws -> [AuditSession]   // newest first
@@ -194,8 +230,18 @@ extension FlowStore {
 
     public func flows(inAuditSession id: Int64, limit: Int) throws -> [StoredFlow]    // oldest first
     public func captureFileSequences(inAuditSession id: Int64) throws -> Set<UInt32>
+    public func auditEvidenceFileSequences() throws -> Set<UInt32>             // of every session
 }
 ```
+
+- `updateAuditProject` **replaces** the allowlist rather than patching it: its order is part of what is
+  stored, and a draft already carries the list as it should end up. The rules are the ones of creation.
+  Sessions are untouched, so an old session is read against today's allowlist — which is what makes two
+  releases comparable.
+- `deleteAuditSession` takes the markers with it and leaves the flows untagged, like deleting a project
+  does. Deleting the open session is also what stops the tagging.
+- `auditEvidenceFileSequences()` is one query and not a union of `captureFileSequences(inAuditSession:)`
+  because the sweep needs one answer taken at one instant.
 
 - A marker needs an **open** session. On a closed one it is an error, not a late correction: a marker
   placed after looking at the traffic is no longer an observation.
@@ -212,4 +258,10 @@ extension FlowStore {
   rules; markers ordered by instant and refused outside an open session; the four tagging rules above,
   including a second store standing in for the extension; capture files derived, ignoring packets
   without capture; deleting a project keeps the flows; `clearAll` keeps the projects; a database
-  stopped at `v5` migrates without losing anything.
+  stopped at `v5` migrates without losing anything; a project rewritten keeps its sessions and obeys
+  the rules of creation; a deleted session takes its markers, untags its flows and stops the tagging;
+  pruning leaves a session's flows alone until the session is deleted; the evidence files are those of
+  every session and none from outside.
+- `RetentionPlannerTests`, `CaptureHeadroomTests`, `StorageManagerTests`: evidence is skipped by both
+  limits, the cause of an unmet size limit is told apart, and a cleanup that cannot read the evidence
+  deletes nothing.

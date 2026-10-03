@@ -371,6 +371,17 @@ same line along which `StorageFigure` splits its two figures in Settings. Limits
 hide the comparison and say so, rather than filling it in with factory values: that would state a
 ceiling the user may have changed, and the whole answer hangs off it.
 
+**Audit evidence (2026-10-03):** captures that hold traffic of an audit session are exempt from both
+limits until the session is deleted ([`../spec/audit.md`](../spec/audit.md) § *Retention*), and the
+room summary had to stop promising otherwise. That adds one outcome to each half, again without
+collapsing: a size limit that cannot be met **because of the evidence** — same headline as the
+recording's, a different sentence, because the way out is deleting the session and not closing the
+open file — and an expiry row that says the captures left are evidence and do not expire, instead of
+promising a date that will never arrive. The files that could expire are dated skipping the evidence.
+And if the history cannot say which captures are evidence, the comparison is hidden with a notice, as
+it is for unreadable limits: the cleanup deletes nothing in that case, so any figure would be a
+promise it does not keep.
+
 **The connection list as JSON (M9):** the `exporting` state above is real for this one and only this
 one — the file has to be written before it can be shared. Five decisions.
 **What travels is metadata, never payloads:** the five-tuple in human terms, the times, the bytes per
