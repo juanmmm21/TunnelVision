@@ -104,6 +104,14 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             Task { await environment.settings.revalidateTLSTrust() }
+            // Y es también cuando un marcador puede haberse puesto desde fuera de la app.
+            Task { await environment.audit.resume() }
+        }
+        // El control del sistema dice en qué sesión marcaría. Lo que cambia esa frase —abrir o
+        // cerrar una sesión, renombrar su proyecto— solo pasa aquí, así que es aquí donde se le
+        // pide que se relea.
+        .onChange(of: environment.audit.recordingBanner) { _, _ in
+            AuditControlRefresh.reload()
         }
         .onChange(of: environment.intro.outcome) { _, outcome in
             handle(outcome)

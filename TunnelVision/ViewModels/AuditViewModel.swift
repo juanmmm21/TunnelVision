@@ -88,6 +88,17 @@ public final class AuditViewModel {
         }
     }
 
+    /// Vuelve a leer **todo lo que está en pantalla** al volver la app a primer plano.
+    ///
+    /// Mientras la app estaba detrás, un marcador puede haberse puesto desde el control o desde un
+    /// atajo (`docs/spec/audit.md` § *Marking from outside the app*), que escriben en la base de
+    /// datos sin pasar por aquí. Sin esta relectura, quien vuelve a la pantalla de la sesión a
+    /// comprobar su marcador no lo ve, y eso se lee como que no se puso.
+    public func resume() async {
+        await refresh()
+        if let id = sessionDisplay?.id { await loadSession(id: id) }
+    }
+
     public func perform(_ action: AuditAction) async {
         switch action {
         case .retry:
