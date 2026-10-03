@@ -218,31 +218,39 @@ extension FlowStore {
     public func addMarker(
         _ kind: SessionMarkerKind, toSession sessionID: Int64, at date: Date
     ) throws -> SessionMarker {
-        var stored = kind
-        if case .custom(let label) = kind {
-            let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { throw AuditStoreError.emptyMarkerLabel }
-            stored = .custom(trimmed)
-        }
+        let stored = try AuditSerialization.normalized(kind)
         let timestamp = WallClock.nanosecondsSince1970(from: date)
-        return try dbPool.write { [stored] db in
+        return try dbPool.write { db in
             let session = try AuditSerialization.requireSession(id: sessionID, in: db)
             guard session.isOpen else { throw AuditStoreError.sessionAlreadyEnded(sessionID) }
-            guard timestamp >= WallClock.nanosecondsSince1970(from: session.startedAt) else {
-                throw AuditStoreError.dateBeforeSessionStart
-            }
-            let (rawKind, label) = AuditSerialization.columns(of: stored)
-            try db.execute(
-                sql: "INSERT INTO audit_markers (session_id, ts, kind, label) VALUES (?, ?, ?, ?)",
-                arguments: [sessionID, timestamp, rawKind, label]
-            )
-            return SessionMarker(
-                id: db.lastInsertedRowID,
-                sessionID: sessionID,
-                date: WallClock.date(fromNanosecondsSince1970: timestamp),
-                kind: stored
-            )
+            return try AuditSerialization.insertMarker(stored, into: session, timestamp: timestamp, in: db)
         }
+    }
+
+    /// Señala un instante de **la sesión que esté abierta**, sin que quien llama sepa cuál es.
+    ///
+    /// Es el gesto de quien marca desde fuera de la app (un control del sistema, un atajo). Leer la
+    /// sesión abierta y escribir el marcador van en **una** transacción: la app puede cerrar la
+    /// sesión desde otro proceso entre las dos, y con dos pasos el marcador caería en una sesión ya
+    /// cerrada o el gesto fallaría con un error que no dice lo que pasó. Si no hay sesión no se abre
+    /// ninguna —hacen falta versión y build— y se devuelve como desenlace.
+    public func addMarkerToOpenSession(
+        _ kind: SessionMarkerKind, at date: Date
+    ) throws -> OpenSessionMarkerOutcome {
+        let stored = try AuditSerialization.normalized(kind)
+        let timestamp = WallClock.nanosecondsSince1970(from: date)
+        return try dbPool.write { db in
+            guard let recording = try AuditSerialization.recording(in: db) else { return .noOpenSession }
+            let marker = try AuditSerialization.insertMarker(
+                stored, into: recording.session, timestamp: timestamp, in: db
+            )
+            return .placed(marker, in: recording)
+        }
+    }
+
+    /// La sesión abierta con el nombre de su proyecto, o `nil` si no hay ninguna.
+    public func auditRecording() throws -> AuditRecording? {
+        try dbPool.read { db in try AuditSerialization.recording(in: db) }
     }
 
     /// Los marcadores de una sesión, en el orden en que ocurrieron.
@@ -296,6 +304,49 @@ private enum AuditSerialization {
         case .audit: return sessionKindAudit
         case .baseline: return sessionKindBaseline
         }
+    }
+
+    /// Un marcador tal como se guarda: la etiqueta libre recortada, y nunca vacía.
+    static func normalized(_ kind: SessionMarkerKind) throws -> SessionMarkerKind {
+        guard case .custom(let label) = kind else { return kind }
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw AuditStoreError.emptyMarkerLabel }
+        return .custom(trimmed)
+    }
+
+    /// Escribe un marcador en una sesión que quien llama ya comprobó abierta, dentro de su misma
+    /// transacción.
+    static func insertMarker(
+        _ kind: SessionMarkerKind, into session: AuditSession, timestamp: Int64, in db: Database
+    ) throws -> SessionMarker {
+        guard timestamp >= WallClock.nanosecondsSince1970(from: session.startedAt) else {
+            throw AuditStoreError.dateBeforeSessionStart
+        }
+        let (rawKind, label) = columns(of: kind)
+        try db.execute(
+            sql: "INSERT INTO audit_markers (session_id, ts, kind, label) VALUES (?, ?, ?, ?)",
+            arguments: [session.id, timestamp, rawKind, label]
+        )
+        return SessionMarker(
+            id: db.lastInsertedRowID,
+            sessionID: session.id,
+            date: WallClock.date(fromNanosecondsSince1970: timestamp),
+            kind: kind
+        )
+    }
+
+    static func recording(in db: Database) throws -> AuditRecording? {
+        guard let row = try Row.fetchOne(db, sql: "SELECT * FROM audit_sessions WHERE ended_at IS NULL") else {
+            return nil
+        }
+        let session = try session(from: row)
+        guard let name = try String.fetchOne(
+            db, sql: "SELECT name FROM audit_projects WHERE id = ?", arguments: [session.projectID]
+        ) else {
+            // La clave ajena lo impide; si aun así pasa, la base está rota y no hay «sin sesión» que valga.
+            throw FlowStore.StoreError.corruptRow("la sesión \(session.id) no tiene proyecto")
+        }
+        return AuditRecording(session: session, projectName: name)
     }
 
     static func columns(of kind: SessionMarkerKind) -> (kind: Int, label: String?) {

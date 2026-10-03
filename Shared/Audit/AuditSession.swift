@@ -152,3 +152,27 @@ public struct SessionMarker: Sendable, Hashable, Identifiable {
         self.kind = kind
     }
 }
+
+/// La sesión que está grabando, con el nombre de su proyecto: lo que hace falta para decir *en qué*
+/// se va a marcar sin leer el proyecto entero (su allowlist puede tener decenas de entradas, y quien
+/// lo pregunta es un control del sistema con el presupuesto de una extensión de widgets).
+public struct AuditRecording: Sendable, Hashable {
+    public let session: AuditSession
+    public let projectName: String
+
+    public init(session: AuditSession, projectName: String) {
+        self.session = session
+        self.projectName = projectName
+    }
+}
+
+/// Lo que pasó al marcar «en la sesión abierta» sin saber de antemano cuál es — el gesto de quien
+/// marca desde fuera de la app (`docs/spec/audit.md` § *Marking from outside the app*).
+///
+/// Que no haya sesión es un **desenlace** y no un error: es la respuesta esperable de un botón que
+/// se puede pulsar en cualquier momento, y quien la recibe está obligado a decirla. Un marcador que
+/// no se puso y que el evaluador cree puesto es peor que un fallo.
+public enum OpenSessionMarkerOutcome: Sendable, Hashable {
+    case placed(SessionMarker, in: AuditRecording)
+    case noOpenSession
+}
