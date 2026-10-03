@@ -36,7 +36,8 @@ final class CaptureHeadroomTests: XCTestCase {
             files: [file(1, bytes: 6 * 1024 * 1024), file(2, bytes: 4 * 1024 * 1024)],
             settings: settings(size: .megabytes256),
             now: now,
-            recordingSequence: nil
+            recordingSequence: nil,
+            evidenceSequences: []
         )
 
         guard case .bounded(let size, _) = reading else {
@@ -51,7 +52,8 @@ final class CaptureHeadroomTests: XCTestCase {
             files: [file(1, bytes: 200 * 1024 * 1024), file(2, bytes: 100 * 1024 * 1024)],
             settings: settings(size: .megabytes256, age: .unlimited),
             now: now,
-            recordingSequence: nil
+            recordingSequence: nil,
+            evidenceSequences: []
         )
 
         guard case .bounded(let size, _) = reading else {
@@ -70,7 +72,8 @@ final class CaptureHeadroomTests: XCTestCase {
             files: [file(1, bytes: 10 * 1024 * 1024), file(2, bytes: 300 * 1024 * 1024)],
             settings: settings(size: .megabytes256, age: .unlimited),
             now: now,
-            recordingSequence: 2
+            recordingSequence: 2,
+            evidenceSequences: []
         )
 
         guard case .bounded(let size, _) = reading else {
@@ -84,7 +87,8 @@ final class CaptureHeadroomTests: XCTestCase {
             files: [file(1, bytes: 2_048)],
             settings: settings(size: .unlimited),
             now: now,
-            recordingSequence: nil
+            recordingSequence: nil,
+            evidenceSequences: []
         )
 
         guard case .bounded(let size, _) = reading else {
@@ -114,7 +118,8 @@ final class CaptureHeadroomTests: XCTestCase {
             ],
             settings: settings(age: .oneWeek),
             now: now,
-            recordingSequence: nil
+            recordingSequence: nil,
+            evidenceSequences: []
         )
 
         // Un fichero se sigue engordando hasta que aparece el siguiente, así que su antigüedad cuenta
@@ -137,7 +142,8 @@ final class CaptureHeadroomTests: XCTestCase {
             ],
             settings: settings(age: .oneWeek),
             now: now,
-            recordingSequence: nil
+            recordingSequence: nil,
+            evidenceSequences: []
         )
 
         // Una fecha ya pasada se leería como una promesa incumplida. Las dos que tienen sucesor están
@@ -153,7 +159,8 @@ final class CaptureHeadroomTests: XCTestCase {
             files: [file(1, bytes: 100, createdAt: now.addingTimeInterval(-60))],
             settings: settings(age: .oneWeek),
             now: now,
-            recordingSequence: 1
+            recordingSequence: 1,
+            evidenceSequences: []
         )
 
         // Se dice en vez de callarse: una fila que aparece y desaparece sin explicación se lee como
@@ -166,7 +173,8 @@ final class CaptureHeadroomTests: XCTestCase {
             files: [file(1, bytes: 100, createdAt: now), file(2, bytes: 100, createdAt: now)],
             settings: settings(age: .unlimited),
             now: now,
-            recordingSequence: nil
+            recordingSequence: nil,
+            evidenceSequences: []
         )
 
         guard case .bounded(_, let expiry) = reading else {
@@ -181,7 +189,8 @@ final class CaptureHeadroomTests: XCTestCase {
             files: [file(1, bytes: 100, createdAt: old), file(2, bytes: 100, createdAt: old)],
             settings: settings(age: .oneWeek),
             now: now,
-            recordingSequence: 1
+            recordingSequence: 1,
+            evidenceSequences: []
         )
 
         // La 1 se está grabando, así que no cuenta como vencida por vieja que sea su fecha; la 2 no
@@ -199,7 +208,8 @@ final class CaptureHeadroomTests: XCTestCase {
             files: [file(1, bytes: 700), file(2, bytes: 300)],
             settings: settings(size: .unlimited, age: .unlimited),
             now: now,
-            recordingSequence: nil
+            recordingSequence: nil,
+            evidenceSequences: []
         )
 
         // Dos mitades diciendo cada una que su tope no existe obligarían al usuario a juntar dos
@@ -214,7 +224,8 @@ final class CaptureHeadroomTests: XCTestCase {
             files: [],
             settings: settings(),
             now: now,
-            recordingSequence: nil
+            recordingSequence: nil,
+            evidenceSequences: []
         )
 
         XCTAssertEqual(
@@ -238,13 +249,15 @@ final class CaptureHeadroomTests: XCTestCase {
             files: files,
             settings: settings,
             now: now,
-            recordingSequence: nil
+            recordingSequence: nil,
+            evidenceSequences: []
         )
         let plan = RetentionPlanner.plan(
             files: files,
             settings: settings,
             now: now,
-            recordingSequence: nil
+            recordingSequence: nil,
+            evidenceSequences: []
         )
 
         // Lo que esta pantalla promete y lo que la limpieza hace de verdad salen de la misma regla: un
@@ -254,5 +267,65 @@ final class CaptureHeadroomTests: XCTestCase {
         }
         XCTAssertEqual(count, plan.filesToDelete.count)
         XCTAssertEqual(plan.filesToDelete, [1])
+    }
+
+    // MARK: - La evidencia de auditoría
+
+    func testEvidenceOverTheLimitIsNotTheRecordingsFault() {
+        let reading = CaptureHeadroom.reading(
+            files: [
+                file(1, bytes: 300 * 1024 * 1024, createdAt: now.addingTimeInterval(-3_600)),
+                file(2, bytes: 1024, createdAt: now.addingTimeInterval(-60))
+            ],
+            settings: settings(size: .megabytes256, age: .unlimited),
+            now: now,
+            recordingSequence: nil,
+            evidenceSequences: [1]
+        )
+
+        guard case .bounded(let size, _) = reading else {
+            return XCTFail("con un tope puesto la lectura debería ser acotada")
+        }
+        // Un caso propio: mandar a cerrar el fichero abierto aquí no arreglaría nada.
+        XCTAssertEqual(size, .heldByEvidence(used: 300 * 1024 * 1024 + 1024, limit: 256 * 1024 * 1024))
+        XCTAssertNil(size.free)
+    }
+
+    func testEvidenceIsSkippedWhenDatingTheOldestExpiry() {
+        let closedFirst = now.addingTimeInterval(-3 * 86_400)
+        let closedSecond = now.addingTimeInterval(-2 * 86_400)
+        let reading = CaptureHeadroom.reading(
+            files: [
+                file(1, bytes: 1024, createdAt: now.addingTimeInterval(-4 * 86_400)),
+                file(2, bytes: 1024, createdAt: closedFirst),
+                file(3, bytes: 1024, createdAt: closedSecond)
+            ],
+            settings: settings(size: .unlimited, age: .oneWeek),
+            now: now,
+            recordingSequence: nil,
+            evidenceSequences: [1]
+        )
+
+        // La más antigua es evidencia y no caduca: la primera que se va es la siguiente, que se cerró
+        // cuando se abrió la tercera.
+        guard case .bounded(_, let expiry) = reading else { return XCTFail("lectura acotada") }
+        XCTAssertEqual(expiry, .on(closedSecond.addingTimeInterval(7 * 86_400)))
+    }
+
+    func testAFolderOfOnlyEvidencePromisesNoExpiryDate() {
+        let reading = CaptureHeadroom.reading(
+            files: [
+                file(1, bytes: 1024, createdAt: now.addingTimeInterval(-40 * 86_400)),
+                file(2, bytes: 1024, createdAt: now.addingTimeInterval(-39 * 86_400))
+            ],
+            settings: settings(size: .unlimited, age: .oneWeek),
+            now: now,
+            recordingSequence: nil,
+            evidenceSequences: [1, 2]
+        )
+
+        guard case .bounded(_, let expiry) = reading else { return XCTFail("lectura acotada") }
+        // No es `undated`: ahí la fecha llega sola, y aquí no va a llegar mientras existan las sesiones.
+        XCTAssertEqual(expiry, .evidenceOnly)
     }
 }

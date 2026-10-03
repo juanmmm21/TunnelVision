@@ -78,7 +78,8 @@ final class CaptureRetentionTests: XCTestCase {
             filesToDelete: sequences,
             bytesReclaimed: 0,
             captureBytesAfter: 0,
-            sizeCapUnreachable: sizeCapUnreachable
+            sizeCapUnreachable: sizeCapUnreachable,
+            sizeCapHeldByEvidence: false
         )
     }
 

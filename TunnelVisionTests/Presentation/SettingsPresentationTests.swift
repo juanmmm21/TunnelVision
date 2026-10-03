@@ -221,6 +221,18 @@ final class SettingsPresentationTests: XCTestCase {
         XCTAssertTrue(notice?.message.contains("new capture file") ?? false)
     }
 
+    func testASizeCapHeldByAuditEvidenceNamesTheSessionAndNotTheRecording() {
+        let notice = SettingsPresentation.retention(
+            RetentionOutcome(sizeCapUnreachable: true, sizeCapHeldByEvidence: true),
+            trigger: .automatic
+        )
+
+        XCTAssertEqual(notice?.role, .warning)
+        XCTAssertEqual(notice?.message, SettingsPresentation.sizeCapHeldByEvidenceExplanation)
+        // Cerrar el fichero abierto no arregla esto, así que esa salida no se nombra.
+        XCTAssertFalse(notice?.message.contains("new capture file") ?? true)
+    }
+
     func testAPartialFailureStillReportsWhatWasFreed() {
         let notice = SettingsPresentation.retention(
             RetentionOutcome(
@@ -971,6 +983,10 @@ final class SettingsPresentationTests: XCTestCase {
             ("retention.pruned.one", RetentionOutcome(prunedFlows: 1)),
             ("retention.pruned.other", RetentionOutcome(prunedFlows: 12)),
             ("retention.sizeCapUnreachable", RetentionOutcome(sizeCapUnreachable: true)),
+            (
+                "retention.sizeCapHeldByEvidence",
+                RetentionOutcome(sizeCapUnreachable: true, sizeCapHeldByEvidence: true)
+            ),
             ("retention.partialFailure", RetentionOutcome(deletedFiles: [0], failures: ["d"])),
             ("retention.nothingToDelete", RetentionOutcome()),
             ("clear.done.one.one", RetentionOutcome(deletedFiles: [0], prunedFlows: 1)),

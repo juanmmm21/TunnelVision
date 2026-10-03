@@ -152,6 +152,24 @@ final class CapturesPresentationTests: XCTestCase {
         XCTAssertEqual(display.detail, SettingsPresentation.sizeCapUnreachableExplanation)
     }
 
+    func testALimitHeldByAuditEvidenceNamesItsOwnWayOut() {
+        let display = CapturesPresentation.headroom(
+            .bounded(size: .heldByEvidence(used: 500_000_000, limit: 400_000_000), expiry: .evidenceOnly)
+        )
+
+        // El titular es el mismo hecho que con la grabación —el tope no se cumple—; lo que cambia es
+        // la frase, porque la salida es otra.
+        XCTAssertEqual(display.headline, "Limit can't be met")
+        XCTAssertEqual(display.role, .warning)
+        XCTAssertEqual(display.detail, SettingsPresentation.sizeCapHeldByEvidenceExplanation)
+        XCTAssertNotEqual(display.detail, SettingsPresentation.sizeCapUnreachableExplanation)
+
+        guard case .stated(let text)? = display.expiry else {
+            return XCTFail("una evidencia que no caduca se dice con una frase, no con una fecha")
+        }
+        XCTAssertTrue(text.contains("audit session"))
+    }
+
     func testNoSizeLimitHasNoBarBecauseThereIsNothingToFill() {
         let display = CapturesPresentation.headroom(
             .bounded(size: .unlimited(used: 2_048), expiry: .on(Date(timeIntervalSince1970: 0)))

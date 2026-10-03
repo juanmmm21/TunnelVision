@@ -229,7 +229,7 @@ final class StorageManagerTests: XCTestCase {
         XCTAssertEqual(try remainingSequences(), [1, 2])
     }
 
-    func testEnforceReportsAHistoryItCouldNotOpenWithoutLosingTheFilesItDeleted() async throws {
+    func testEnforceDeletesNothingWhenItCannotTellWhichCapturesAreEvidence() async throws {
         try await writeCaptures(3)
 
         let outcome = try await makeManager(storeAvailable: false).enforce(
@@ -238,12 +238,66 @@ final class StorageManagerTests: XCTestCase {
             now: Date().addingTimeInterval(60 * 86_400)
         )
 
-        // Lanzar aquí perdería el recuento de lo que sí se liberó, que es lo que la pantalla tiene que
-        // contar; el fallo vuelve dentro del resultado.
-        XCTAssertEqual(outcome.deletedFiles, [0, 1])
+        // Qué capturas guardan una sesión de auditoría solo lo sabe el historial. Sin él, borrar por
+        // antigüedad podría llevarse justo la evidencia que nadie ha exportado: no se borra nada, y
+        // el fallo vuelve dentro del resultado en vez de lanzarse.
+        XCTAssertTrue(outcome.deletedFiles.isEmpty)
+        XCTAssertEqual(try remainingSequences(), [0, 1, 2])
         XCTAssertEqual(outcome.prunedFlows, 0)
         XCTAssertEqual(outcome.failures.count, 1)
-        XCTAssertTrue(outcome.failures[0].contains("history"))
+        XCTAssertTrue(outcome.failures[0].contains("evidence"))
+    }
+
+    func testEnforceKeepsTheCapturesAndTheConnectionsOfAnAuditSession() async throws {
+        try await writeCaptures(3)
+        let store = try makeStore()
+        let outside = try await writeFlow(to: store, remote: ModelFixtures.v4(9, 9, 9, 9), secondsAfterAnchor: 5)
+
+        let project = try await store.createAuditProject(
+            AuditProjectDraft(name: "Example Health", bundleIdentifier: nil, catalogueVersion: nil, allowlist: []),
+            at: PersistenceFixtures.date(10)
+        )
+        let session = try await store.startAuditSession(
+            AuditSessionDraft(
+                projectID: project.id,
+                kind: .baseline,
+                environment: AuditEnvironment(deviceModel: "iPhone18,3", osVersion: "27.0", toolVersion: "1.0.0 (1)"),
+                inspection: InspectionConditions(inspectionEnabled: false, caTrusted: false),
+                notes: ""
+            ),
+            at: PersistenceFixtures.date(10)
+        )
+        let remote = ModelFixtures.v4(1, 1, 1, 1)
+        let inside = try await store.upsertFlow(PersistenceFixtures.flow(remote: remote, firstSeen: 12, lastSeen: 20))
+        try await store.appendPackets(
+            [PersistenceFixtures.packet(
+                timestamp: 12,
+                key: PersistenceFixtures.key(remote: remote),
+                capture: CaptureLocation(fileSequence: 0, recordOffset: 24)
+            )],
+            flowID: inside
+        )
+        _ = try await store.endAuditSession(id: session.id, at: PersistenceFixtures.date(30))
+
+        let settings = RetentionSettings(maxAge: .oneWeek, maxCaptureSize: .unlimited)
+        let later = Date().addingTimeInterval(60 * 86_400)
+        let outcome = try await makeManager().enforce(settings, recordingSequence: nil, now: later)
+
+        // La captura 0 es tan vieja como la 1, pero guarda la sesión: se queda, con su conexión.
+        XCTAssertEqual(outcome.deletedFiles, [1])
+        XCTAssertEqual(try remainingSequences(), [0, 2])
+        XCTAssertEqual(outcome.prunedFlows, 1)
+        let kept = try await store.flow(id: inside)
+        XCTAssertNotNil(kept)
+        let gone = try await store.flow(id: outside)
+        XCTAssertNil(gone)
+
+        // Borrada la sesión, deja de ser evidencia y la siguiente limpieza se la lleva.
+        try await store.deleteAuditSession(id: session.id)
+        let afterwards = try await makeManager().enforce(settings, recordingSequence: nil, now: later)
+
+        XCTAssertEqual(afterwards.deletedFiles, [0])
+        XCTAssertEqual(afterwards.prunedFlows, 1)
     }
 
     func testEnforceThrowsWhenItCannotEvenListTheDirectory() async throws {

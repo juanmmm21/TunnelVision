@@ -24,13 +24,15 @@ final class RetentionPlannerTests: XCTestCase {
         _ files: [CaptureFileInfo],
         age: RetentionAge = .unlimited,
         size: RetentionSize = .unlimited,
-        recording: UInt32? = nil
+        recording: UInt32? = nil,
+        evidence: Set<UInt32> = []
     ) -> RetentionPlan {
         RetentionPlanner.plan(
             files: files,
             settings: RetentionSettings(maxAge: age, maxCaptureSize: size),
             now: now,
-            recordingSequence: recording
+            recordingSequence: recording,
+            evidenceSequences: evidence
         )
     }
 
@@ -190,5 +192,65 @@ final class RetentionPlannerTests: XCTestCase {
         let result = plan(files, size: .megabytes256)
 
         XCTAssertEqual(result.bytesReclaimed + result.captureBytesAfter, total)
+    }
+
+    // MARK: - La evidencia de auditoría
+
+    func testEvidenceNeverExpires() {
+        let result = plan([
+            file(0, bytes: megabyte, createdDaysAgo: 40),
+            file(1, bytes: megabyte, createdDaysAgo: 39),
+            file(2, bytes: megabyte, createdDaysAgo: 30)
+        ], age: .oneWeek, evidence: [0])
+
+        // El 0 se cerró antes que el 1, pero guarda una sesión de auditoría: se queda.
+        XCTAssertEqual(result.filesToDelete, [1])
+    }
+
+    func testTheSizeCapSkipsEvidenceAndTakesTheNextOldest() {
+        let result = plan([
+            file(0, bytes: 100 * megabyte, createdDaysAgo: 3),
+            file(1, bytes: 100 * megabyte, createdDaysAgo: 2),
+            file(2, bytes: 100 * megabyte, createdDaysAgo: 1)
+        ], size: .megabytes256, evidence: [0])
+
+        XCTAssertEqual(result.filesToDelete, [1], "se pierde la más antigua que NO es evidencia")
+        XCTAssertFalse(result.sizeCapUnreachable)
+        XCTAssertFalse(result.sizeCapHeldByEvidence)
+    }
+
+    func testEvidenceLargerThanTheCapHoldsItAndSaysSo() {
+        let result = plan([
+            file(0, bytes: 200 * megabyte, createdDaysAgo: 3),
+            file(1, bytes: 200 * megabyte, createdDaysAgo: 2),
+            file(2, bytes: 100 * megabyte, createdDaysAgo: 1)
+        ], size: .megabytes256, evidence: [0, 1])
+
+        // Lo que no es evidencia se va entero y aun así no se cabe: la causa tiene que viajar, porque
+        // su salida —borrar la sesión— no es la de una grabación demasiado grande.
+        XCTAssertEqual(result.filesToDelete, [2])
+        XCTAssertTrue(result.sizeCapUnreachable)
+        XCTAssertTrue(result.sizeCapHeldByEvidence)
+        XCTAssertEqual(result.captureBytesAfter, 400 * megabyte)
+    }
+
+    func testARecordingOverTheCapIsTheCauseEvenWithEvidenceAround() {
+        let result = plan([
+            file(0, bytes: 100 * megabyte, createdDaysAgo: 3),
+            file(1, bytes: 300 * megabyte, createdDaysAgo: 2)
+        ], size: .megabytes256, recording: 1, evidence: [0])
+
+        // Sin la evidencia seguiría sin caberse: la grabación sola ya se pasa.
+        XCTAssertTrue(result.sizeCapUnreachable)
+        XCTAssertFalse(result.sizeCapHeldByEvidence)
+    }
+
+    func testARecordingThatIsAlsoEvidenceCountsAsARecording() {
+        let result = plan([
+            file(0, bytes: 300 * megabyte, createdDaysAgo: 2)
+        ], size: .megabytes256, recording: 0, evidence: [0])
+
+        XCTAssertTrue(result.sizeCapUnreachable)
+        XCTAssertFalse(result.sizeCapHeldByEvidence, "cerrar el fichero es la salida que llega antes")
     }
 }

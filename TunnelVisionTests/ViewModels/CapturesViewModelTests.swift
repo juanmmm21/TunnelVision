@@ -48,6 +48,7 @@ final class CapturesViewModelTests: XCTestCase {
         rotate: @escaping @Sendable () async throws -> ControlResponse = { .ok },
         export: (@Sendable () async throws -> FlowExportResult)? = nil,
         retention: @escaping @Sendable () throws -> RetentionSettings = { .default },
+        evidence: @escaping @Sendable () async throws -> Set<UInt32> = { [] },
         now: @escaping @Sendable () -> Date = { Date() }
     ) -> CapturesViewModel {
         CapturesViewModel(
@@ -56,6 +57,7 @@ final class CapturesViewModelTests: XCTestCase {
             // Por defecto, un export que nadie pide: los tests que lo ejercitan traen el suyo.
             exportConnections: export ?? { Self.exportResult(connectionCount: 0) },
             loadRetention: retention,
+            loadEvidence: evidence,
             now: now
         )
     }
@@ -305,6 +307,38 @@ final class CapturesViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.notice?.diagnostic, "not JSON")
     }
 
+    func testCapturesHoldingAuditEvidenceAreLeftOutOfWhatExpires() async throws {
+        try await writeCaptures(3)
+        let viewModel = makeViewModel(
+            retention: { RetentionSettings(maxAge: .oneWeek, maxCaptureSize: .unlimited) },
+            evidence: { [0, 1] }
+        )
+
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.evidenceSequences, [0, 1])
+        // Las dos capturas cerradas son evidencia, y la tercera no la ha cerrado nadie: no hay nada
+        // que pueda caducar.
+        guard case .bounded(_, let expiry) = viewModel.headroom else {
+            return XCTFail("con topes y evidencia leídos la pantalla debería poder comparar")
+        }
+        XCTAssertEqual(expiry, .undated)
+    }
+
+    func testEvidenceThatCannotBeReadHidesTheComparisonAndSaysWhy() async throws {
+        try await writeCaptures(2)
+        let viewModel = makeViewModel(evidence: { throw HistoryError.queryFailed("database is locked") })
+
+        await viewModel.refresh()
+
+        // Sin saber qué es evidencia, la comparación prometería borrados que la limpieza no hará.
+        XCTAssertEqual(viewModel.content, .list)
+        XCTAssertEqual(viewModel.rows.count, 2)
+        XCTAssertNil(viewModel.headroom)
+        XCTAssertEqual(viewModel.notice?.role, .warning)
+        XCTAssertEqual(viewModel.notice?.diagnostic, "database is locked")
+    }
+
     func testLimitsAreReReadOnEveryRefresh() async throws {
         try await writeCaptures(1)
         let store = SwitchableRetention()
@@ -331,7 +365,8 @@ final class CapturesViewModelTests: XCTestCase {
             library: CaptureLibrary(resolvingDirectory: { try resolver.resolve() }),
             rotateCapture: { .ok },
             exportConnections: { Self.exportResult(connectionCount: 0) },
-            loadRetention: { .default }
+            loadRetention: { .default },
+            loadEvidence: { [] }
         )
 
         await viewModel.refresh()
@@ -349,7 +384,8 @@ final class CapturesViewModelTests: XCTestCase {
             library: CaptureLibrary(resolvingDirectory: { try resolver.resolve() }),
             rotateCapture: { .ok },
             exportConnections: { Self.exportResult(connectionCount: 0) },
-            loadRetention: { .default }
+            loadRetention: { .default },
+            loadEvidence: { [] }
         )
         await viewModel.refresh()
         XCTAssertEqual(viewModel.rows.count, 2)
@@ -371,7 +407,8 @@ final class CapturesViewModelTests: XCTestCase {
             library: CaptureLibrary(resolvingDirectory: { try resolver.resolve() }),
             rotateCapture: { .ok },
             exportConnections: { Self.exportResult(connectionCount: 0) },
-            loadRetention: { .default }
+            loadRetention: { .default },
+            loadEvidence: { [] }
         )
         await viewModel.refresh()
         guard case .placeholder = viewModel.content else {

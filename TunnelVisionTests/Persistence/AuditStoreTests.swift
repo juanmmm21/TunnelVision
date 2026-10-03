@@ -532,6 +532,183 @@ final class AuditStoreTests: XCTestCase {
         XCTAssertTrue(flows.isEmpty)
     }
 
+    func testDeletingASessionTakesItsMarkersAndUntagsItsFlows() async throws {
+        let store = try makeStore()
+        let project = try await makeProject(store)
+        let session = try await store.startAuditSession(sessionDraft(project: project.id), at: PersistenceFixtures.date(10))
+        _ = try await store.addMarker(.consentGiven, toSession: session.id, at: PersistenceFixtures.date(15))
+        let flowID = try await upsert(store, remote: ModelFixtures.v4(1, 1, 1, 1), firstSeen: 12, lastSeen: 20)
+
+        try await store.deleteAuditSession(id: session.id)
+
+        let gone = try await store.auditSession(id: session.id)
+        XCTAssertNil(gone)
+        let markers = try await store.markers(forSession: session.id)
+        XCTAssertTrue(markers.isEmpty)
+        let flow = try await store.flow(id: flowID)
+        XCTAssertNotNil(flow, "el flujo ocurrió igual: se queda, sin etiqueta")
+        let projects = try await store.auditProjects()
+        XCTAssertEqual(projects.map(\.id), [project.id], "el proyecto no se va con una de sus sesiones")
+
+        // Era la abierta: ya no hay ninguna que etiquete, y se puede abrir otra.
+        let open = try await store.openAuditSession()
+        XCTAssertNil(open)
+        let later = try await upsert(store, remote: ModelFixtures.v4(2, 2, 2, 2), firstSeen: 30, lastSeen: 31)
+        let next = try await store.startAuditSession(sessionDraft(project: project.id), at: PersistenceFixtures.date(40))
+        let tagged = try await store.flows(inAuditSession: next.id, limit: 10)
+        XCTAssertFalse(tagged.map(\.id).contains(later))
+    }
+
+    func testDeletingASessionThatDoesNotExistIsAnError() async throws {
+        let store = try makeStore()
+
+        do {
+            try await store.deleteAuditSession(id: 99)
+            XCTFail("borrar lo que no existe tiene que decirse")
+        } catch let error as AuditStoreError {
+            XCTAssertEqual(error, .sessionNotFound(99))
+        }
+    }
+
+    // MARK: - Editar un proyecto
+
+    func testUpdatingAProjectRewritesWhatItDeclaresAndKeepsItsSessions() async throws {
+        let store = try makeStore()
+        let project = try await store.createAuditProject(
+            projectDraft(allowlist: [try entry("api.example.com", note: "backend"), try entry("*.cdn.example.com")]),
+            at: PersistenceFixtures.date(0)
+        )
+        let session = try await store.startAuditSession(sessionDraft(project: project.id), at: PersistenceFixtures.date(10))
+
+        let updated = try await store.updateAuditProject(
+            id: project.id,
+            with: AuditProjectDraft(
+                name: "  Example Health 2  ",
+                bundleIdentifier: nil,
+                catalogueVersion: nil,
+                // Otro orden, una entrada menos y una nueva: la lista se sustituye entera.
+                allowlist: [try entry("*.cdn.example.com", note: "assets"), try entry("crash.example.org")]
+            )
+        )
+
+        XCTAssertEqual(updated.id, project.id)
+        XCTAssertEqual(updated.name, "Example Health 2")
+        XCTAssertNil(updated.bundleIdentifier)
+        XCTAssertEqual(updated.allowlist.map(\.pattern.text), ["*.cdn.example.com", "crash.example.org"])
+        XCTAssertEqual(updated.allowlist.first?.note, "assets")
+        XCTAssertEqual(updated.createdAt, project.createdAt, "editar no vuelve a crear")
+
+        let read = try await store.auditProject(id: project.id)
+        XCTAssertEqual(read, updated)
+        let sessions = try await store.auditSessions(forProject: project.id)
+        XCTAssertEqual(sessions.map(\.id), [session.id])
+    }
+
+    func testUpdatingAProjectObeysTheSameRulesAsCreatingIt() async throws {
+        let store = try makeStore()
+        let project = try await store.createAuditProject(
+            projectDraft(allowlist: [try entry("api.example.com")]), at: PersistenceFixtures.date(0)
+        )
+
+        do {
+            _ = try await store.updateAuditProject(id: project.id, with: projectDraft(name: "   "))
+            XCTFail("un nombre vacío no se guarda")
+        } catch let error as AuditStoreError {
+            XCTAssertEqual(error, .emptyProjectName)
+        }
+        do {
+            _ = try await store.updateAuditProject(
+                id: project.id,
+                with: projectDraft(allowlist: [try entry("a.example.com"), try entry("A.example.com")])
+            )
+            XCTFail("el mismo patrón dos veces no se guarda")
+        } catch let error as AuditStoreError {
+            XCTAssertEqual(error, .duplicateAllowlistPattern("a.example.com"))
+        }
+        do {
+            _ = try await store.updateAuditProject(id: 99, with: projectDraft())
+            XCTFail("editar lo que no existe tiene que decirse")
+        } catch let error as AuditStoreError {
+            XCTAssertEqual(error, .projectNotFound(99))
+        }
+
+        // Nada de lo rechazado dejó rastro.
+        let read = try await store.auditProject(id: project.id)
+        XCTAssertEqual(read, project)
+    }
+
+    // MARK: - Retención
+
+    /// La evidencia no caduca: con el tope de fábrica de una semana se iría antes de exportarse.
+    func testPruningLeavesTheFlowsOfAnAuditSessionAlone() async throws {
+        let store = try makeStore()
+        let project = try await makeProject(store)
+        let outside = try await upsert(store, remote: ModelFixtures.v4(9, 9, 9, 9), firstSeen: 1, lastSeen: 2)
+        let session = try await store.startAuditSession(sessionDraft(project: project.id), at: PersistenceFixtures.date(10))
+        let inside = try await upsert(store, remote: ModelFixtures.v4(1, 1, 1, 1), firstSeen: 12, lastSeen: 20)
+        _ = try await store.endAuditSession(id: session.id, at: PersistenceFixtures.date(30))
+
+        let deleted = try await store.prune(before: PersistenceFixtures.date(1_000))
+
+        XCTAssertEqual(deleted, 1)
+        let gone = try await store.flow(id: outside)
+        XCTAssertNil(gone)
+        let kept = try await store.flow(id: inside)
+        XCTAssertNotNil(kept, "cerrar la sesión no la deja caducar: sigue siendo evidencia")
+
+        // Solo borrar la sesión le quita la etiqueta, y con ella la exención.
+        try await store.deleteAuditSession(id: session.id)
+        let afterwards = try await store.prune(before: PersistenceFixtures.date(1_000))
+        XCTAssertEqual(afterwards, 1)
+    }
+
+    func testEvidenceFilesAreTheOnesAnySessionPointsAt() async throws {
+        let store = try makeStore()
+        let project = try await makeProject(store)
+
+        let outsideRemote = ModelFixtures.v4(9, 9, 9, 9)
+        let outside = try await upsert(store, remote: outsideRemote, firstSeen: 1, lastSeen: 2)
+        try await store.appendPackets(
+            [PersistenceFixtures.packet(
+                timestamp: 1, key: PersistenceFixtures.key(remote: outsideRemote),
+                capture: CaptureLocation(fileSequence: 3, recordOffset: 24)
+            )],
+            flowID: outside
+        )
+
+        var sessions: [AuditSession] = []
+        for (index, file) in [UInt32(4), UInt32(6)].enumerated() {
+            let start = UInt64(10 + index * 20)
+            let session = try await store.startAuditSession(
+                sessionDraft(project: project.id), at: PersistenceFixtures.date(start)
+            )
+            let remote = ModelFixtures.v4(1, 1, 1, UInt8(index + 1))
+            let flowID = try await upsert(store, remote: remote, firstSeen: start + 1, lastSeen: start + 2)
+            try await store.appendPackets(
+                [
+                    PersistenceFixtures.packet(
+                        timestamp: start + 1, key: PersistenceFixtures.key(remote: remote),
+                        capture: CaptureLocation(fileSequence: file, recordOffset: 24)
+                    ),
+                    // Sin captura: su `pcap_file` vale 0 sin significar el fichero 0.
+                    PersistenceFixtures.packet(
+                        timestamp: start + 2, key: PersistenceFixtures.key(remote: remote), capture: nil
+                    ),
+                ],
+                flowID: flowID
+            )
+            _ = try await store.endAuditSession(id: session.id, at: PersistenceFixtures.date(start + 5))
+            sessions.append(session)
+        }
+
+        let evidence = try await store.auditEvidenceFileSequences()
+        XCTAssertEqual(evidence, [4, 6], "las de todas las sesiones, y ninguna de fuera")
+
+        try await store.deleteAuditSession(id: sessions[0].id)
+        let remaining = try await store.auditEvidenceFileSequences()
+        XCTAssertEqual(remaining, [6])
+    }
+
     // MARK: - Migración
 
     /// Una BD detenida en `v5` migra sola, conserva sus flujos y los deja sin sesión de auditoría:
