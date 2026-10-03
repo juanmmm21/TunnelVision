@@ -18,7 +18,7 @@ import Foundation
 /// su hoja de entrega del perfil, Captures con la hoja del export y Ajustes, que era la última vista
 /// que escribía estos literales a mano. Ninguna palabra de aquí está dos veces en el catálogo.
 ///
-/// **Lo que se quedó fuera a conciencia** es *Try again*, que dicen seis pantallas: el listón no es
+/// **Lo que se quedó fuera a conciencia** es *Try again*, que dicen siete pantallas: el listón no es
 /// decir las mismas palabras sino significar lo mismo, y ahí se reintenta desde una consulta de
 /// paquetes hasta encender el túnel — cada tarjeta dice **en su mensaje** qué falló, y el botón solo
 /// repite eso. Seis claves le dan al traductor la libertad de decirlas igual o distinto; una sola se la
