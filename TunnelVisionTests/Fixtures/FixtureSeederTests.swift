@@ -431,6 +431,69 @@ final class FixtureSeederTests: XCTestCase {
         XCTAssertEqual(second.captureFileSequences, first.captureFileSequences)
     }
 
+    // MARK: - La auditoría
+
+    /// La pestaña de auditoría se tiene que poder mirar en el Simulator, donde nada etiqueta flujos:
+    /// el sembrador deja un proyecto con una baseline y una auditoría **cerradas**, cada una con su
+    /// tramo de flujos, y la mitad del tráfico fuera de toda sesión.
+    func testSeedingLeavesAnAuditProjectWithItsSessionsTagged() async throws {
+        let (seeder, database, _, _) = try makeSeeder()
+        let fixture = CaptureFixture.make(spec(bulkFlowCount: 12))
+
+        _ = try await seeder.seed(fixture)
+
+        let store = try FlowStore(databaseURL: database)
+        let projects = try await store.auditProjects()
+        XCTAssertEqual(projects.map(\.name), [AuditFixture.projectName])
+        XCTAssertFalse(projects[0].allowlist.isEmpty)
+
+        let sessions = try await store.auditSessions(forProject: projects[0].id)
+        XCTAssertEqual(sessions.count, 2)
+        // Ninguna abierta: una sesión abierta enseñaría su franja en la Dashboard.
+        let open = try await store.openAuditSession()
+        XCTAssertNil(open)
+
+        let baseline = try XCTUnwrap(sessions.first { $0.kind == .baseline })
+        let audit = try XCTUnwrap(sessions.first { $0.kind != .baseline })
+        // La baseline se graba **antes**, sin la app auditada instalada.
+        XCTAssertLessThanOrEqual(baseline.startedAt, audit.startedAt)
+        XCTAssertTrue(audit.inspection.supportsPinningEvidence)
+        XCTAssertFalse(baseline.inspection.supportsPinningEvidence)
+
+        let quarter = fixture.flows.count / 4
+        var tagged = 0
+        for session in sessions {
+            let count = try await store.flowCount(inAuditSession: session.id)
+            XCTAssertEqual(count, quarter)
+            tagged += count
+        }
+        XCTAssertLessThan(tagged, fixture.flows.count, "la mayor parte del tráfico no es de ninguna auditoría")
+
+        let markers = try await store.markers(forSession: audit.id)
+        XCTAssertEqual(markers.first?.kind, .consentGiven)
+        XCTAssertEqual(markers.count, 3)
+        for marker in markers {
+            XCTAssertGreaterThanOrEqual(marker.date, audit.startedAt)
+            XCTAssertLessThanOrEqual(marker.date, try XCTUnwrap(audit.endedAt))
+        }
+    }
+
+    /// Sembrar reemplaza también la auditoría: `clearAll` deja los proyectos a propósito, así que sin
+    /// borrarlos cada siembra añadiría otro igual.
+    func testSeedingTwiceLeavesOneAuditProject() async throws {
+        let (seeder, database, _, _) = try makeSeeder()
+        let fixture = CaptureFixture.make(spec(bulkFlowCount: 12))
+
+        _ = try await seeder.seed(fixture)
+        _ = try await seeder.seed(fixture)
+
+        let store = try FlowStore(databaseURL: database)
+        let projects = try await store.auditProjects()
+        XCTAssertEqual(projects.count, 1)
+        let sessions = try await store.auditSessions(forProject: projects[0].id)
+        XCTAssertEqual(sessions.count, 2)
+    }
+
     /// El directorio de capturas es compartido: el sembrador se lleva las capturas nuestras y **solo**
     /// esas. Borrar lo que no reconoce sería pasarse del encargo.
     func testSeedingLeavesForeignFilesAlone() async throws {

@@ -469,6 +469,20 @@ final class AuditStoreTests: XCTestCase {
         XCTAssertEqual(sequences, [4, 5])
     }
 
+    func testASessionCountsOnlyItsOwnFlows() async throws {
+        let store = try makeStore()
+        let project = try await makeProject(store)
+        _ = try await upsert(store, remote: ModelFixtures.v4(9, 9, 9, 9), firstSeen: 1, lastSeen: 2)
+        let session = try await store.startAuditSession(sessionDraft(project: project.id), at: PersistenceFixtures.date(10))
+        _ = try await upsert(store, remote: ModelFixtures.v4(1, 1, 1, 1), firstSeen: 12, lastSeen: 20)
+        _ = try await upsert(store, remote: ModelFixtures.v4(2, 2, 2, 2), firstSeen: 13, lastSeen: 21)
+
+        let count = try await store.flowCount(inAuditSession: session.id)
+        XCTAssertEqual(count, 2)
+        let none = try await store.flowCount(inAuditSession: 99)
+        XCTAssertEqual(none, 0)
+    }
+
     func testASessionWithoutCapturedPacketsHasNoCaptureFiles() async throws {
         let store = try makeStore()
         let project = try await makeProject(store)

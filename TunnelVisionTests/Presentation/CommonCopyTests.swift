@@ -63,7 +63,7 @@ final class CommonCopyTests: XCTestCase {
 
     // MARK: - Lo que se quedó fuera a conciencia
 
-    /// Los seis reintentos de la app, cada uno pedido a su pantalla como lo pide la vista.
+    /// Los siete reintentos de la app, cada uno pedido a su pantalla como lo pide la vista.
     private var everyRetry: [(where: String, text: String?)] {
         var retries: [(where: String, text: String?)] = [
             ("monitoring", MonitoringPresentation.forState(.failed(.permissionDenied)).actionTitle),
@@ -77,6 +77,11 @@ final class CommonCopyTests: XCTestCase {
             ),
         ]
 
+        if case .placeholder(let audit) = AuditPresentation.content(
+            state: .failed(.history(.queryFailed("io"))), projectCount: 0
+        ) {
+            retries.append(("audit", audit.actionTitle))
+        }
         if case .placeholder(let timeline) = TimelinePresentation.content(
             for: HistorySnapshot(state: .failed(.queryFailed("io")))
         ) {
@@ -96,7 +101,7 @@ final class CommonCopyTests: XCTestCase {
         return retries
     }
 
-    /// La decisión que la migración de Captures dejó aplazada hasta tener las seis pantallas delante, y
+    /// La decisión que la migración de Captures dejó aplazada hasta tener las seis pantallas de entonces delante, y
     /// que se toma aquí: **_Try again_ no entra en `CommonCopy`**. El listón no es decir las mismas
     /// palabras sino significar lo mismo, y detrás de cada uno de estos botones hay una acción distinta
     /// —releer un directorio, reabrir el historial, repetir una consulta de paquetes, mirar otra vez el
@@ -106,16 +111,16 @@ final class CommonCopyTests: XCTestCase {
     /// Lo que sí se afirma es que **hoy coinciden**, que es justo lo que hace tentador fundirlas: el día
     /// que una se reescriba, este test cae y la decisión se vuelve a tomar a conciencia en vez de
     /// derivar sola. Es la misma forma que la de los dos *Packets* de la pantalla de un paquete.
-    func testTheSixRetriesStayApartAndStillSayTheSameWords() {
+    func testTheSevenRetriesStayApartAndStillSayTheSameWords() {
         let retries = everyRetry
-        XCTAssertEqual(retries.count, 6, "una pantalla dejó de ofrecer su reintento")
+        XCTAssertEqual(retries.count, 7, "una pantalla dejó de ofrecer su reintento")
 
         for retry in retries {
             XCTAssertEqual(retry.text, "Try again", "\(retry.where) dice otra cosa")
         }
     }
 
-    /// Y que ninguno de los seis se haya ido a `CommonCopy` por la puerta de atrás: si algún día se
+    /// Y que ninguno de los siete se haya ido a `CommonCopy` por la puerta de atrás: si algún día se
     /// funden, se hace cambiando el test de arriba y este comentario, no dejando de mirar.
     func testTheRetryIsNotOneOfTheSharedWords() {
         for piece in everyPieceOfCopy {
