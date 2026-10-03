@@ -13,6 +13,8 @@ Audit (tab) ──▶ Project ──▶ Session
    └─ New project (sheet)
 
 Dashboard ──(strip, only while a session records)──▶ Session
+
+Control Center · Action Button · Shortcuts · Siri ──▶ a marker in the open session (no screen)
 ```
 
 ## Why a tab
@@ -110,6 +112,30 @@ strip directly under the monitoring control for as long as one is open — *Audi
 whose project it is, and *Open*, which lands on that session with its project behind it in the stack.
 It has the shape of the monitoring strip on purpose: both are things happening right now. It is
 absent the rest of the time, so the Dashboard of someone who never audits is unchanged.
+
+## Marking without coming back
+
+*Mark now* needs TunnelVision in front, and the moment that matters most — accepting the audited
+app's consent screen — happens with the audited app in front. So the three fixed markers can also be
+placed from outside ([`../spec/audit.md`](../spec/audit.md) § *Marking from outside the app*):
+
+- **A control** (iOS 18+) for Control Center, the Action Button and the Lock Screen. Its title is the
+  marker it places and its second line is where it would place it: the project that is recording, or
+  *No session recording*. It is configurable, so there can be one per marker; untouched, it marks
+  *Consent given*.
+- **An App Shortcut**, *Place Audit Marker*, which Shortcuts shows with one tile per marker, and
+  which Siri and Spotlight offer without anyone building it.
+
+What they say afterwards is the whole design. Placed: `“Consent given” marked at 21:58:34 in Example
+Health.` — the name, the time to the second, the project. Not placed: an error that begins *No marker
+was placed*, and then why (no session is recording, or the history could not be written). There is no
+third, quiet outcome.
+
+Neither opens the app. Coming back later, the session screen already lists what was placed from
+outside: the tab re-reads when the app returns to the foreground.
+
+The free-form marker (*Other…*) is not offered outside the app. It has to be typed, and by the time
+it is typed the instant is no longer the one being marked.
 
 ## Measured, not eyeballed
 

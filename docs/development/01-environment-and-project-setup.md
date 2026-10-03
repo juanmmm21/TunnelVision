@@ -40,10 +40,11 @@ Use these consistently across `project.yml`, entitlements, and code:
 |-------|-------|
 | App bundle ID | `com.juanmmm21.tunnelvision` |
 | Extension bundle ID | `com.juanmmm21.tunnelvision.PacketTunnel` |
+| Controls extension bundle ID | `com.juanmmm21.tunnelvision.AuditControls` |
 | App Group ID | `group.com.juanmmm21.tunnelvision` |
 | Keychain access group (CA private key) | `$(AppIdentifierPrefix)com.juanmmm21.tunnelvision` |
 
-The App Group ID is the one string that must match in three places: both `.entitlements`
+The App Group ID is the one string that must match in four places: the three `.entitlements`
 files and `Shared/IPC` + `Shared/Persistence` at runtime. It is centralised as a constant in
 `Shared` (see [`../spec/ipc.md`](../spec/ipc.md)); never hardcode it in more than that one place.
 
@@ -318,6 +319,37 @@ class (XcodeGen writes these from `project.yml`, listed here so you can verify):
 </dict>
 ```
 
+The `AuditControls` target is a WidgetKit extension and declares only its extension point
+(`com.apple.widgetkit-extension`); its entry point is the `@main` `WidgetBundle`, so it has no
+principal class. Its deployment target is iOS 18 — controls do not exist before — while the app that
+embeds it stays on 17. On a device it needs its own App ID with the App Groups capability, like the
+tunnel extension; automatic signing registers it on the first build with a team.
+
+## Running an App Intent on the Simulator
+
+The marker intent can be run for real on a Simulator, but **not from the tiles Shortcuts shows under
+the app's name** (seen 2026-10-03, Xcode 27, iOS 26.5 runtime). Tapping one answers *"The app's
+shortcut can't be run"* and never reaches `perform()`: `linkd` rejects the app's connection
+(`Unable to get teamId … Rejecting invalid client due to requiresValidBundle`) because a Simulator
+build is signed ad hoc, and the app then logs `couldn't find the AppShortcutsProvider`. It is not the
+project: a ten-line app with one trivial `AppShortcut` fails the same way on the same Simulator, and
+for this app neither a different team prefix nor `ENABLE_DEBUG_DYLIB=NO` changes anything.
+
+What does work is a shortcut **built by hand** with the action: Shortcuts → `+` → search *Place Audit
+Marker* → run. That path executes the intent in the app's process and shows its dialog or its error.
+To see both outcomes, the fixture seeds only *ended* sessions, so the first run reports that no
+session is recording; start one from the Audit tab and run it again. The log to read when something
+looks wrong:
+
+```bash
+xcrun simctl spawn booted log show --last 2m --style compact \
+  --predicate 'subsystem == "com.apple.appintents" AND messageType >= 16'
+```
+
+The control itself cannot be placed anywhere on a Simulator; it is built, embedded and registered
+(`simctl spawn booted pluginkit -m -p com.apple.widgetkit-extension` lists it), and that is as far
+as a Simulator goes.
+
 ## What runs where (and why it matters for how you build)
 
 | Concern | App target | Extension target | Testable on Simulator? |
@@ -329,6 +361,7 @@ class (XcodeGen writes these from `project.yml`, listed here so you can verify):
 | pcap writer | ✅ seeding only | ✅ | ✅ writes to a temp file |
 | GRDB store | ✅ read | ✅ write | ✅ in-memory / temp DB |
 | mmap ring buffer | ✅ consume | ✅ produce | ✅ backed by a temp file |
+| Audit marker intent (`TunnelVision/Intents`) | ✅ Shortcuts, Siri | `AuditControls` ✅ the control | ✅ through a hand-built shortcut; the control needs a device |
 | TLS termination / CA | | ✅ | ✅ mostly (minting, **and the live server handshake** against a real client over loopback; only the extension sandbox needs a device) |
 
 **Design implication:** keep the device-only surface (the `packetFlow` read/write loop and

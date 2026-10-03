@@ -4,15 +4,18 @@ This document describes how TunnelVision captures and processes traffic on-devic
 
 ## Process model
 
-TunnelVision ships as three build products in one Xcode project:
+TunnelVision ships as four build products in one Xcode project:
 
 | Component | Kind | Role |
 |-----------|------|------|
 | `TunnelVision` | iOS app | SwiftUI UI, tunnel lifecycle control, history queries |
 | `PacketTunnel` | App extension (`NEPacketTunnelProvider`) | packet capture, parsing, relay, optional TLS termination |
-| `Shared` | Framework | data models, persistence, and IPC layout shared by both |
+| `AuditControls` | App extension (WidgetKit, iOS 18+) | the Control Center control that places an audit marker without opening the app |
+| `Shared` | Framework | data models, persistence, and IPC layout shared by all three |
 
-The app and the extension are **separate processes** that never share memory directly. They communicate only through a shared **App Group** container: a SQLite database for durable history and a memory-mapped ring buffer for the live feed.
+The app and the tunnel extension are **separate processes** that never share memory directly. They communicate only through a shared **App Group** container: a SQLite database for durable history and a memory-mapped ring buffer for the live feed.
+
+`AuditControls` is a third process with a much narrower reach: it holds the App Group entitlement and nothing else, and all it does with it is write one marker row into that database, or read which audit session is open ([`spec/audit.md`](spec/audit.md) § *Marking from outside the app*). It never touches the ring buffer, the capture files, the keychain or the tunnel.
 
 ## Data flow
 

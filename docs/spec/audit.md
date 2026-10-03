@@ -94,6 +94,17 @@ public struct SessionMarker: Sendable, Hashable, Identifiable {
     public let date: Date
     public let kind: SessionMarkerKind
 }
+
+/// The open session with its project's name: what a system control needs to say where it would mark.
+public struct AuditRecording: Sendable, Hashable {
+    public let session: AuditSession
+    public let projectName: String
+}
+
+public enum OpenSessionMarkerOutcome: Sendable, Hashable {
+    case placed(SessionMarker, in: AuditRecording)
+    case noOpenSession
+}
 ```
 
 `AuditProjectDraft` and `AuditSessionDraft` carry everything but what the store assigns (the row id
@@ -226,6 +237,8 @@ extension FlowStore {
     public func auditSessions(forProject projectID: Int64) throws -> [AuditSession]   // newest first
 
     public func addMarker(_ kind: SessionMarkerKind, toSession id: Int64, at date: Date) throws -> SessionMarker
+    public func addMarkerToOpenSession(_ kind: SessionMarkerKind, at date: Date) throws -> OpenSessionMarkerOutcome
+    public func auditRecording() throws -> AuditRecording?                     // the open session, named
     public func markers(forSession id: Int64) throws -> [SessionMarker]        // as they happened
 
     public func flows(inAuditSession id: Int64, limit: Int) throws -> [StoredFlow]    // oldest first
@@ -249,6 +262,60 @@ extension FlowStore {
 - `flows(inAuditSession:)` is ordered by `first_seen` **ascending**, the opposite of `recentFlows`.
   The Timeline is read from now backwards; evidence is read as it happened.
 - Domain-rule violations throw `AuditStoreError`; an unreadable row throws `StoreError.corruptRow`.
+
+## Marking from outside the app
+
+A marker has to be droppable **without leaving the audited app**: the assessor is in the middle of
+its onboarding, and coming back to TunnelVision to tap a button changes what is being measured. Three
+doors do it, and they are the same App Intent (`PlaceAuditMarkerIntent`, `TunnelVision/Intents`), so
+none of them can mark differently from the others:
+
+| Door | Where it lives | Runs in |
+|---|---|---|
+| Control Center control, Action Button, Lock Screen | `AuditControls` (WidgetKit extension, iOS 18+) | the extension or the app |
+| App Shortcut (Shortcuts, Spotlight) and Siri | the app (`AuditShortcuts`) | the app, in the background |
+
+**Which process runs the intent does not matter, by construction.** The intent needs one thing — the
+shared database — and both the app and the widget extension have the App Group. It therefore does
+not go through `AuditLibrary` (which belongs to the app) but through `OpenSessionMarking`, which
+opens the store per call. `AuditControls` has no other entitlement: no Network Extension, no keychain.
+
+The rules:
+
+- **The marker goes to whichever session is open, in one transaction.**
+  `addMarkerToOpenSession` reads the open session and writes the marker in the same write. The app
+  can end the session from another process between the two; done in two steps, the marker would land
+  in a session that had just ended or fail with an error that does not say what happened.
+- **No open session is an outcome, not an error — and it is never silent.** The intent cannot open a
+  session (that needs a version and a build). The store answers `.noOpenSession`, and the intent ends
+  with an error whose sentence says nothing was placed. A marker that was not placed and that the
+  assessor believes placed is worse than a failure.
+- **Only a written marker produces a confirmation.** `AuditMarkerIntentCopy.reading` maps the three
+  reports — placed, no open session, not placed (the database did not answer, or refused the marker)
+  — to one confirmation and two errors. The confirmation names the marker, the time **to the second**
+  and the project: that is what lets it be matched against what was happening in the audited app.
+- **The instant is the gesture's.** It is taken on the first line of `perform()`, before the database
+  is opened, like the *Mark now* buttons take theirs at the tap.
+- **Only the three fixed markers are offered** (`AuditMarkerOption`). The free-form one needs typing,
+  which cannot be done mid-onboarding without the instant ceasing to be the gesture's; it stays on the
+  session screen. App Intents extracts its copy at compile time and accepts only literals, so the
+  three names are written a second time there; a test holds them equal to the session screen's, and
+  fails if a fixed marker is added without its option.
+- **The control says where it would mark before it is pressed.** A control does not show its intent's
+  error, so its second line carries the state — the recording project's name, *No session recording*,
+  or *History unavailable* (`AuditMarkerControlState`). "No session" and "could not read" are told
+  apart: the second cannot promise that nothing is recording. The control is configurable — consent
+  by default, since that is the marker behind *activity before consent* — so an assessor can add one
+  per marker.
+- **The app tells the control when to re-read**, on every change of the recording session
+  (`AuditControlRefresh`), and **re-reads itself when it comes back to the foreground**
+  (`AuditViewModel.resume`): a marker placed from outside is written without passing through the view
+  model, and an assessor who returns to the session screen and does not see it would read that as
+  *not placed*.
+
+The control exists from iOS 18, and the app's deployment target is 17. The extension target carries
+its own deployment target instead of availability checks on every type: on iOS 17 it is simply not
+offered, and the App Shortcut still is.
 
 ## From the app
 
@@ -280,6 +347,18 @@ the session is open while its flows are written.
   the rules of creation; a deleted session takes its markers, untags its flows and stops the tagging;
   pruning leaves a session's flows alone until the session is deleted; the evidence files are those of
   every session and none from outside.
+- `AuditStoreTests` also covers marking the open session: the marker lands in it and names its
+  project; with no session (none at all, or one already ended) nothing is written and none is opened;
+  a session ended by a second store — the app, seen from the control — is seen by the one that marks;
+  and the rules of any marker still apply.
+- `OpenSessionMarkingTests`: every option writes its own kind with the instant it was given; no open
+  session, an unopenable database and a marker the store refuses are three reports and none of them
+  is *placed*; the control's three states.
+- `AuditMarkerIntentCopyTests`: the options are the session screen's fixed markers, name and symbol;
+  the intent marks consent by default and never opens the app; the exact copy of the confirmation
+  and of the two errors.
+- `AuditViewModelTests`: coming back to the foreground shows a marker placed from outside, and a
+  session deleted meanwhile is gone.
 - `RetentionPlannerTests`, `CaptureHeadroomTests`, `StorageManagerTests`: evidence is skipped by both
   limits, the cause of an unmet size limit is told apart, and a cleanup that cannot read the evidence
   deletes nothing.
