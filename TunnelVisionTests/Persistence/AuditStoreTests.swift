@@ -322,6 +322,95 @@ final class AuditStoreTests: XCTestCase {
         XCTAssertEqual(markers.map(\.date), [20, 40, 50, 60].map(PersistenceFixtures.date))
     }
 
+    // MARK: - Marcar sin saber qué sesión está abierta
+
+    func testAMarkerFromOutsideLandsInTheOpenSessionAndNamesItsProject() async throws {
+        let store = try makeStore()
+        let project = try await makeProject(store)
+        let session = try await store.startAuditSession(sessionDraft(project: project.id), at: PersistenceFixtures.date(10))
+
+        let outcome = try await store.addMarkerToOpenSession(.consentGiven, at: PersistenceFixtures.date(20))
+
+        guard case .placed(let marker, in: let recording) = outcome else {
+            return XCTFail("se esperaba un marcador puesto, no \(outcome)")
+        }
+        XCTAssertEqual(marker.sessionID, session.id)
+        XCTAssertEqual(marker.date, PersistenceFixtures.date(20))
+        XCTAssertEqual(recording, AuditRecording(session: session, projectName: "Example Health"))
+        let markers = try await store.markers(forSession: session.id)
+        XCTAssertEqual(markers, [marker])
+    }
+
+    func testWithNoOpenSessionNothingIsMarkedAndNoneIsOpened() async throws {
+        let store = try makeStore()
+
+        // Ni un proyecto siquiera.
+        var outcome = try await store.addMarkerToOpenSession(.consentGiven, at: PersistenceFixtures.date(20))
+        XCTAssertEqual(outcome, .noOpenSession)
+
+        // Y con una sesión que ya terminó: no se reabre ni recibe el marcador.
+        let project = try await makeProject(store)
+        let session = try await store.startAuditSession(sessionDraft(project: project.id), at: PersistenceFixtures.date(10))
+        _ = try await store.endAuditSession(id: session.id, at: PersistenceFixtures.date(30))
+
+        outcome = try await store.addMarkerToOpenSession(.consentGiven, at: PersistenceFixtures.date(40))
+        XCTAssertEqual(outcome, .noOpenSession)
+        let markers = try await store.markers(forSession: session.id)
+        XCTAssertTrue(markers.isEmpty)
+        let open = try await store.openAuditSession()
+        XCTAssertNil(open)
+    }
+
+    func testASessionEndedByAnotherProcessIsSeenByTheOneThatMarks() async throws {
+        // Dos stores sobre la misma base: la app, que abre y cierra la sesión, y la extensión de
+        // controles, que marca. Lo que una hace lo ve la otra sin que nadie se lo diga.
+        let app = try makeStore()
+        let controls = try makeStore()
+        let project = try await makeProject(app)
+        let session = try await app.startAuditSession(sessionDraft(project: project.id), at: PersistenceFixtures.date(10))
+
+        let first = try await controls.addMarkerToOpenSession(.loggedIn, at: PersistenceFixtures.date(20))
+        guard case .placed = first else { return XCTFail("se esperaba un marcador puesto, no \(first)") }
+        let seenByTheApp = try await app.markers(forSession: session.id)
+        XCTAssertEqual(seenByTheApp.map(\.kind), [.loggedIn])
+
+        _ = try await app.endAuditSession(id: session.id, at: PersistenceFixtures.date(30))
+        let second = try await controls.addMarkerToOpenSession(.loggedOut, at: PersistenceFixtures.date(40))
+        XCTAssertEqual(second, .noOpenSession)
+    }
+
+    func testAMarkerFromOutsideObeysTheRulesOfAnyMarker() async throws {
+        let store = try makeStore()
+        let project = try await makeProject(store)
+        let session = try await store.startAuditSession(sessionDraft(project: project.id), at: PersistenceFixtures.date(10))
+
+        await assert(
+            try await store.addMarkerToOpenSession(.consentGiven, at: PersistenceFixtures.date(5)),
+            throws: .dateBeforeSessionStart
+        )
+        await assert(
+            try await store.addMarkerToOpenSession(.custom("  "), at: PersistenceFixtures.date(20)),
+            throws: .emptyMarkerLabel
+        )
+        let markers = try await store.markers(forSession: session.id)
+        XCTAssertTrue(markers.isEmpty)
+    }
+
+    func testTheRecordingIsTheOpenSessionWithItsProjectsName() async throws {
+        let store = try makeStore()
+        let none = try await store.auditRecording()
+        XCTAssertNil(none)
+
+        let project = try await makeProject(store)
+        let session = try await store.startAuditSession(sessionDraft(project: project.id), at: PersistenceFixtures.date(10))
+        let recording = try await store.auditRecording()
+        XCTAssertEqual(recording, AuditRecording(session: session, projectName: "Example Health"))
+
+        _ = try await store.endAuditSession(id: session.id, at: PersistenceFixtures.date(30))
+        let afterwards = try await store.auditRecording()
+        XCTAssertNil(afterwards)
+    }
+
     func testAMarkerNeedsAnOpenSessionAndADateInsideIt() async throws {
         let store = try makeStore()
         let project = try await makeProject(store)

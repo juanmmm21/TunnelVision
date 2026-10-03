@@ -246,6 +246,43 @@ final class AuditViewModelTests: XCTestCase {
         XCTAssertGreaterThan(display.markers[0].date, session.startedAt)
     }
 
+    func testComingBackShowsAMarkerPlacedFromOutsideTheApp() async throws {
+        let viewModel = makeViewModel()
+        let id = try await makeProject(viewModel)
+        _ = await viewModel.startSession(auditForm(), projectID: id)
+        let session = try XCTUnwrap(viewModel.overview.recording?.session)
+        await viewModel.loadSession(id: session.id)
+        XCTAssertEqual(viewModel.sessionDisplay?.markers.count, 0)
+
+        // El control o el atajo: otro store sobre la misma base, sin pasar por el view model.
+        let outside = try FlowStore(databaseURL: dbURL, anchor: PersistenceFixtures.anchor)
+        let outcome = try await outside.addMarkerToOpenSession(
+            .consentGiven, at: session.startedAt.addingTimeInterval(5)
+        )
+        guard case .placed = outcome else { return XCTFail("se esperaba un marcador puesto, no \(outcome)") }
+        XCTAssertEqual(viewModel.sessionDisplay?.markers.count, 0, "nadie se lo ha dicho todavía")
+
+        await viewModel.resume()
+
+        XCTAssertEqual(viewModel.sessionDisplay?.markers.map(\.title), ["Consent given"])
+    }
+
+    func testComingBackSeesASessionThatIsNoLongerThere() async throws {
+        let viewModel = makeViewModel()
+        let id = try await makeProject(viewModel)
+        _ = await viewModel.startSession(auditForm(), projectID: id)
+        let session = try XCTUnwrap(viewModel.overview.recording?.session)
+        await viewModel.loadSession(id: session.id)
+
+        let outside = try FlowStore(databaseURL: dbURL, anchor: PersistenceFixtures.anchor)
+        try await outside.deleteAuditSession(id: session.id)
+
+        await viewModel.resume()
+
+        XCTAssertNil(viewModel.recordingBanner)
+        XCTAssertNil(viewModel.sessionDisplay)
+    }
+
     func testEndingASessionStopsTheRecordingAndRefusesFurtherMarkers() async throws {
         let viewModel = makeViewModel()
         let id = try await makeProject(viewModel)
