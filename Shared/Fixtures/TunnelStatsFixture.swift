@@ -111,6 +111,18 @@ public enum TunnelStatsFixture {
         stats.plaintextFilesReclaimed = 6
         stats.plaintextFailures = 0
 
+        // 287 + 23 + 96 + 2 + 1 = 409, las respuestas de DNS que el relay dice haber recibido: cada
+        // una pasó por el mapa de nombres y acabó en uno de estos desenlaces.
+        stats.dnsNames.repliesRecorded = 287
+        stats.dnsNames.addressesRecorded = 731
+        stats.dnsNames.errorResponses = 23
+        stats.dnsNames.withoutAddresses = 96
+        stats.dnsNames.unusableNames = 2
+        stats.dnsNames.unreadable = 1
+        // De los 1620 flujos, 412 son las propias consultas; de los demás, la mayoría va a una
+        // dirección que se acababa de resolver.
+        stats.dnsNames.flowsNamed = 1_038
+
         // El texto de un `NSError` de verdad, con sus comillas tipográficas y su nombre de fichero:
         // es copia del sistema y no nuestra, y esta pantalla existe en parte para poder citarlo.
         stats.lastCaptureError = """

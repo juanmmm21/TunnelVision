@@ -72,6 +72,33 @@ public enum ResolverVerdict: Sendable, Equatable {
     case notAnswering(queries: UInt64)
 }
 
+/// Qué ha podido hacer el túnel con las respuestas de DNS para ponerle nombre a los flujos.
+///
+/// Es el tercer veredicto de la pantalla y tampoco es una rama de los otros dos: `ResolverVerdict`
+/// contesta si el dispositivo **puede resolver** nombres, y esto si el túnel **pudo leer** lo que se
+/// resolvió. Con DNS cifrado lo primero va perfectamente y lo segundo es imposible, y sin decirlo una
+/// sesión entera de flujos sin nombre se lee como una avería.
+///
+/// No lleva cifras: las cifras están en las filas de su sección, y la frase de cada caso dice lo que
+/// ellas no pueden — qué significan juntas.
+public enum DNSNamingVerdict: Sendable, Equatable {
+    /// Aún no ha pasado un paquete: no hay nada que afirmar, ni siquiera una ausencia.
+    case noTraffic
+    /// Hay tráfico y **ni un datagrama** ha llegado del puerto 53. Es lo que se ve con DNS cifrado
+    /// (DoH, DoT, Private Relay), y también con el DNS sobre TCP, que no se lee.
+    case nothingToRead
+    /// Llegaron datagramas del puerto 53 y ninguno se dejó leer como un mensaje de DNS.
+    case unreadable
+    /// Se leyeron respuestas y ninguna dio una dirección que apuntar: errores, o respuestas a
+    /// preguntas que no son la dirección de un host.
+    case nothingToLearn
+    /// Hay direcciones apuntadas y todavía ningún flujo ha nacido hacia una de ellas. Un flujo solo se
+    /// nombra al crearse, así que los que ya estaban abiertos siguen sin nombre.
+    case learning
+    /// Hay flujos que nacieron con el nombre que el DNS dio a su dirección.
+    case naming
+}
+
 /// El titular de la pantalla: el veredicto convertido en copia.
 public struct DiagnosticsHeadline: Sendable, Equatable {
     public let title: String
@@ -401,6 +428,84 @@ public enum DiagnosticsPresentation {
         return .announcing(status.announced)
     }
 
+    /// Qué dicen los contadores sobre los nombres que el túnel saca del DNS.
+    ///
+    /// Como en `verdict`, el orden **es** la decisión, y va de lo que desmiente más a lo que desmiente
+    /// menos: un solo flujo nombrado prueba la cadena entera; una respuesta apuntada prueba que hay
+    /// DNS en claro y que se lee; un mensaje legible sin direcciones prueba que el disector funciona;
+    /// y solo cuando lo único que llegó fue ilegible se dice que no se pudo leer. Sin nada de eso, lo
+    /// que separa «DNS cifrado» de «todavía no ha pasado nada» es si ha habido tráfico.
+    ///
+    /// Recibe la mitad del pipeline y no el `TunnelStats` entero porque no mira nada más: el par de
+    /// consultas y respuestas del relay es la pregunta de `resolverVerdict`, y cruzarlo aquí haría
+    /// que dos veredictos hablasen del mismo hecho.
+    public static func dnsNamingVerdict(for pipeline: PipelineStats) -> DNSNamingVerdict {
+        let names = pipeline.dnsNames
+        if names.flowsNamed > 0 { return .naming }
+        if names.repliesRecorded > 0 { return .learning }
+        if names.repliesIgnored > 0 { return .nothingToLearn }
+        if names.unreadable > 0 { return .unreadable }
+        return pipeline.packetsHandled > 0 ? .nothingToRead : .noTraffic
+    }
+
+    /// La frase del veredicto, que es el pie de su sección.
+    ///
+    /// Va de pie y no de aviso sobre el titular porque ninguno de sus casos pide nada a quien mira:
+    /// el DNS cifrado es una elección del dispositivo, no una avería. `nil` solo sin tráfico, donde
+    /// unos ceros ya dicen todo lo que se sabe.
+    public static func dnsNamingNote(for verdict: DNSNamingVerdict) -> String? {
+        switch verdict {
+        case .noTraffic:
+            return nil
+        case .nothingToRead:
+            return String(
+                localized: "diagnostics.section.dnsNames.note.nothingToRead",
+                defaultValue: "No answer to a name lookup has crossed the tunnel unencrypted since monitoring started, so there was nothing to name connections by. That is what encrypted DNS looks like — DNS over HTTPS or TLS, or iCloud Private Relay. Connections are then named only when they announce a host.",
+                comment: """
+                    Footer under the names-from-lookups section when traffic is flowing and not one \
+                    datagram has arrived from port 53. It states the fact and then what usually \
+                    explains it, and it is not a fault.
+                    """
+            )
+        case .unreadable:
+            return String(
+                localized: "diagnostics.section.dnsNames.note.unreadable",
+                defaultValue: "Datagrams arrived from the DNS port and none of them could be read as an answer to a name lookup, so no connection was named this way.",
+                comment: """
+                    Footer under the names-from-lookups section when everything that arrived from \
+                    port 53 failed to parse as a DNS message.
+                    """
+            )
+        case .nothingToLearn:
+            return String(
+                localized: "diagnostics.section.dnsNames.note.nothingToLearn",
+                defaultValue: "Answers to name lookups were read and none of them gave an address to name a connection by: they were errors, or answers to something other than a host's address.",
+                comment: """
+                    Footer under the names-from-lookups section when DNS replies were parsed but \
+                    none carried a usable address record.
+                    """
+            )
+        case .learning:
+            return String(
+                localized: "diagnostics.section.dnsNames.note.learning",
+                defaultValue: "Answers have been read, and no connection has started yet to an address they gave. A connection is named when it starts, so the ones already open stay unnamed.",
+                comment: """
+                    Footer under the names-from-lookups section when addresses were learned but no \
+                    flow has been created towards one of them yet.
+                    """
+            )
+        case .naming:
+            return String(
+                localized: "diagnostics.section.dnsNames.note.naming",
+                defaultValue: "A connection is named after the lookup that answered its address. That name was asked for, not announced, so it is kept apart from the hosts above.",
+                comment: """
+                    Footer under the names-from-lookups section in the normal case. It says what a \
+                    name from DNS is and why it is not the same thing as an announced host (SNI).
+                    """
+            )
+        }
+    }
+
     /// Lo que hay que decir del DNS, o **nada** si no hay nada que decir.
     ///
     /// Devuelve `nil` cuando el túnel está anunciando resolvers y nadie los desmiente, porque esa es
@@ -727,6 +832,10 @@ public enum DiagnosticsPresentation {
             sections.append(inspectionSection(relay))
             sections.append(namesSection(relay))
         }
+        // Pegada a los nombres anunciados porque es la otra mitad de la misma pregunta —de dónde
+        // saca su nombre un flujo—, pero fuera de su `if`: estos contadores son del pipeline y están
+        // también cuando el relay no contestó.
+        sections.append(dnsNamesSection(stats.pipeline))
         sections.append(decryptedSection(stats.pipeline, relay: stats.relay))
         sections.append(recordingSection(stats.pipeline))
         if let relay = stats.relay {
@@ -1049,6 +1158,80 @@ public enum DiagnosticsPresentation {
                 )
             ],
             note: nil
+        )
+    }
+
+    /// Lo que el túnel hizo con las respuestas de DNS que vio pasar.
+    ///
+    /// Los seis motivos por los que una respuesta legible no apunta nada van **sumados** en una fila:
+    /// por separado serían seis filas que una sesión sana llena de todas formas (un dominio que no
+    /// existe, un nombre sin registro AAAA), y lo que la pantalla tiene que dejar ver es cuánto se
+    /// pudo aprovechar de lo que llegó.
+    private static func dnsNamesSection(_ pipeline: PipelineStats) -> DiagnosticsSection {
+        let names = pipeline.dnsNames
+        return DiagnosticsSection(
+            id: "dnsNames",
+            title: String(
+                localized: "diagnostics.section.dnsNames",
+                defaultValue: "Names from lookups",
+                comment: """
+                    Section title for the names the tunnel learned by reading DNS answers, as \
+                    opposed to the hosts connections announce themselves (the section above).
+                    """
+            ),
+            rows: [
+                DiagnosticsRow.reading(
+                    id: "dnsNames.repliesRecorded",
+                    label: String(
+                        localized: "diagnostics.row.dnsRepliesRecorded",
+                        defaultValue: "Answers with addresses",
+                        comment: "DNS replies from which at least one address was learned."
+                    ),
+                    value: DisplayFormat.count(names.repliesRecorded)
+                ),
+                DiagnosticsRow.reading(
+                    id: "dnsNames.addressesRecorded",
+                    label: String(
+                        localized: "diagnostics.row.dnsAddressesRecorded",
+                        defaultValue: "Addresses learned",
+                        comment: "Addresses taken from those replies, each tied to the name that was asked for."
+                    ),
+                    value: DisplayFormat.count(names.addressesRecorded)
+                ),
+                DiagnosticsRow.reading(
+                    id: "dnsNames.flowsNamed",
+                    label: String(
+                        localized: "diagnostics.row.dnsFlowsNamed",
+                        defaultValue: "Connections named",
+                        comment: "Flows that started towards a learned address and so were born with a name."
+                    ),
+                    value: DisplayFormat.count(names.flowsNamed)
+                ),
+                DiagnosticsRow.reading(
+                    id: "dnsNames.repliesIgnored",
+                    label: String(
+                        localized: "diagnostics.row.dnsRepliesIgnored",
+                        defaultValue: "Answers with nothing to learn",
+                        comment: """
+                            DNS messages that were read and gave no address: errors, replies to \
+                            other kinds of question, names that cannot be used. Ordinary, not a fault.
+                            """
+                    ),
+                    value: DisplayFormat.count(names.repliesIgnored)
+                ),
+                // Lectura y no avería: lo que llega del puerto 53 sin ser un mensaje de DNS no es
+                // trabajo nuestro perdido — el paquete se reenvió y se grabó como cualquier otro.
+                DiagnosticsRow.reading(
+                    id: "dnsNames.unreadable",
+                    label: String(
+                        localized: "diagnostics.row.dnsUnreadable",
+                        defaultValue: "Answers that could not be read",
+                        comment: "Datagrams from the DNS port that did not parse as a DNS message."
+                    ),
+                    value: DisplayFormat.count(names.unreadable)
+                )
+            ],
+            note: dnsNamingNote(for: dnsNamingVerdict(for: pipeline))
         )
     }
 

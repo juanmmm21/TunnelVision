@@ -3973,6 +3973,18 @@
         }
       }
     },
+    "diagnostics.row.dnsAddressesRecorded" : {
+      "comment" : "Addresses taken from those replies, each tied to the name that was asked for.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Addresses learned"
+          }
+        }
+      }
+    },
     "diagnostics.row.dnsAnnounced" : {
       "comment" : "The DNS servers the tunnel handed to the system when monitoring started. Empty here means the device cannot look up names.",
       "extractionState" : "extracted_with_value",
@@ -3981,6 +3993,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Announced by the tunnel"
+          }
+        }
+      }
+    },
+    "diagnostics.row.dnsFlowsNamed" : {
+      "comment" : "Flows that started towards a learned address and so were born with a name.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Connections named"
           }
         }
       }
@@ -4033,6 +4057,18 @@
         }
       }
     },
+    "diagnostics.row.dnsRepliesIgnored" : {
+      "comment" : "DNS messages that were read and gave no address: errors, replies to other kinds of question, names that cannot be used. Ordinary, not a fault.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Answers with nothing to learn"
+          }
+        }
+      }
+    },
     "diagnostics.row.dnsRepliesReceived" : {
       "comment" : "DNS replies that came back. It sits under the queries because the pair is the point: lookups going out with nothing coming back is why pages hang.",
       "extractionState" : "extracted_with_value",
@@ -4041,6 +4077,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Name lookups answered"
+          }
+        }
+      }
+    },
+    "diagnostics.row.dnsRepliesRecorded" : {
+      "comment" : "DNS replies from which at least one address was learned.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Answers with addresses"
           }
         }
       }
@@ -4077,6 +4125,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "New servers picked up"
+          }
+        }
+      }
+    },
+    "diagnostics.row.dnsUnreadable" : {
+      "comment" : "Datagrams from the DNS port that did not parse as a DNS message.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Answers that could not be read"
           }
         }
       }
@@ -4569,6 +4629,78 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "While monitoring, the tunnel is this device's main network interface, so the system hands these same servers back when asked. They are listed apart only when they stop matching — which is what a network change the tunnel did not learn looks like."
+          }
+        }
+      }
+    },
+    "diagnostics.section.dnsNames" : {
+      "comment" : "Section title for the names the tunnel learned by reading DNS answers, as opposed to the hosts connections announce themselves (the section above).",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Names from lookups"
+          }
+        }
+      }
+    },
+    "diagnostics.section.dnsNames.note.learning" : {
+      "comment" : "Footer under the names-from-lookups section when addresses were learned but no flow has been created towards one of them yet.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Answers have been read, and no connection has started yet to an address they gave. A connection is named when it starts, so the ones already open stay unnamed."
+          }
+        }
+      }
+    },
+    "diagnostics.section.dnsNames.note.naming" : {
+      "comment" : "Footer under the names-from-lookups section in the normal case. It says what a name from DNS is and why it is not the same thing as an announced host (SNI).",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "A connection is named after the lookup that answered its address. That name was asked for, not announced, so it is kept apart from the hosts above."
+          }
+        }
+      }
+    },
+    "diagnostics.section.dnsNames.note.nothingToLearn" : {
+      "comment" : "Footer under the names-from-lookups section when DNS replies were parsed but none carried a usable address record.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Answers to name lookups were read and none of them gave an address to name a connection by: they were errors, or answers to something other than a host's address."
+          }
+        }
+      }
+    },
+    "diagnostics.section.dnsNames.note.nothingToRead" : {
+      "comment" : "Footer under the names-from-lookups section when traffic is flowing and not one datagram has arrived from port 53. It states the fact and then what usually explains it, and it is not a fault.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No answer to a name lookup has crossed the tunnel unencrypted since monitoring started, so there was nothing to name connections by. That is what encrypted DNS looks like — DNS over HTTPS or TLS, or iCloud Private Relay. Connections are then named only when they announce a host."
+          }
+        }
+      }
+    },
+    "diagnostics.section.dnsNames.note.unreadable" : {
+      "comment" : "Footer under the names-from-lookups section when everything that arrived from port 53 failed to parse as a DNS message.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Datagrams arrived from the DNS port and none of them could be read as an answer to a name lookup, so no connection was named this way."
           }
         }
       }
