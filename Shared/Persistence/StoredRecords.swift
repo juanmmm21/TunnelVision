@@ -26,6 +26,10 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
     public let tlsStatus: TLSInspectionStatus
     public let sni: String?
 
+    /// El nombre que el DNS había dado a la dirección remota cuando el flujo se creó (columnas
+    /// `dns_name` / `dns_other_names`). Nunca es el `sni`: son dos hechos distintos.
+    public let resolvedName: ResolvedFlowName?
+
     public init(
         id: Int64,
         key: FlowKey,
@@ -35,7 +39,8 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
         bytesIn: UInt64,
         packetCount: UInt64,
         tlsStatus: TLSInspectionStatus,
-        sni: String?
+        sni: String?,
+        resolvedName: ResolvedFlowName?
     ) {
         self.id = id
         self.key = key
@@ -46,7 +51,11 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
         self.packetCount = packetCount
         self.tlsStatus = tlsStatus
         self.sni = sni
+        self.resolvedName = resolvedName
     }
+
+    /// El nombre del flujo con su origen: el SNI si lo anunció, y si no el que se dedujo del DNS.
+    public var name: FlowName? { FlowName(sni: sni, resolved: resolvedName) }
 
     /// Cuánto duró el flujo. Nunca negativa: `first_seen` guarda el mínimo visto.
     public var duration: TimeInterval { lastSeen.timeIntervalSince(firstSeen) }

@@ -234,6 +234,23 @@ public enum Schema {
             )
         }
 
+        // v7 — el **nombre que el DNS le había dado** a la dirección remota de un flujo, y los demás
+        // nombres que esa dirección tenía vivos.
+        //
+        // Por qué columnas propias y no la `sni`: un SNI lo anuncia la conexión y esto se deduce de
+        // una búsqueda anterior sobre una dirección que puede ser compartida. Mezclarlos haría que un
+        // informe no pudiera decir cuál de las dos cosas está afirmando. El origen del nombre de un
+        // flujo no necesita columna: es cuál de las dos está puesta (`FlowName`).
+        migrator.registerMigration("v7") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "dns_name", .text)
+                // Los otros candidatos, del más reciente al más antiguo, separados por un espacio.
+                // Un nombre del mapa no puede llevar uno —`DomainPattern` es su vara de medir—, así
+                // que el separador no necesita escape. `NULL` es «sin competencia».
+                t.add(column: "dns_other_names", .text)
+            }
+        }
+
         return migrator
     }
 }

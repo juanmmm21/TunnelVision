@@ -47,8 +47,19 @@ public actor FlowTable {
 
     /// Registra un paquete en su flujo (creándolo si es nuevo) y devuelve el estado vivo. Si la
     /// tabla está llena, evicta el flujo LRU antes de crear el nuevo.
+    ///
+    /// `resolvedName` es el nombre que el DNS le daba a la dirección remota en el instante de este
+    /// paquete, y **solo se usa si el flujo es nuevo**: un flujo se nombra al crearse y no cambia de
+    /// nombre aunque después pase otra respuesta, igual que no cambia de sesión de auditoría. Se
+    /// pasa en cada paquete porque quien llama no sabe si el flujo existe, y saberlo antes costaría
+    /// un salto de actor por paquete.
     @discardableResult
-    public func observe(_ packet: ParsedPacket, direction: Direction, length: UInt32) -> LiveFlow {
+    public func observe(
+        _ packet: ParsedPacket,
+        direction: Direction,
+        length: UInt32,
+        resolvedName: ResolvedFlowName?
+    ) -> LiveFlow {
         let now = clock.now()
         let key = packet.flowKey
 
@@ -61,7 +72,14 @@ public actor FlowTable {
             if nodes.count >= config.maxFlows {
                 evictLRU()
             }
-            node = Node(key: key, direction: direction, length: length, now: now, tlsStatus: initialTLSStatus(for: packet))
+            node = Node(
+                key: key,
+                direction: direction,
+                length: length,
+                now: now,
+                tlsStatus: initialTLSStatus(for: packet),
+                resolvedName: resolvedName
+            )
             nodes[key] = node
             insertFront(node)
         }
@@ -232,6 +250,7 @@ public actor FlowTable {
         var packetCount: UInt64
         var tlsStatus: TLSInspectionStatus
         var sni: String?
+        let resolvedName: ResolvedFlowName?
         var reassembler: TCPReassembler?
         var finOutbound: Bool
         var finInbound: Bool
@@ -240,7 +259,14 @@ public actor FlowTable {
         weak var prev: Node?
         var next: Node?
 
-        init(key: FlowKey, direction: Direction, length: UInt32, now: UInt64, tlsStatus: TLSInspectionStatus) {
+        init(
+            key: FlowKey,
+            direction: Direction,
+            length: UInt32,
+            now: UInt64,
+            tlsStatus: TLSInspectionStatus,
+            resolvedName: ResolvedFlowName?
+        ) {
             let bytes = UInt64(length)
             self.key = key
             self.firstSeen = now
@@ -250,6 +276,7 @@ public actor FlowTable {
             self.packetCount = 1
             self.tlsStatus = tlsStatus
             self.sni = nil
+            self.resolvedName = resolvedName
             self.reassembler = nil
             self.finOutbound = false
             self.finInbound = false
@@ -268,7 +295,8 @@ public actor FlowTable {
                 bytesIn: bytesIn,
                 packetCount: packetCount,
                 tlsStatus: tlsStatus,
-                sni: sni
+                sni: sni,
+                resolvedName: resolvedName
             )
         }
     }

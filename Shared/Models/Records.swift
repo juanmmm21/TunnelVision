@@ -43,6 +43,11 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
     public var tlsStatus: TLSInspectionStatus
     public var sni: String?             // hostname del ClientHello, si se vio
 
+    /// El nombre que el DNS había dado a la dirección remota cuando el flujo se creó, si había
+    /// alguno vivo. Campo aparte del `sni` a propósito: aquél lo anuncia la conexión, éste se deduce.
+    /// Se fija al crear el flujo y no cambia aunque después pase otra respuesta.
+    public var resolvedName: ResolvedFlowName?
+
     public init(
         id: Int64,
         key: FlowKey,
@@ -52,7 +57,8 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
         bytesIn: UInt64,
         packetCount: UInt64,
         tlsStatus: TLSInspectionStatus,
-        sni: String?
+        sni: String?,
+        resolvedName: ResolvedFlowName?
     ) {
         self.id = id
         self.key = key
@@ -63,5 +69,9 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
         self.packetCount = packetCount
         self.tlsStatus = tlsStatus
         self.sni = sni
+        self.resolvedName = resolvedName
     }
+
+    /// El nombre del flujo con su origen: el SNI si lo anunció, y si no el que se dedujo del DNS.
+    public var name: FlowName? { FlowName(sni: sni, resolved: resolvedName) }
 }

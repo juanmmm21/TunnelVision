@@ -79,6 +79,12 @@ public actor FlowStore {
     /// llamante — la tabla de flujos en memoria — mantiene los totales acumulados); `first_seen`
     /// conserva el mínimo. Devuelve el `rowid` del flujo, con el que enlazar sus paquetes.
     ///
+    /// El **nombre resuelto por DNS** es la excepción: una fila que ya lo tiene lo conserva. Un flujo
+    /// se nombra al crearse, y la tabla en memoria puede crear dos veces el mismo (lo desaloja, o
+    /// caduca por inactividad, y vuelve a tener tráfico); la segunda vez el mapa de nombres puede
+    /// contestar otra cosa, y el historial no puede cambiarle el nombre a una conexión a mitad. El
+    /// nombre y sus otros candidatos se conservan o se sustituyen **juntos**.
+    ///
     /// Si hay una **sesión de auditoría abierta**, el flujo queda etiquetado con ella. La sesión se
     /// lee de la propia BD en la misma sentencia, así que la extensión no necesita que nadie le avise
     /// de que la app abrió una: la BD compartida ya es ese aviso. Un flujo que venía de antes y sigue
@@ -97,8 +103,8 @@ public actor FlowStore {
                 INSERT INTO flows
                     (session, proto, addr_a, port_a, addr_b, port_b,
                      first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
-                     audit_session_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                     dns_name, dns_other_names, audit_session_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         (SELECT id FROM audit_sessions WHERE ended_at IS NULL))
                 ON CONFLICT (session, proto, addr_a, port_a, addr_b, port_b) DO UPDATE SET
                     last_seen = excluded.last_seen,
@@ -107,6 +113,9 @@ public actor FlowStore {
                     packet_count = excluded.packet_count,
                     tls_status = excluded.tls_status,
                     sni = excluded.sni,
+                    dns_name = COALESCE(flows.dns_name, excluded.dns_name),
+                    dns_other_names = CASE WHEN flows.dns_name IS NULL
+                        THEN excluded.dns_other_names ELSE flows.dns_other_names END,
                     first_seen = min(flows.first_seen, excluded.first_seen),
                     audit_session_id = COALESCE(flows.audit_session_id, excluded.audit_session_id)
                 """,
@@ -119,6 +128,8 @@ public actor FlowStore {
                     Serialization.int64(record.bytesOut), Serialization.int64(record.bytesIn),
                     Serialization.int64(record.packetCount),
                     Int(record.tlsStatus.rawValue), record.sni,
+                    record.resolvedName?.name,
+                    Serialization.otherNames(record.resolvedName?.otherNames ?? []),
                 ]
             )
             // El UPSERT pudo ser INSERT o UPDATE; `lastInsertedRowID` solo vale para INSERT, así
@@ -213,7 +224,8 @@ public actor FlowStore {
         try dbPool.read { db in
             var sql = """
             SELECT id, proto, addr_a, port_a, addr_b, port_b,
-                   first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni
+                   first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
+                   dns_name, dns_other_names
             FROM flows
             """
             var arguments: [DatabaseValueConvertible] = []
@@ -262,7 +274,8 @@ public actor FlowStore {
                 db,
                 sql: """
                 SELECT id, proto, addr_a, port_a, addr_b, port_b,
-                       first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni
+                       first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
+                       dns_name, dns_other_names
                 FROM flows
                 WHERE proto = ? AND addr_a = ? AND port_a = ? AND addr_b = ? AND port_b = ?
                 ORDER BY last_seen DESC, id DESC
@@ -290,7 +303,8 @@ public actor FlowStore {
                 db,
                 sql: """
                 SELECT id, proto, addr_a, port_a, addr_b, port_b,
-                       first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni
+                       first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
+                       dns_name, dns_other_names
                 FROM flows
                 WHERE id = ?
                 """,
@@ -311,7 +325,8 @@ public actor FlowStore {
                 db,
                 sql: """
                 SELECT id, proto, addr_a, port_a, addr_b, port_b,
-                       first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni
+                       first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
+                       dns_name, dns_other_names
                 FROM flows
                 WHERE audit_session_id = ?
                 ORDER BY first_seen ASC, id ASC
@@ -756,7 +771,26 @@ private enum Serialization {
             bytesIn: uint64(row["bytes_in"]),
             packetCount: uint64(row["packet_count"]),
             tlsStatus: try tlsStatus(from: row["tls_status"]),
-            sni: row["sni"]
+            sni: row["sni"],
+            resolvedName: resolvedName(name: row["dns_name"], otherNames: row["dns_other_names"])
+        )
+    }
+
+    /// Separador de `dns_other_names`. Un nombre del mapa no puede contenerlo (`DomainPattern`).
+    private static let otherNamesSeparator: Character = " "
+
+    /// La lista de otros candidatos como texto de columna; vacía es `NULL`.
+    static func otherNames(_ names: [String]) -> String? {
+        names.isEmpty ? nil : names.joined(separator: String(otherNamesSeparator))
+    }
+
+    /// Sin `dns_name` no hay nombre resuelto, diga lo que diga la otra columna: los candidatos lo
+    /// son *de* un nombre.
+    static func resolvedName(name: String?, otherNames: String?) -> ResolvedFlowName? {
+        guard let name else { return nil }
+        return ResolvedFlowName(
+            name: name,
+            otherNames: otherNames?.split(separator: otherNamesSeparator).map(String.init) ?? []
         )
     }
 

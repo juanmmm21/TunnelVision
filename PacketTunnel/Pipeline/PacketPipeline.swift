@@ -40,6 +40,9 @@ public actor PacketPipeline {
         /// escriba entera en claro (ADR 0007). Nunca por encima del tope por registro del escritor:
         /// pasarse dejaría el recorte en manos de quien no lo sabe contar.
         public var plaintextBytesPerDirection: Int
+        /// Cuánto recuerda el mapa dirección → nombre y durante cuánto. Los del túnel son `.tunnel`,
+        /// con el porqué de cada número en `ResolvedNameLimits`.
+        public var resolvedNameLimits: ResolvedNameLimits
 
         public init(
             localIPv4: IPAddress,
@@ -49,7 +52,8 @@ public actor PacketPipeline {
             batchSize: Int = 256,
             flushInterval: UInt64 = 500_000_000,
             anchor: MonotonicAnchor = .now(),
-            plaintextBytesPerDirection: Int = PlaintextBudget.defaultMaxBytesPerDirection
+            plaintextBytesPerDirection: Int = PlaintextBudget.defaultMaxBytesPerDirection,
+            resolvedNameLimits: ResolvedNameLimits = .tunnel
         ) {
             self.localIPv4 = localIPv4
             self.localIPv6 = localIPv6
@@ -59,6 +63,7 @@ public actor PacketPipeline {
             self.flushInterval = flushInterval
             self.anchor = anchor
             self.plaintextBytesPerDirection = plaintextBytesPerDirection
+            self.resolvedNameLimits = resolvedNameLimits
         }
     }
 
@@ -92,6 +97,10 @@ public actor PacketPipeline {
     /// Flujos que la tabla ha dado por terminados y cuyos recursos de reenvío siguen vivos, a la
     /// espera de que el provider los suelte (`drainClosedFlowKeys`).
     private var closedFlowKeys: [FlowKey]
+    /// Qué nombre había pedido el dispositivo para cada dirección, según las respuestas de DNS que
+    /// han pasado. Es de este actor por lo mismo que la tabla de flujos: aquí es donde pasa cada
+    /// datagrama, en los dos sentidos, y donde un flujo nace.
+    private var resolvedNames: ResolvedNameMap
 
     public private(set) var stats: PipelineStats
 
@@ -118,6 +127,7 @@ public actor PacketPipeline {
         self.plaintextFailed = false
         self.plaintextFlows = [:]
         self.closedFlowKeys = []
+        self.resolvedNames = ResolvedNameMap(limits: config.resolvedNameLimits)
         self.stats = PipelineStats()
     }
 
@@ -176,7 +186,25 @@ public actor PacketPipeline {
         let now = clock.now()
         let length = UInt32(clamping: packet.count)
         let direction = parsed.flowKey.direction(ofPacketFrom: parsed.source, localAddress: localAddress)
-        let flow = await flowTable.observe(parsed, direction: direction, length: length)
+
+        // Antes de tocar la tabla: la respuesta que nombra una dirección tiene que estar apuntada
+        // cuando llegue el primer paquete del flujo que va a ella.
+        if direction == .inbound, let udp = parsed.udp, udp.sourcePort == Self.dnsPort {
+            learnNames(from: packet, payload: udp.payloadRange, at: now)
+        }
+        let remote = direction == .outbound ? parsed.destination.address : parsed.source.address
+        let resolvedName = resolvedNames.name(for: remote, at: now).map(ResolvedFlowName.init)
+
+        let flow = await flowTable.observe(
+            parsed,
+            direction: direction,
+            length: length,
+            resolvedName: resolvedName
+        )
+        // Un flujo con un solo paquete acaba de nacer: es el único momento en que recibe nombre.
+        if flow.record.packetCount == 1, flow.record.resolvedName != nil {
+            stats.dnsNames.flowsNamed &+= 1
+        }
 
         // La captura va antes de publicar el metadato porque este transporta dónde quedó el registro.
         let capture = await writeCapture(packet: packet, timestamp: now)
@@ -195,6 +223,37 @@ public actor PacketPipeline {
         stats.packetsHandled &+= 1
         stats.bytesHandled &+= UInt64(length)
         return .recorded(parsed, flow)
+    }
+
+    /// El puerto del DNS en claro. El cifrado (DoT en el 853, DoH dentro de HTTPS) no se puede leer,
+    /// y eso se dice con los contadores a cero, no se intenta.
+    private static let dnsPort: UInt16 = 53
+
+    /// Le da al mapa de nombres una respuesta de DNS que acaba de llegar al dispositivo.
+    ///
+    /// Solo lo que **entra** desde el puerto 53 por UDP: lo que el dispositivo manda son consultas,
+    /// que no nombran nada, y el DNS sobre TCP —raro, para respuestas que no caben en un datagrama—
+    /// necesitaría reensamblar un stream que aquí no existe. Mirar el puerto de origen es mirar lo
+    /// que el paquete dice de sí mismo; que dentro haya DNS de verdad lo decide el disector.
+    ///
+    /// Nada de aquí puede parar un paquete: un mensaje ilegible se cuenta y el datagrama sigue su
+    /// camino al historial como cualquier otro.
+    private func learnNames(from packet: Data, payload: Range<Int>, at now: UInt64) {
+        // El rango es 0-based sobre el datagrama, que puede llegar como un slice con otro origen.
+        let start = packet.startIndex + payload.lowerBound
+        let end = packet.startIndex + payload.upperBound
+        guard start <= end, end <= packet.endIndex else {
+            stats.dnsNames.unreadable &+= 1
+            return
+        }
+        do {
+            let message = try DNSMessageParser.parse(packet[start..<end])
+            stats.dnsNames.count(resolvedNames.ingest(message, at: now))
+        } catch {
+            // Qué le pasaba al mensaje lo enseña la pantalla del paquete, que lo vuelve a leer; aquí
+            // solo importa que no dio ningún nombre.
+            stats.dnsNames.unreadable &+= 1
+        }
     }
 
     /// Resultado de registrar un datagrama, antes de decidir qué hacer con él.
