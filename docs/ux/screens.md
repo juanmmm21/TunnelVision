@@ -506,8 +506,8 @@ smaller than the one iOS shows; *Delete everything* names it too.
 
 The last row of Settings, and the only screen in the product written for someone who is **debugging**:
 it says in one sentence whether looking inside secure traffic is working, and then shows the counters
-that sentence was read from (inspection, names, decrypted content, recording, forwarding, and the last
-errors). It is a row of its own at the end rather than a control among the switches because it decides
+that sentence was read from (inspection, names, names from lookups, decrypted content, recording,
+forwarding, and the last errors). It is a row of its own at the end rather than a control among the switches because it decides
 nothing — it answers *is what I think is happening actually happening?*.
 
 The sentence is the screen. It separates the cases that look identical from the outside and cost the
@@ -538,6 +538,17 @@ were announced, what it says now — and the counters of the re-announcement: ho
 were handled, how many of them produced new servers, and how many failed. Those two numbers are worth
 reading together, because they are the live measurement of whether the tunnel can still see past
 itself after it becomes the primary interface.
+
+**And one section says where names came from when no connection announced one.** *Names from lookups*
+sits right under *Names* — the hosts connections announce themselves — and counts what the tunnel
+could do with the answers to name lookups it saw: how many gave addresses, how many addresses, how
+many connections were named after them, and how many answers taught nothing or could not be read.
+Its footer is a sentence, and the one that matters is the one for a session where all of it is zero:
+**no answer crossed the tunnel unencrypted, which is what encrypted DNS looks like**, so connections
+are named only when they announce a host. Without that sentence a session full of bare addresses
+reads as something broken. It is a footer and not a notice above the headline because nothing in it
+is a fault or asks for anything; and in the ordinary case it says the one thing the rows cannot — that
+a name from a lookup was *asked for*, not announced by the connection.
 
 ## TLS inspection setup
 The multi-step, system-round-trip flow fully specified in

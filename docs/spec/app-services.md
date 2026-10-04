@@ -1450,6 +1450,38 @@ tunnel has already proved it can catch up. And below four unanswered lookups not
 in flight and two are a retry. Partial loss is deliberately not judged — a failure rate needs a time
 window, and these counters span the session.
 
+### The third verdict: names read from DNS
+
+`DiagnosticsPresentation.dnsNamingVerdict(for:)` reads `PipelineStats.dnsNames`
+([`packet-parsing.md`](packet-parsing.md) § *Naming flows*) and answers a third question, separate
+from the other two: the resolver verdict is whether the device **can resolve** names, and this is
+whether the tunnel **could read** what was resolved. With encrypted DNS the first is fine and the
+second is impossible, and unless that is said a whole session of unnamed connections reads as a fault.
+
+| Condition (in order) | Verdict | What it means |
+|---|---|---|
+| `flowsNamed > 0` | `.naming` | connections are being born with the name DNS gave their address |
+| `repliesRecorded > 0` | `.learning` | addresses were learned and no flow has started towards one yet |
+| `repliesIgnored > 0` | `.nothingToLearn` | replies were read and none gave an address: errors, or other kinds of question |
+| `unreadable > 0` | `.unreadable` | datagrams came from port 53 and none parsed as a DNS message |
+| `packetsHandled > 0` | `.nothingToRead` | traffic, and not one datagram from port 53: **encrypted DNS** (or DNS over TCP, which is not read) |
+| otherwise | `.noTraffic` | nothing has passed, so not even an absence is claimed |
+
+The order goes from what refutes most to what refutes least: one named flow proves the whole chain,
+one readable message proves the dissector works, and "could not be read" is only said when nothing
+that arrived was readable. It takes the pipeline's half alone — the relay's pair of lookups sent and
+answered belongs to the resolver verdict, and crossing it here would have two verdicts speaking of
+the same fact.
+
+It is **not a banner**. None of its cases asks anything of the reader — encrypted DNS is the device's
+choice, not a failure — so `dnsNamingNote(for:)` is the footer of its own section, *Names from
+lookups*, which sits right after *Names* (the hosts connections announce) and, unlike it, is present
+when the relay did not answer: the counters are the pipeline's. The sentence carries no figures; they
+are in the rows above it. `.noTraffic` has no sentence. The section has five rows, all plain readings:
+the six reasons a readable reply teaches nothing are **added up in one row**, because apart they are
+six rows a healthy session fills anyway, and a datagram that did not parse is not work lost — it was
+forwarded and recorded like any other.
+
 ### The view model
 
 ```swift
@@ -1496,3 +1528,11 @@ blamed for broken lookups, that a handful of lookups in flight is not called a f
 failure is claimed without the relay's counters, and that the lists are always shown with words — not
 blanks — where one is empty or unreadable. Stopping the tunnel takes the notice away with the
 counters, for the same reason and with its own test.
+
+The names half (`DNSNamingDiagnosticsTests`): every verdict of the third table, including that each
+of the six reasons for ignoring a readable message ends in *nothing to learn* and that one readable
+message outranks any number of unreadable ones; that only the absence of traffic has no sentence and
+every other verdict says something different; that having nothing to read is explained as encrypted
+DNS; that the sentence never repeats a figure of its rows; that the section is there without the
+relay and follows the announced names with it; that nothing in it is marked as a fault; and that the
+seeded counters add up to the replies the seeded relay received.

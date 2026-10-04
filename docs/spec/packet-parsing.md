@@ -330,7 +330,9 @@ together with where it came from, and [`persistence.md`](persistence.md) for the
 and the addresses they gave, datagrams that could not be read, one counter per
 `DNSNameIngestion.Reason`, and the flows that were born with a name. All of them at zero while
 traffic flows is the statement *the device's DNS is encrypted and there was nothing to read* — the
-reason a whole session can be unnamed.
+reason a whole session can be unnamed. Settings › *Session diagnostics* is where that statement is
+made in words: `DiagnosticsPresentation.dnsNamingVerdict` ([`app-services.md`](app-services.md)
+§ *The third verdict*).
 
 `PipelineResolvedNameTests` covers the hookup: a reply followed by a UDP/443 flow to that address
 comes out named with origin `dns` and an empty `sni`; the reinjected path; TCP, where a later SNI
