@@ -116,6 +116,9 @@ public struct PipelineStats: Sendable, Equatable, Codable {
     public var lastStoreError: String?
     /// Último error de captura, como texto. Su presencia explica por qué dejó de crecer el `.pcap`.
     public var lastCaptureError: String?
+    /// Lo que se hizo con las respuestas de DNS vistas y cuántos flujos nombraron. Todo a cero con
+    /// tráfico pasando es que el DNS del dispositivo va cifrado y no hubo nada que leer.
+    public var dnsNames = DNSNameStats()
 
     public init() {}
 }
