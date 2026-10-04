@@ -7,6 +7,11 @@ All `Sendable`; Foundation-only.
 `FlowName.swift` is the name of a flow together with where it came from: the SNI the connection
 announced, or the name the DNS had given its address (`ResolvedFlowName`). Two fields, never one.
 
+`NegotiatedTLS.swift` is what a server chose for a TLS connection: `TLSProtocolVersion` and
+`TLSCipherSuite`, both structs over the raw wire value rather than closed enums, because the other end
+picks the value and whatever it sent is kept as sent. Spec:
+[`../../docs/spec/relay-and-tls.md`](../../docs/spec/relay-and-tls.md) § *What the server chose*.
+
 `TunnelAddressing` also lives here (it moved out of the extension in M9): the tunnel's own IPs are
 knowledge of *both* processes — the extension announces them to NetworkExtension and compares against
 them to resolve direction, and the app needs them to tell which endpoint of a canonical `FlowKey` is

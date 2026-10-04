@@ -51,6 +51,15 @@ Network.framework. The seam is what would make that swap cheap if it is ever nee
   stream belongs to the relay, so the engine builds the termination and the outcome arrives when the
   flow ends. The policy is untouched.
 
+**Implemented — reading the two hellos, which travel in the clear (no CA, no decryption):**
+
+- `ClientHelloScanner.swift` — the host a client announces (SNI), read incrementally from the
+  outbound stream. It is what names a flow.
+- `ServerHelloScanner.swift` — the TLS version and cipher suite a server chose, read incrementally
+  from the inbound stream: the version from `supported_versions` when present (that is how TLS 1.3
+  announces itself), an alert reported as the server refusing, a HelloRetryRequest read and marked.
+- `TLSByteReader.swift` — the bounds-checked cursor both share.
+
 **Still pending here:** the relay hookup that routes an `.inspect` flow into a termination instead of
 straight through. **Device-only unknown:** whether a network extension may bind a loopback listener
 under iOS's sandbox — the Simulator cannot answer that.

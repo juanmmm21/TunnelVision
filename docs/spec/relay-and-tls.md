@@ -823,6 +823,75 @@ wiring (single segment, split across two segments, **segments arriving out of or
 per flow, non-443 flows never scanned, forwarded stream untouched) and the pipeline half (the name
 reaches the store, on the closing record too, without changing `tlsStatus`).
 
+## What the server chose, without decryption
+
+The ServerHello is in the clear for the same reason the ClientHello is: it precedes every key. So the
+TLS version and cipher suite a server picked can be read for flows that are **not** inspected — which
+is nearly all of them, and all of the ones that pin. Like the SNI, it needs no CA and does not touch
+ADR 0003.
+
+```swift
+public struct TLSProtocolVersion: RawRepresentable, Sendable, Hashable {   // Shared/Models
+    public let rawValue: UInt16
+    public static let ssl30, tls10, tls11, tls12, tls13: TLSProtocolVersion
+}
+public struct TLSCipherSuite: RawRepresentable, Sendable, Hashable {       // Shared/Models
+    public let rawValue: UInt16
+}
+public struct NegotiatedTLS: Sendable, Hashable {                          // Shared/Models
+    public let version: TLSProtocolVersion
+    public let cipherSuite: TLSCipherSuite
+    public let fromHelloRetryRequest: Bool
+}
+
+public struct ServerHelloScanner: Sendable {                               // PacketTunnel/TLS
+    public enum Outcome: Sendable, Equatable {
+        case needMoreBytes
+        case found(NegotiatedTLS)
+        case unavailable(Reason)
+    }
+    public enum Reason: Sendable, Equatable {
+        case notTLSHandshake, alert(description: UInt8), notServerHello, malformed, tooLarge
+    }
+    public mutating func scan(_ bytes: Data) -> Outcome
+}
+```
+
+It is the `ClientHelloScanner`'s twin for the inbound stream — incremental, bounded by the same
+16 KiB ceiling, sticky once it settles — and the two share their bounds-checked cursor
+(`TLSByteReader`). It is a pure value: it is given the inbound bytes and says what they hold. What is
+specific to this direction:
+
+- **The version is read from where it actually is.** TLS 1.3 announces itself in the
+  `supported_versions` extension and leaves `legacy_version` saying 1.2 so middleboxes do not cut
+  the connection; reading the old field would report every 1.3 connection as 1.2. The extension wins
+  when present, `legacy_version` is used when it is not (a ServerHello with no extensions block is
+  legal up to TLS 1.2). In a ServerHello the extension carries **one** version; the list shape a
+  ClientHello uses is `malformed` here, because accepting it would mean choosing on the server's
+  behalf.
+- **Versions and suites are raw values, not closed enums.** The other end chooses them. A draft
+  version or an unassigned suite is evidence to keep as sent, not to collapse into "unknown". The
+  suite is its IANA code; its name is a presentation table, kept apart from what was observed.
+- **A HelloRetryRequest is read, and marked.** It is a ServerHello with a fixed `random` (RFC 8446
+  § 4.1.3) and already carries the version and the suite; the ServerHello that follows must repeat
+  both or the client aborts (§ 4.1.4). So the reading holds for any handshake that completes, and
+  `fromHelloRetryRequest` says it did not come from the final message.
+- **An alert is an answer.** A server that refuses the handshake replies with an alert record
+  instead of a ServerHello — `protocol_version` (70) when it accepts none of the offered versions.
+  That is `alert(description:)`, distinct from `notTLSHandshake`: "this was not TLS" says nothing
+  about TLS, "the server refused" does.
+- **Why incremental, when a ServerHello is small.** In TLS 1.2 the server usually puts its
+  certificate in the same record, right behind the ServerHello, and that record does not fit a
+  segment. A record's declared length is judged against the ceiling **from its header**, before its
+  bytes arrive, so a record claiming 64 KiB is refused rather than buffered.
+
+**Tests (34):** hand-written vectors, as for the ClientHello — the version from the extension and
+from `legacy_version`, with and without an extensions block, an unpublished version kept raw; the
+HelloRetryRequest and a `random` one bit away from it; every chunk boundary, byte-by-byte feeding,
+fragmentation across records and the TLS 1.2 record that carries the certificate too; alerts (whole,
+split, wrong size, cutting a partial hello); non-TLS streams; a ClientHello; truncated bodies and
+lying vectors; the three ways of exceeding the ceiling; sticky outcomes.
+
 ## Tests
 
 - Leaf minting produces a valid chain under the local CA (verify with `Security`).
