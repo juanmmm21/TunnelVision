@@ -149,7 +149,7 @@ public struct ClientHelloScanner: Sendable {
 
     /// Recorre el cuerpo del ClientHello hasta sus extensiones y busca la del nombre de servidor.
     private func parseClientHello(_ body: ArraySlice<UInt8>) -> Outcome {
-        var reader = ByteReader(body)
+        var reader = TLSByteReader(body)
 
         // `legacy_version` (2) + `random` (32), y luego tres vectores que no nos dicen nada.
         guard reader.skip(34),
@@ -163,7 +163,7 @@ public struct ClientHelloScanner: Sendable {
         guard !reader.isAtEnd else { return .unavailable(.noServerName) }
         guard let extensions = reader.vector(prefix: .twoBytes) else { return .unavailable(.malformed) }
 
-        var list = ByteReader(extensions)
+        var list = TLSByteReader(extensions)
         while !list.isAtEnd {
             guard let type = list.uint16(), let payload = list.vector(prefix: .twoBytes) else {
                 return .unavailable(.malformed)
@@ -176,10 +176,10 @@ public struct ClientHelloScanner: Sendable {
 
     /// Lee la `ServerNameList` de RFC 6066 y devuelve su primera entrada de tipo `host_name`.
     private func parseServerNameList(_ payload: ArraySlice<UInt8>) -> Outcome {
-        var reader = ByteReader(payload)
+        var reader = TLSByteReader(payload)
         guard let list = reader.vector(prefix: .twoBytes) else { return .unavailable(.malformed) }
 
-        var entries = ByteReader(list)
+        var entries = TLSByteReader(list)
         while !entries.isAtEnd {
             guard let type = entries.uint8(), let name = entries.vector(prefix: .twoBytes) else {
                 return .unavailable(.malformed)
@@ -220,70 +220,5 @@ public struct ClientHelloScanner: Sendable {
             }
         }
         return String(scalars)
-    }
-
-    // MARK: - Lectura de bytes
-
-    /// Cursor con control de límites sobre los bytes de un mensaje.
-    ///
-    /// TLS codifica casi todo como vectores con su longitud delante, así que el parser es
-    /// literalmente "salta un vector, lee el siguiente". Tenerlo en un tipo evita repetir el mismo
-    /// control de límites en cada campo, que es justo donde viven los desbordamientos de un parser
-    /// de red.
-    private struct ByteReader {
-        /// Anchura del prefijo de longitud de un vector TLS.
-        enum LengthPrefix {
-            case oneByte
-            case twoBytes
-        }
-
-        private let bytes: ArraySlice<UInt8>
-        private var index: Int
-
-        init(_ bytes: ArraySlice<UInt8>) {
-            self.bytes = bytes
-            self.index = bytes.startIndex
-        }
-
-        var isAtEnd: Bool { index >= bytes.endIndex }
-
-        private var remaining: Int { bytes.endIndex - index }
-
-        mutating func uint8() -> UInt8? {
-            guard remaining >= 1 else { return nil }
-            defer { index += 1 }
-            return bytes[index]
-        }
-
-        mutating func uint16() -> UInt16? {
-            guard let high = uint8(), let low = uint8() else { return nil }
-            return UInt16(high) << 8 | UInt16(low)
-        }
-
-        mutating func skip(_ count: Int) -> Bool {
-            guard remaining >= count else { return false }
-            index += count
-            return true
-        }
-
-        /// Lee un vector con su longitud delante y devuelve su contenido.
-        mutating func vector(prefix: LengthPrefix) -> ArraySlice<UInt8>? {
-            let length: Int
-            switch prefix {
-            case .oneByte:
-                guard let value = uint8() else { return nil }
-                length = Int(value)
-            case .twoBytes:
-                guard let value = uint16() else { return nil }
-                length = Int(value)
-            }
-            guard remaining >= length else { return nil }
-            defer { index += length }
-            return bytes[index..<(index + length)]
-        }
-
-        mutating func skipVector(prefix: LengthPrefix) -> Bool {
-            vector(prefix: prefix) != nil
-        }
     }
 }
