@@ -35,6 +35,10 @@ TLS). It is a pure value: every instant is passed in, on the clock that stamps p
 
 A resolved name is an inference, not an announced SNI, which is why it has a type of its own.
 
+The map is owned and fed by `PacketPipeline` (`PacketTunnel/Pipeline`): every UDP datagram arriving
+from port 53 goes in, and a flow is named from it when it is created. The name reaches the store in
+`FlowRecord.resolvedName`, and what the map did with each reply is counted in `DNSNameStats`.
+
 **Read by:** `TunnelVision/Models/DNSPresentation.swift` (what the packet screen shows of it) ·
 **written by:** `Shared/Fixtures/DNSMessageFixture.swift` (the synthetic lookups a seeded run shows)
 

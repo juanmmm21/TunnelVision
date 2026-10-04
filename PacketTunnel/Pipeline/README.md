@@ -6,4 +6,9 @@ it to the live feed and batches it to the store. Pure and injected, so it is tes
 Simulator — the device-only provider just feeds it `packetFlow` packets and acts on the returned
 `PacketDisposition`.
 
+It also owns the address → name map (`Shared/DNS/ResolvedNameMap`): replies arriving from port 53
+feed it, and a flow is named from it when it is created — the name of everything the ClientHello
+scanner cannot reach, QUIC first. Spec:
+[`../../docs/spec/packet-parsing.md`](../../docs/spec/packet-parsing.md) § *Naming flows*.
+
 **Spec:** [`../../docs/spec/tunnel-provider.md`](../../docs/spec/tunnel-provider.md) · **Milestone:** M7

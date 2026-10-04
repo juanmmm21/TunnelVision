@@ -291,3 +291,50 @@ address left out; the lifetime at its exact edge, through a chain, floored, capp
 saturated; the tie-break in both arrival orders, an expired winner giving way, and the per-address
 limit; and the capacity — expired first, then least recent, never exceeded under a flood, and the
 same victim whatever the dictionary order. One case goes from bytes through the parser to a name.
+
+### Naming flows: where the map lives
+
+The map is owned by the `PacketPipeline` (`PacketTunnel/Pipeline`), for the reason the flow table is:
+every datagram goes through it, in both directions, and it is where a flow is born.
+
+```swift
+public struct ResolvedFlowName: Sendable, Hashable, Codable {   // Shared/Models/FlowName.swift
+    public let name: String
+    public let otherNames: [String]
+    public init(_ resolved: ResolvedName)
+}
+```
+
+- **What is fed to it**: the payload of every datagram that **arrives** at the device over UDP from
+  source port 53 — replies reach the pipeline through `record(reinjected:)`. What the device *sends*
+  is never read, whatever port it leaves from. DNS over TCP is not read: it would need a reassembled
+  stream the pipeline does not have. Encrypted DNS (DoT, DoH, Private Relay) is not attempted.
+- **The reply is ingested before the flow table is touched**, so the answer is in the map when the
+  first packet of the flow it was looked up for arrives.
+- **A flow is named when it is created**, with the stamp of its first packet, from the map's answer
+  for its remote address. `FlowTable.observe` takes the name on every packet and uses it only for a
+  new flow: the caller cannot know whether the flow exists without an extra actor hop per packet.
+- **A named flow never changes name**, and a flow born without one never acquires one: a reply that
+  goes by later says nothing about what an already-open connection was looked up as. This is the
+  same idea as the audit tag.
+- **`otherNames` travel with the name all the way to the store.** The allowlist check has to see
+  every name a shared address might have been.
+- **Nothing here can stop a packet.** A datagram from port 53 that does not parse is counted and
+  goes on to the history like any other.
+
+The name goes into **its own field, `FlowRecord.resolvedName`, never into `sni`** — see
+[`data-model.md`](data-model.md) for `FlowName`, which is how a reader gets *the* name of a flow
+together with where it came from, and [`persistence.md`](persistence.md) for the `v7` columns.
+
+**Everything is counted** (`DNSNameStats`, inside `PipelineStats`, `Shared/IPC`): replies recorded
+and the addresses they gave, datagrams that could not be read, one counter per
+`DNSNameIngestion.Reason`, and the flows that were born with a name. All of them at zero while
+traffic flows is the statement *the device's DNS is encrypted and there was nothing to read* — the
+reason a whole session can be unnamed.
+
+`PipelineResolvedNameTests` covers the hookup: a reply followed by a UDP/443 flow to that address
+comes out named with origin `dns` and an empty `sni`; the reinjected path; TCP, where a later SNI
+wins without erasing the resolved name; IPv6; a flow that predates the reply; a named flow keeping
+its name; the other names of a shared address reaching the store; an expired answer; the configured
+limits; outbound datagrams and other ports left unread; and each counter, including the all-zero
+case.

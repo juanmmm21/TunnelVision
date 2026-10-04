@@ -22,4 +22,8 @@ and markers. The app writes it; the extension only reads it in passing, inside `
 each flow with the audit session open at that moment — read from the database in the same statement, so
 no message between the processes is needed. Spec: [`../../docs/spec/audit.md`](../../docs/spec/audit.md).
 
+Since schema v7 a flow also carries the name the DNS had given its remote address (`dns_name`,
+`dns_other_names`) — its own columns, never `sni`, and the one field where a row that already has a
+value keeps it: a flow is named when it is created and is not renamed halfway.
+
 **Spec:** [`../../docs/spec/persistence.md`](../../docs/spec/persistence.md) · **Milestone:** M2

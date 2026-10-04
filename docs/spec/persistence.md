@@ -126,6 +126,15 @@ public enum Schema {
         // El layout y el porqué de cada regla están en `audit.md`.
         m.registerMigration("v6") { db in /* audit_projects, audit_allowlist, audit_sessions,
                                              audit_markers, flows.audit_session_id */ }
+
+        // v7 — el nombre que el DNS le había dado a la dirección remota del flujo. Columnas propias,
+        // nunca la `sni`: aquélla la anuncia la conexión y esto se deduce.
+        m.registerMigration("v7") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "dns_name", .text)
+                t.add(column: "dns_other_names", .text)   // separados por un espacio; NULL = ninguno
+            }
+        }
         return m
     }
 }
@@ -207,6 +216,8 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
     public let packetCount: UInt64
     public let tlsStatus: TLSInspectionStatus
     public let sni: String?
+    public let resolvedName: ResolvedFlowName?   // `dns_name` / `dns_other_names`
+    public var name: FlowName? { get }           // el nombre con su origen (`data-model.md`)
     public var duration: TimeInterval { get }
     public var totalBytes: UInt64 { get }
 }
@@ -259,6 +270,16 @@ introducirá un reloj monotónico cuando lo necesite el código productor (parse
   keeps the running totals and flushes them), so the upsert *sets* `last_seen`/counters/
   `tls_status`/`sni` to the record's values; `first_seen` keeps the minimum seen. It returns the
   flow's `rowid` for linking its packets.
+- **The resolved name is the one exception to "the record wins"** (`v7`): a row that already has a
+  `dns_name` keeps it. A flow is named when it is created, and the in-memory table can create the same
+  flow twice — it is evicted or goes idle and then has traffic again — at which point the name map may
+  answer something else; the history must not rename a connection halfway. `dns_name` and
+  `dns_other_names` are kept or replaced **together**, so one name's candidates never end up under
+  another. A row without a name takes the first one that arrives.
+- **`dns_other_names` is one text column**, the names joined by a single space, most recent first,
+  `NULL` when there are none. A name from the map cannot contain a space (`DomainPattern` is its
+  yardstick), so no escaping is needed. There is no origin column: the origin of a flow's name is
+  which of `sni` and `dns_name` is set.
 - **Retention:** `prune(before:)` enforces the user's storage cap; the app exposes it in Settings →
   Storage. The cutoff is a `Date` precisely because retention is about *real* age, which a monotonic
   stamp cannot express across a reboot. `ON DELETE CASCADE` removes a flow's packets automatically.
@@ -302,6 +323,10 @@ underneath. Never share a raw `Database` handle across actors — go through the
 - The same 5-tuple written in two sessions is two flows, and `flow(matching:)` returns the newer.
 - The cursor breaks ties by rowid.
 - Upsert increments counters correctly across many packets of one flow.
+- The resolved name (`v7`): it round-trips with its other names in order and never as the `sni`; every
+  flow query returns it; a row that has one keeps it, with its own candidates, when a later record
+  brings another or none; a row without one takes the one that arrives; and a database stopped at
+  `v6` migrates keeping its flows, unnamed.
 - `recentFlows`/`packets` pagination and ordering.
 - `prune` deletes the right rows and cascades to `packets`; `totalBytesOnDisk` is sane.
 - `flowCount` counts what is stored, does not count an upsert onto an existing row as a new connection,

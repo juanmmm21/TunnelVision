@@ -18,8 +18,17 @@ public actor FlowTable {
 
     /// Registra un paquete en su flujo (creándolo si es nuevo) y devuelve el estado vivo.
     /// Si la tabla está llena, evicta el flujo menos usado recientemente (LRU) antes de crear.
+    ///
+    /// `resolvedName` es el nombre que el DNS daba a la dirección remota en el instante del paquete,
+    /// y **solo se usa si el flujo es nuevo**: un flujo se nombra al crearse y no cambia de nombre
+    /// (`packet-parsing.md` § *Naming flows*).
     @discardableResult
-    public func observe(_ packet: ParsedPacket, direction: Direction, length: UInt32) -> LiveFlow
+    public func observe(
+        _ packet: ParsedPacket,
+        direction: Direction,
+        length: UInt32,
+        resolvedName: ResolvedFlowName?
+    ) -> LiveFlow
 
     /// Marca el estado de inspección TLS de un flujo (lo fija el pipeline TLS).
     public func setTLSStatus(_ status: TLSInspectionStatus, for key: FlowKey, sni: String?)

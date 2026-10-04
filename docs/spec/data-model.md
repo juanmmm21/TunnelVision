@@ -165,8 +165,45 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
     public var packetCount: UInt64
     public var tlsStatus: TLSInspectionStatus
     public var sni: String?             // hostname del ClientHello, si se vio
+    public var resolvedName: ResolvedFlowName?   // el nombre que el DNS daba a la dirección remota
+    public var name: FlowName? { get }  // el nombre con su origen: el SNI, y si no el resuelto
+}
+
+/// El nombre que un flujo recibió al crearse de las respuestas de DNS vistas por el túnel.
+public struct ResolvedFlowName: Sendable, Hashable, Codable {
+    public let name: String             // el nombre por el que se preguntó, normalizado
+    public let otherNames: [String]     // los demás nombres vivos de esa dirección, el más reciente primero
+}
+
+public enum FlowNameOrigin: Sendable, Hashable { case sni, dns }
+
+/// El nombre de un flujo con su origen.
+public struct FlowName: Sendable, Hashable {
+    public let text: String
+    public let origin: FlowNameOrigin
+    public let otherCandidates: [String]   // solo los trae un nombre deducido del DNS
+    public init?(sni: String?, resolved: ResolvedFlowName?)
 }
 ```
+
+### A flow has two names, and they are not the same kind of fact
+
+`sni` is what the connection **announced** in its ClientHello. `resolvedName` is an **inference**:
+the name the device had last asked for when it was given the address the flow goes to
+([`packet-parsing.md`](packet-parsing.md) § *Names from DNS*). They are separate fields and separate
+columns, and a resolved name is never written into `sni`: a report has to be able to say which of the
+two it is asserting.
+
+`FlowName` is what a reader uses when it needs *a* name per flow — an allowlist, a release diff, a
+report. Its rules:
+
+- **The SNI wins whenever there is one.** It is the connection's own statement; the resolution is a
+  guess about an address that may be shared.
+- **The origin is derived, not stored**: it is which of the two fields is set. A stored origin would
+  be a second place to say the same thing, free to disagree with the first.
+- **Only a name from DNS has `otherCandidates`.** When the SNI wins they are dropped: the connection
+  has said which one it was.
+- A flow with neither has no name (`nil`), and is reported as unnamed rather than left out.
 
 ## Tests to write (M1)
 
