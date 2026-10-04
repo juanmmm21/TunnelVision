@@ -18,8 +18,8 @@ final class FlowTableTests: XCTestCase {
         let out = FlowFixtures.tcp(source: local(51000), destination: remote(443))
         let inbound = FlowFixtures.tcp(source: remote(443), destination: local(51000))
 
-        _ = await table.observe(out, direction: .outbound, length: 100)
-        let live = await table.observe(inbound, direction: .inbound, length: 40)
+        _ = await table.observe(out, direction: .outbound, length: 100, resolvedName: nil)
+        let live = await table.observe(inbound, direction: .inbound, length: 40, resolvedName: nil)
 
         XCTAssertEqual(live.record.bytesOut, 100)
         XCTAssertEqual(live.record.bytesIn, 40)
@@ -32,23 +32,23 @@ final class FlowTableTests: XCTestCase {
 
     func testInitialTLSStatus() async {
         let table = FlowTable(config: .init(), clock: ManualClock())
-        let https = await table.observe(FlowFixtures.tcp(source: local(51000), destination: remote(443)), direction: .outbound, length: 60)
+        let https = await table.observe(FlowFixtures.tcp(source: local(51000), destination: remote(443)), direction: .outbound, length: 60, resolvedName: nil)
         XCTAssertEqual(https.record.tlsStatus, .encrypted)
 
-        let http = await table.observe(FlowFixtures.tcp(source: local(51001), destination: remote(80)), direction: .outbound, length: 60)
+        let http = await table.observe(FlowFixtures.tcp(source: local(51001), destination: remote(80)), direction: .outbound, length: 60, resolvedName: nil)
         XCTAssertEqual(http.record.tlsStatus, .plaintext)
 
-        let dns = await table.observe(FlowFixtures.udp(source: local(51002), destination: remote(53)), direction: .outbound, length: 60)
+        let dns = await table.observe(FlowFixtures.udp(source: local(51002), destination: remote(53)), direction: .outbound, length: 60, resolvedName: nil)
         XCTAssertEqual(dns.record.tlsStatus, .plaintext)
     }
 
     func testSetTLSStatusUpdatesFlow() async {
         let table = FlowTable(config: .init(), clock: ManualClock())
         let packet = FlowFixtures.tcp(source: local(51000), destination: remote(443))
-        _ = await table.observe(packet, direction: .outbound, length: 60)
+        _ = await table.observe(packet, direction: .outbound, length: 60, resolvedName: nil)
 
         await table.setTLSStatus(.inspected, for: packet.flowKey, sni: "example.com")
-        let live = await table.observe(packet, direction: .outbound, length: 60)
+        let live = await table.observe(packet, direction: .outbound, length: 60, resolvedName: nil)
 
         XCTAssertEqual(live.record.tlsStatus, .inspected)
         XCTAssertEqual(live.record.sni, "example.com")
@@ -59,10 +59,10 @@ final class FlowTableTests: XCTestCase {
     func testSetSNINamesTheFlowWithoutChangingItsTLSStatus() async {
         let table = FlowTable(config: .init(), clock: ManualClock())
         let packet = FlowFixtures.tcp(source: local(51000), destination: remote(443))
-        _ = await table.observe(packet, direction: .outbound, length: 60)
+        _ = await table.observe(packet, direction: .outbound, length: 60, resolvedName: nil)
 
         await table.setSNI("www.example.com", for: packet.flowKey)
-        let live = await table.observe(packet, direction: .outbound, length: 60)
+        let live = await table.observe(packet, direction: .outbound, length: 60, resolvedName: nil)
 
         XCTAssertEqual(live.record.sni, "www.example.com")
         XCTAssertEqual(live.record.tlsStatus, .encrypted)
@@ -78,7 +78,7 @@ final class FlowTableTests: XCTestCase {
 
         let count = await table.count
         XCTAssertEqual(count, 0)
-        let live = await table.observe(packet, direction: .outbound, length: 60)
+        let live = await table.observe(packet, direction: .outbound, length: 60, resolvedName: nil)
         XCTAssertNil(live.record.sni)
     }
 
@@ -87,14 +87,71 @@ final class FlowTableTests: XCTestCase {
         let table = FlowTable(config: .init(), clock: ManualClock())
         let packet = FlowFixtures.tcp(source: local(51000), destination: remote(443), flags: [.rst])
         let opening = FlowFixtures.tcp(source: local(51000), destination: remote(443))
-        _ = await table.observe(opening, direction: .outbound, length: 60)
+        _ = await table.observe(opening, direction: .outbound, length: 60, resolvedName: nil)
 
         await table.setSNI("www.example.com", for: opening.flowKey)
-        _ = await table.observe(packet, direction: .outbound, length: 60)
+        _ = await table.observe(packet, direction: .outbound, length: 60, resolvedName: nil)
 
         let closed = await table.drainClosed()
         XCTAssertEqual(closed.count, 1)
         XCTAssertEqual(closed.first?.sni, "www.example.com")
+    }
+
+    // MARK: - Nombre resuelto por DNS
+
+    /// El nombre se fija al crear el flujo: el que llega con sus paquetes siguientes no lo cambia.
+    func testAFlowKeepsTheResolvedNameItWasCreatedWith() async {
+        let table = FlowTable(config: .init(), clock: ManualClock())
+        let packet = FlowFixtures.udp(source: local(51000), destination: remote(443))
+        let first = ResolvedFlowName(name: "api.example.com", otherNames: ["cdn.example.net"])
+        let later = ResolvedFlowName(name: "other.example.com", otherNames: [])
+
+        let created = await table.observe(packet, direction: .outbound, length: 60, resolvedName: first)
+        let updated = await table.observe(packet, direction: .outbound, length: 60, resolvedName: later)
+
+        XCTAssertEqual(created.record.resolvedName, first)
+        XCTAssertEqual(updated.record.resolvedName, first)
+    }
+
+    /// Y uno que nació sin nombre no lo adquiere después: la respuesta que llega tarde no dice a
+    /// qué nombre iba una conexión que ya estaba abierta.
+    func testAFlowCreatedWithoutANameDoesNotAcquireOneLater() async {
+        let table = FlowTable(config: .init(), clock: ManualClock())
+        let packet = FlowFixtures.udp(source: local(51000), destination: remote(443))
+
+        _ = await table.observe(packet, direction: .outbound, length: 60, resolvedName: nil)
+        let live = await table.observe(
+            packet, direction: .outbound, length: 60,
+            resolvedName: ResolvedFlowName(name: "api.example.com", otherNames: [])
+        )
+
+        XCTAssertNil(live.record.resolvedName)
+    }
+
+    /// El record de cierre lo lleva también, aunque el flujo muera en su primer paquete.
+    func testTheClosingRecordCarriesTheResolvedName() async {
+        let table = FlowTable(config: .init(), clock: ManualClock())
+        let name = ResolvedFlowName(name: "api.example.com", otherNames: [])
+        let reset = FlowFixtures.tcp(source: local(51000), destination: remote(443), flags: [.rst])
+
+        _ = await table.observe(reset, direction: .outbound, length: 40, resolvedName: name)
+
+        let closed = await table.drainClosed()
+        XCTAssertEqual(closed.map(\.resolvedName), [name])
+    }
+
+    /// El SNI y el nombre resuelto son campos distintos y ninguno pisa al otro.
+    func testTheSNIAndTheResolvedNameAreKeptApart() async {
+        let table = FlowTable(config: .init(), clock: ManualClock())
+        let packet = FlowFixtures.tcp(source: local(51000), destination: remote(443))
+        let name = ResolvedFlowName(name: "api.example.com", otherNames: [])
+
+        _ = await table.observe(packet, direction: .outbound, length: 60, resolvedName: name)
+        await table.setSNI("www.example.com", for: packet.flowKey)
+
+        let record = await table.record(for: packet.flowKey)
+        XCTAssertEqual(record?.sni, "www.example.com")
+        XCTAssertEqual(record?.resolvedName, name)
     }
 
     // MARK: - Cierre
@@ -102,7 +159,7 @@ final class FlowTableTests: XCTestCase {
     func testRSTClosesImmediately() async {
         let table = FlowTable(config: .init(), clock: ManualClock())
         let packet = FlowFixtures.tcp(source: local(51000), destination: remote(443), flags: [.rst])
-        _ = await table.observe(packet, direction: .inbound, length: 60)
+        _ = await table.observe(packet, direction: .inbound, length: 60, resolvedName: nil)
 
         let count = await table.count
         XCTAssertEqual(count, 0)
@@ -116,11 +173,11 @@ final class FlowTableTests: XCTestCase {
         let finOut = FlowFixtures.tcp(source: local(51000), destination: remote(443), flags: [.fin, .ack])
         let finIn = FlowFixtures.tcp(source: remote(443), destination: local(51000), flags: [.fin, .ack])
 
-        _ = await table.observe(finOut, direction: .outbound, length: 60)
+        _ = await table.observe(finOut, direction: .outbound, length: 60, resolvedName: nil)
         var count = await table.count
         XCTAssertEqual(count, 1, "un solo FIN no cierra el flujo")
 
-        _ = await table.observe(finIn, direction: .inbound, length: 60)
+        _ = await table.observe(finIn, direction: .inbound, length: 60, resolvedName: nil)
         count = await table.count
         XCTAssertEqual(count, 0)
         let closed = await table.drainClosed()
@@ -131,10 +188,10 @@ final class FlowTableTests: XCTestCase {
 
     func testLRUEvictionEmitsRecord() async {
         let table = FlowTable(config: .init(maxFlows: 2), clock: ManualClock())
-        _ = await table.observe(FlowFixtures.tcp(source: local(1), destination: remote(443)), direction: .outbound, length: 10)
-        _ = await table.observe(FlowFixtures.tcp(source: local(2), destination: remote(443)), direction: .outbound, length: 20)
+        _ = await table.observe(FlowFixtures.tcp(source: local(1), destination: remote(443)), direction: .outbound, length: 10, resolvedName: nil)
+        _ = await table.observe(FlowFixtures.tcp(source: local(2), destination: remote(443)), direction: .outbound, length: 20, resolvedName: nil)
         // El tercer flujo desborda: evicta el LRU (el flujo 1).
-        _ = await table.observe(FlowFixtures.tcp(source: local(3), destination: remote(443)), direction: .outbound, length: 30)
+        _ = await table.observe(FlowFixtures.tcp(source: local(3), destination: remote(443)), direction: .outbound, length: 30, resolvedName: nil)
 
         let count = await table.count
         XCTAssertEqual(count, 2)
@@ -146,11 +203,11 @@ final class FlowTableTests: XCTestCase {
     func testReuseRefreshesLRU() async {
         let table = FlowTable(config: .init(maxFlows: 2), clock: ManualClock())
         let flow1 = FlowFixtures.tcp(source: local(1), destination: remote(443))
-        _ = await table.observe(flow1, direction: .outbound, length: 10)
-        _ = await table.observe(FlowFixtures.tcp(source: local(2), destination: remote(443)), direction: .outbound, length: 20)
+        _ = await table.observe(flow1, direction: .outbound, length: 10, resolvedName: nil)
+        _ = await table.observe(FlowFixtures.tcp(source: local(2), destination: remote(443)), direction: .outbound, length: 20, resolvedName: nil)
         // Reusar el flujo 1 lo pasa al frente; ahora el LRU es el flujo 2.
-        _ = await table.observe(flow1, direction: .outbound, length: 5)
-        _ = await table.observe(FlowFixtures.tcp(source: local(3), destination: remote(443)), direction: .outbound, length: 30)
+        _ = await table.observe(flow1, direction: .outbound, length: 5, resolvedName: nil)
+        _ = await table.observe(FlowFixtures.tcp(source: local(3), destination: remote(443)), direction: .outbound, length: 30, resolvedName: nil)
 
         let closed = await table.drainClosed()
         XCTAssertEqual(closed.count, 1)
@@ -162,7 +219,7 @@ final class FlowTableTests: XCTestCase {
     func testExpireIdleClosesStaleFlows() async {
         let clock = ManualClock(0)
         let table = FlowTable(config: .init(idleTimeout: 1_000), clock: clock)
-        _ = await table.observe(FlowFixtures.tcp(source: local(1), destination: remote(443)), direction: .outbound, length: 10)
+        _ = await table.observe(FlowFixtures.tcp(source: local(1), destination: remote(443)), direction: .outbound, length: 10, resolvedName: nil)
 
         // Aún fresco: no expira.
         var expired = await table.expireIdle(now: 500)
@@ -180,10 +237,10 @@ final class FlowTableTests: XCTestCase {
     func testExpireIdleKeepsRecentFlow() async {
         let clock = ManualClock(0)
         let table = FlowTable(config: .init(idleTimeout: 1_000), clock: clock)
-        _ = await table.observe(FlowFixtures.tcp(source: local(1), destination: remote(443)), direction: .outbound, length: 10)
+        _ = await table.observe(FlowFixtures.tcp(source: local(1), destination: remote(443)), direction: .outbound, length: 10, resolvedName: nil)
         clock.set(900)
         // Un segundo flujo más nuevo no debe expirar aunque el primero sí.
-        _ = await table.observe(FlowFixtures.tcp(source: local(2), destination: remote(443)), direction: .outbound, length: 10)
+        _ = await table.observe(FlowFixtures.tcp(source: local(2), destination: remote(443)), direction: .outbound, length: 10, resolvedName: nil)
 
         let expired = await table.expireIdle(now: 1_000)
         XCTAssertEqual(expired.count, 1)                    // solo el primero (visto en t=0)
@@ -198,7 +255,7 @@ final class FlowTableTests: XCTestCase {
         let table = FlowTable(config: .init(maxFlows: maxFlows), clock: ManualClock())
         for i in 0..<10_000 {
             let packet = FlowFixtures.tcp(source: local(UInt16(20_000 + i)), destination: remote(443))
-            _ = await table.observe(packet, direction: .outbound, length: 40)
+            _ = await table.observe(packet, direction: .outbound, length: 40, resolvedName: nil)
         }
         let count = await table.count
         XCTAssertEqual(count, maxFlows, "la tabla nunca supera su tope duro")

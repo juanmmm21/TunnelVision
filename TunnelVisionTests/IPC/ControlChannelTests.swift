@@ -70,6 +70,16 @@ final class ControlChannelTests: XCTestCase {
         stats.lastPlaintextError = "writeFailed"
         stats.lastStoreError = "database is locked"
         stats.lastCaptureError = "writeFailed"
+        stats.dnsNames.repliesRecorded = 120
+        stats.dnsNames.addressesRecorded = 310
+        stats.dnsNames.unreadable = 2
+        stats.dnsNames.notAResponse = 1
+        stats.dnsNames.unsupportedOpcode = 3
+        stats.dnsNames.errorResponses = 9
+        stats.dnsNames.unsupportedQuestions = 4
+        stats.dnsNames.unusableNames = 5
+        stats.dnsNames.withoutAddresses = 44
+        stats.dnsNames.flowsNamed = 600
 
         let sent = TunnelStats(pipeline: stats)
         let decoded = try ControlResponse(decoding: try ControlResponse.stats(sent).encoded())

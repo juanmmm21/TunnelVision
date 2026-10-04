@@ -67,7 +67,8 @@ final class CodableRoundTripTests: XCTestCase {
             bytesIn: 8192,
             packetCount: 12,
             tlsStatus: .inspected,
-            sni: "example.com"
+            sni: "example.com",
+            resolvedName: nil
         )
         try roundTrip(withSNI)
 
@@ -81,9 +82,25 @@ final class CodableRoundTripTests: XCTestCase {
             bytesIn: 0,
             packetCount: 1,
             tlsStatus: .encrypted,
-            sni: nil
+            sni: nil,
+            resolvedName: nil
         )
         try roundTrip(withoutSNI)
+
+        // Y el nombre deducido del DNS viaja con sus otros candidatos.
+        let named = FlowRecord(
+            id: 9,
+            key: key,
+            firstSeen: 1_000,
+            lastSeen: 2_000,
+            bytesOut: 0,
+            bytesIn: 0,
+            packetCount: 1,
+            tlsStatus: .plaintext,
+            sni: nil,
+            resolvedName: ResolvedFlowName(name: "api.example.com", otherNames: ["cdn.example.net"])
+        )
+        try roundTrip(named)
     }
 
     func testPacketMetaEquatableAndHashable() {

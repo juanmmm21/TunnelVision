@@ -118,6 +118,34 @@ final class FlowStoreTests: XCTestCase {
         XCTAssertNil(highest, "un offset huérfano no puede reservar la secuencia de ningún fichero")
     }
 
+    /// La v7 añade columnas y no toca filas: un flujo de antes sigue ahí, sin nombre resuelto.
+    func testMigrationV7KeepsEarlierFlowsAndLeavesThemUnnamed() async throws {
+        let legacy = try DatabaseQueue(path: dbURL.path)
+        try Schema.migrator().migrate(legacy, upTo: "v6")
+        try await legacy.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO flows
+                    (session, proto, addr_a, port_a, addr_b, port_b,
+                     first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni)
+                VALUES (0, 6, ?, 51000, ?, 443, 100, 200, 0, 0, 1, 1, 'example.com')
+                """,
+                arguments: [
+                    Data(PersistenceFixtures.deviceIP.bytes),
+                    Data(ModelFixtures.v4(1, 1, 1, 1).bytes),
+                ]
+            )
+        }
+        try legacy.close()
+
+        let store = try makeStore()
+        let flows = try await store.recentFlows(limit: 10)
+        let flow = try XCTUnwrap(flows.first)
+        XCTAssertEqual(flow.sni, "example.com")
+        XCTAssertNil(flow.resolvedName)
+        XCTAssertEqual(flow.name?.origin, .sni)
+    }
+
     // MARK: - Fechado
 
     func testStampsAreStoredAsWallClockTime() async throws {
@@ -217,6 +245,125 @@ final class FlowStoreTests: XCTestCase {
         XCTAssertEqual(flow.packetCount, 50)
         XCTAssertEqual(flow.lastSeen, PersistenceFixtures.date(1_050))
     }
+
+    // MARK: - Nombre resuelto por DNS
+
+    /// El nombre y sus otros candidatos vuelven tal cual, en su orden, y **no** en la columna del SNI.
+    func testResolvedNameRoundTripsWithItsOtherNamesAndNeverAsTheSNI() async throws {
+        let store = try makeStore()
+        let name = ResolvedFlowName(
+            name: "api.example.com",
+            otherNames: ["cdn.example.net", "static.example.org"]
+        )
+
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(
+                remote: ModelFixtures.v4(93, 184, 216, 34), proto: .udp,
+                firstSeen: 1, lastSeen: 2, tlsStatus: .plaintext, resolvedName: name
+            )
+        )
+
+        let stored = try await store.flow(id: id)
+        let flow = try XCTUnwrap(stored)
+        XCTAssertEqual(flow.resolvedName, name)
+        XCTAssertNil(flow.sni)
+        XCTAssertEqual(
+            flow.name,
+            FlowName(text: "api.example.com", origin: .dns, otherCandidates: ["cdn.example.net", "static.example.org"])
+        )
+    }
+
+    func testAResolvedNameWithoutCompetitionReadsBackWithNoOtherNames() async throws {
+        let store = try makeStore()
+
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(
+                remote: ModelFixtures.v4(93, 184, 216, 34), firstSeen: 1, lastSeen: 2,
+                resolvedName: ResolvedFlowName(name: "api.example.com", otherNames: [])
+            )
+        )
+
+        let stored = try await store.flow(id: id)
+        let flow = try XCTUnwrap(stored)
+        XCTAssertEqual(flow.resolvedName, ResolvedFlowName(name: "api.example.com", otherNames: []))
+    }
+
+    func testAFlowWithoutAResolvedNameReadsBackWithoutOne() async throws {
+        let store = try makeStore()
+
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: ModelFixtures.v4(93, 184, 216, 34), firstSeen: 1, lastSeen: 2)
+        )
+
+        let stored = try await store.flow(id: id)
+        let flow = try XCTUnwrap(stored)
+        XCTAssertNil(flow.resolvedName)
+        XCTAssertNil(flow.name)
+    }
+
+    /// Todas las lecturas de flujos traen el nombre, no solo la que va por id.
+    func testEveryFlowQueryReturnsTheResolvedName() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        let name = ResolvedFlowName(name: "api.example.com", otherNames: ["cdn.example.net"])
+        let record = PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 2, resolvedName: name)
+
+        let id = try await store.upsertFlow(record)
+
+        let byID = try await store.flow(id: id)
+        let byKey = try await store.flow(matching: record.key)
+        let recent = try await store.recentFlows(limit: 10)
+        XCTAssertEqual(byID?.resolvedName, name)
+        XCTAssertEqual(byKey?.resolvedName, name)
+        XCTAssertEqual(recent.map(\.resolvedName), [name])
+    }
+
+    /// La tabla en memoria puede crear dos veces el mismo flujo (lo desaloja y vuelve a tener
+    /// tráfico), y la segunda vez el mapa puede contestar otro nombre. La fila conserva el primero,
+    /// **con sus candidatos**: no se quedan los candidatos de uno bajo el nombre del otro.
+    func testARowThatAlreadyHasAResolvedNameKeepsItAndItsOtherNames() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        let first = ResolvedFlowName(name: "first.example.com", otherNames: ["shared.example.net"])
+
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 2, resolvedName: first)
+        )
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(
+                remote: remote, firstSeen: 1, lastSeen: 9,
+                resolvedName: ResolvedFlowName(name: "second.example.com", otherNames: ["a.example", "b.example"])
+            )
+        )
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 12, resolvedName: nil)
+        )
+
+        let stored = try await store.flow(id: id)
+        let flow = try XCTUnwrap(stored)
+        XCTAssertEqual(flow.resolvedName, first)
+        XCTAssertEqual(flow.lastSeen, PersistenceFixtures.date(12), "lo demás sí se actualiza")
+    }
+
+    /// Y una fila sin nombre lo recibe si el flujo vuelve a nacer con uno.
+    func testARowWithoutAResolvedNameTakesTheOneThatArrivesLater() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        let name = ResolvedFlowName(name: "api.example.com", otherNames: ["cdn.example.net"])
+
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 2)
+        )
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 9, resolvedName: name)
+        )
+
+        let stored = try await store.flow(id: id)
+        let flow = try XCTUnwrap(stored)
+        XCTAssertEqual(flow.resolvedName, name)
+    }
+
+    // MARK: - Tuplas y sesiones
 
     func testDifferentTupleProducesDistinctFlows() async throws {
         let store = try makeStore()

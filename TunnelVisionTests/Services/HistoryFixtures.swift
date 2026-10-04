@@ -65,7 +65,8 @@ enum HistoryFixtures {
         bytesIn: UInt64 = 2_000,
         packetCount: UInt64 = 12,
         tlsStatus: TLSInspectionStatus = .encrypted,
-        sni: String? = nil
+        sni: String? = nil,
+        resolvedName: ResolvedFlowName? = nil
     ) -> StoredFlow {
         StoredFlow(
             id: id,
@@ -79,7 +80,8 @@ enum HistoryFixtures {
             bytesIn: bytesIn,
             packetCount: packetCount,
             tlsStatus: tlsStatus,
-            sni: sni
+            sni: sni,
+            resolvedName: resolvedName
         )
     }
 
@@ -118,7 +120,8 @@ enum HistoryFixtures {
         bytesIn: UInt64 = 2_000,
         packetCount: UInt64 = 12,
         tlsStatus: TLSInspectionStatus = .encrypted,
-        sni: String? = nil
+        sni: String? = nil,
+        resolvedName: ResolvedFlowName? = nil
     ) -> FlowRecord {
         FlowRecord(
             id: 0,
@@ -129,7 +132,8 @@ enum HistoryFixtures {
             bytesIn: bytesIn,
             packetCount: packetCount,
             tlsStatus: tlsStatus,
-            sni: sni
+            sni: sni,
+            resolvedName: resolvedName
         )
     }
 
