@@ -9,7 +9,8 @@ announced, or the name the DNS had given its address (`ResolvedFlowName`). Two f
 
 `NegotiatedTLS.swift` is what a server chose for a TLS connection: `TLSProtocolVersion` and
 `TLSCipherSuite`, both structs over the raw wire value rather than closed enums, because the other end
-picks the value and whatever it sent is kept as sent. Spec:
+picks the value and whatever it sent is kept as sent. `ServerTLSAnswer` is what a flow carries of it:
+a negotiation, or the alert the server refused with. Spec:
 [`../../docs/spec/relay-and-tls.md`](../../docs/spec/relay-and-tls.md) § *What the server chose*.
 
 `TunnelAddressing` also lives here (it moved out of the extension in M9): the tunnel's own IPs are

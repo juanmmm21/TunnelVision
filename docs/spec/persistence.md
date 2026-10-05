@@ -135,6 +135,17 @@ public enum Schema {
                 t.add(column: "dns_other_names", .text)   // separados por un espacio; NULL = ninguno
             }
         }
+
+        // v8 — lo que el servidor contestó al ClientHello: versión y suite, o la alerta. Los valores
+        // del cable, sin tabla detrás. Las cuatro `NULL` = no hubo lectura.
+        m.registerMigration("v8") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "tls_version", .integer)
+                t.add(column: "tls_cipher_suite", .integer)
+                t.add(column: "tls_hello_retry", .integer)   // 1 = salió de un HelloRetryRequest
+                t.add(column: "tls_alert", .integer)         // excluye a las otras tres
+            }
+        }
         return m
     }
 }
@@ -217,6 +228,7 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
     public let tlsStatus: TLSInspectionStatus
     public let sni: String?
     public let resolvedName: ResolvedFlowName?   // `dns_name` / `dns_other_names`
+    public let serverTLS: ServerTLSAnswer?       // `tls_version` / `tls_cipher_suite` / `tls_hello_retry` / `tls_alert`
     public var name: FlowName? { get }           // el nombre con su origen (`data-model.md`)
     public var duration: TimeInterval { get }
     public var totalBytes: UInt64 { get }
@@ -280,6 +292,17 @@ introducirá un reloj monotónico cuando lo necesite el código productor (parse
   `NULL` when there are none. A name from the map cannot contain a space (`DomainPattern` is its
   yardstick), so no escaping is needed. There is no origin column: the origin of a flow's name is
   which of `sni` and `dns_name` is set.
+- **The server's TLS answer has the opposite rule, for the same cause** (`v8`): a record that brings
+  none does not erase the one the row has, and a record that brings one replaces it **whole**. A
+  ServerHello is read once, at the start of the stream; a flow the in-memory table creates a second
+  time will not see it go by again, so it arrives without an answer and the row must keep its own.
+  If it does arrive with one there was a new handshake on the same 5-tuple, and the latest is the one
+  that holds. The four columns move together — a version never ends up beside another answer's alert.
+- **The answer is four integer columns, not one encoded value**, so a report can filter on the
+  version in SQL. `tls_alert` set means *refused* and the other three are `NULL`; otherwise
+  `tls_version` and `tls_cipher_suite` are both set or both `NULL`. A row that has one without the
+  other, or a value that does not fit the two bytes it came from, is a `corruptRow`, not a guess.
+  Alert `0` is a valid code: the test is `NULL`, never zero.
 - **Retention:** `prune(before:)` enforces the user's storage cap; the app exposes it in Settings →
   Storage. The cutoff is a `Date` precisely because retention is about *real* age, which a monotonic
   stamp cannot express across a reboot. `ON DELETE CASCADE` removes a flow's packets automatically.
@@ -327,6 +350,11 @@ underneath. Never share a raw `Database` handle across actors — go through the
   flow query returns it; a row that has one keeps it, with its own candidates, when a later record
   brings another or none; a row without one takes the one that arrives; and a database stopped at
   `v6` migrates keeping its flows, unnamed.
+- The server's TLS answer (`v8`): a negotiation round-trips with its HelloRetryRequest mark and with
+  values no table knows; a refusal round-trips with its code, alert `0` included; every flow query
+  returns it; a record without one does not erase the row's; a new one replaces the previous whole in
+  both directions; a half-written or out-of-range answer is a `corruptRow`; and a database stopped at
+  `v7` migrates keeping its flows, without an answer.
 - `recentFlows`/`packets` pagination and ordering.
 - `prune` deletes the right rows and cascades to `packets`; `totalBytesOnDisk` is sane.
 - `flowCount` counts what is stored, does not count an upsert onto an existing row as a new connection,

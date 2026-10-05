@@ -26,4 +26,8 @@ Since schema v7 a flow also carries the name the DNS had given its remote addres
 `dns_other_names`) — its own columns, never `sni`, and the one field where a row that already has a
 value keeps it: a flow is named when it is created and is not renamed halfway.
 
+Since schema v8 it carries what the server answered to its ClientHello too (`tls_version`,
+`tls_cipher_suite`, `tls_hello_retry`, `tls_alert`): the wire values, with no table behind them. A
+record that brings no answer does not erase the row's, and one that brings it replaces it whole.
+
 **Spec:** [`../../docs/spec/persistence.md`](../../docs/spec/persistence.md) · **Milestone:** M2

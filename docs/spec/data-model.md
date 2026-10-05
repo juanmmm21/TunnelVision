@@ -166,7 +166,15 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
     public var tlsStatus: TLSInspectionStatus
     public var sni: String?             // hostname del ClientHello, si se vio
     public var resolvedName: ResolvedFlowName?   // el nombre que el DNS daba a la dirección remota
+    public var serverTLS: ServerTLSAnswer?   // lo que el servidor contestó al ClientHello, si se leyó
     public var name: FlowName? { get }  // el nombre con su origen: el SNI, y si no el resuelto
+}
+
+/// Lo que el servidor contestó al ClientHello de un flujo (`relay-and-tls.md` § *What the server
+/// chose*). Una negativa también es una respuesta; lo que no dice nada del servidor es `nil`.
+public enum ServerTLSAnswer: Sendable, Hashable, Codable {
+    case negotiated(NegotiatedTLS)      // versión, suite y si salió de un HelloRetryRequest
+    case refused(alert: UInt8)          // el código de la alerta, tal cual
 }
 
 /// El nombre que un flujo recibió al crearse de las respuestas de DNS vistas por el túnel.
@@ -204,6 +212,15 @@ report. Its rules:
 - **Only a name from DNS has `otherCandidates`.** When the SNI wins they are dropped: the connection
   has said which one it was.
 - A flow with neither has no name (`nil`), and is reported as unnamed rather than left out.
+
+### What the server answered is not the inspection status
+
+`serverTLS` and `tlsStatus` are independent. `tlsStatus` says what TunnelVision did with the flow
+(left it encrypted, inspected it, found it not inspectable); `serverTLS` says what the **server**
+chose, read from a ServerHello that travels in the clear. A flow is `encrypted` with a negotiated
+TLS 1.3, and setting one never changes the other. `nil` means there was no reading — the flow was not
+TLS over TCP/443, the stream could not be read, the flow is inspected, or the answer has not arrived
+— and is never to be read as "no TLS".
 
 ## Tests to write (M1)
 

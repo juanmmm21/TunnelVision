@@ -6,7 +6,8 @@ for `AppGroup.identifier`.
 
 `ControlChannel.swift` holds the *other* cross-process contract: the low-frequency
 `ControlCommand`/`ControlResponse` codec (with `PipelineStats`, which carries `DNSNameStats`: what
-the tunnel did with the DNS replies it saw) that the app sends over
+the tunnel did with the DNS replies it saw, and `RelayStats`, which counts among other things the
+ServerHellos the relay read, the refusals and the streams it could not read) that the app sends over
 `sendProviderMessage` and the extension answers in `handleAppMessage`. It lives here, not in the
 extension, because both processes need it and the app cannot link an app-extension.
 

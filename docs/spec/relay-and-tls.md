@@ -885,12 +885,61 @@ specific to this direction:
   segment. A record's declared length is judged against the ceiling **from its header**, before its
   bytes arrive, so a record claiming 64 KiB is refused rather than buffered.
 
+### The hookup: a flow leaves the tunnel with the server's answer ✅
+
+The relay feeds one `ServerHelloScanner` per flow from the **inbound** stream, the mirror image of
+what `Relay.readHandshake` does for the ClientHello, and the answer leaves through a seam of the same
+cut as `SNIObserving`:
+
+```swift
+public enum ServerTLSAnswer: Sendable, Hashable, Codable {                 // Shared/Models
+    case negotiated(NegotiatedTLS)
+    case refused(alert: UInt8)
+}
+
+public protocol ServerTLSObserving: Sendable {                             // PacketTunnel/Relay
+    func observe(serverTLS: ServerTLSAnswer, for key: FlowKey) async
+}
+```
+
+`PacketPipeline` is the conformer and writes it to the flow table (`FlowTable.setServerTLS`), so the
+flow's next record — or its closing one — carries it to the store as `FlowRecord.serverTLS`
+(schema `v8`, [`persistence.md`](persistence.md)). What had to be decided:
+
+- **It is read where the stream is in order.** `Relay.handleServerData` receives what the outbound
+  connection delivers, before it is re-segmented towards the device. The bytes are handed to the
+  device first and read afterwards: a reading is metadata and never gets ahead of traffic.
+- **Only the real server is read.** On an inspected flow the ServerHello the device receives is the
+  one our own termination produced, signed with our leaf; reading it would report *our* choice of
+  version and suite as the server's. So a flow's scanner exists only while its connection is the real
+  server's: `install` drops it when a termination takes the connection over, and
+  `rollbackTermination` creates a fresh one, because the plain connection that replaces a dead
+  termination receives the whole ClientHello and answers with a ServerHello of its own. A candidate
+  that falls back to passthrough before anything is installed keeps the scanner it was born with.
+  The figure for an inspected flow is the one the upstream connection negotiates; it does not come
+  from a stream and is not part of this hookup.
+- **A flow carries an answer, not an outcome.** `negotiated` and `refused(alert:)` say something
+  about the server's TLS and are stored. The other four reasons a scanner gives up — not TLS, not a
+  ServerHello, malformed, too large — say nothing about it: the flow is left with no answer and the
+  session counts it. Storing "this was not TLS" next to a version would make an absence look like a
+  finding.
+- **Armed by the same rule as the SNI:** TCP against 443, and only when an observer exists.
+- **Three counters in `RelayStats`**, next to the SNI pair: `serverHelloObserved`,
+  `serverHelloRefused` and `serverHelloUnavailable`. A flow that closes before the server says
+  anything is in none of them. No screen reads them yet.
+
 **Tests (34):** hand-written vectors, as for the ClientHello — the version from the extension and
 from `legacy_version`, with and without an extensions block, an unpublished version kept raw; the
 HelloRetryRequest and a `random` one bit away from it; every chunk boundary, byte-by-byte feeding,
 fragmentation across records and the TLS 1.2 record that carries the certificate too; alerts (whole,
 split, wrong size, cutting a partial hello); non-TLS streams; a ClientHello; truncated bodies and
 lying vectors; the three ways of exceeding the ceiling; sticky outcomes.
+
+**Tests of the hookup (11, `RelayServerHelloTests`):** the answer from one chunk and from two, a
+HelloRetryRequest marked, reported once per flow, an alert as a refusal, a non-TLS stream counted and
+not reported, flows outside 443 and a relay without an observer never scanned — and the three that
+only the relay can answer: the ServerHello of our own termination is never read, a candidate that
+falls back to passthrough is, and after a rollback the real server is read from the start.
 
 ## Tests
 

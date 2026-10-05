@@ -39,6 +39,11 @@ public actor FlowTable {
     /// que es lo que pasa si el nombre llega después de cerrarse.
     public func setSNI(_ sni: String, for key: FlowKey)
 
+    /// Anota lo que el servidor contestó al ClientHello —versión y suite, o una alerta— (lo lee el
+    /// relay del stream entrante, vía `ServerTLSObserving` → `PacketPipeline.observe(serverTLS:for:)`).
+    /// Tampoco toca `tlsStatus`, ni el nombre. No-op si el flujo ya no está en la tabla.
+    public func setServerTLS(_ answer: ServerTLSAnswer, for key: FlowKey)
+
     /// Flujos evictados/cerrados desde la última llamada, para volcarlos al store y liberar.
     public func drainClosed() -> [FlowRecord]
 
