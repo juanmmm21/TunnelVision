@@ -44,11 +44,12 @@ public enum TimelineContent: Sendable, Equatable {
 /// afirmar. Es el mismo movimiento que hizo `TopTalkerPresentation` en la Dashboard.
 public struct TimelineRowPresentation: Sendable, Equatable {
 
-    /// La dirección del host, que encabeza la fila. No es copia salvo cuando no se pudo repartir los
-    /// extremos, y entonces la pone `FlowDisplay.unknownHost`.
+    /// El nombre del host —o su dirección, si no tiene nombre—, que encabeza la fila. No es copia
+    /// salvo cuando no se pudo repartir los extremos, y entonces la pone `FlowDisplay.unknownHost`.
     public let host: String
 
-    /// El protocolo y, si se sabe, el puerto.
+    /// El protocolo y, si se sabe, el puerto; y detrás la dirección cuando el nombre de arriba se
+    /// dedujo del DNS (`FlowDisplay.serviceLine`).
     public let service: String
 
     public let bytesIn: String
@@ -178,7 +179,7 @@ public enum TimelinePresentation {
 
     /// La copia de una fila, compuesta aquí y no en SwiftUI.
     public static func row(_ flow: HistoryFlow) -> TimelineRowPresentation {
-        let service = FlowDisplay.service(flow)
+        let service = FlowDisplay.serviceLine(flow)
         let bytesIn = DisplayFormat.bytes(flow.stored.bytesIn)
         let bytesOut = DisplayFormat.bytes(flow.stored.bytesOut)
         let duration = DisplayFormat.duration(flow.duration)

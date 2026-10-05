@@ -154,6 +154,9 @@ public final class FlowInspectorViewModel {
 
     public var facts: [FlowFact] { FlowInspectorPresentation.facts(for: flow) }
 
+    /// La salvedad de una dirección compartida por varios nombres, o `nil` si no aplica.
+    public var sharedAddressNote: String? { FlowInspectorPresentation.sharedAddressNote(for: flow) }
+
     public var content: FlowInspectorContent {
         FlowInspectorPresentation.content(state: state, rows: rows)
     }

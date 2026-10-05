@@ -457,7 +457,12 @@ public enum FlowInspectorPresentation {
     /// duró y cuántos paquetes costó, y los dos sentidos uno al lado del otro, que es la única
     /// comparación que esta cabecera pide.
     ///
-    /// **Son seis y antes eran siete**, y las dos cosas que arregla ese cambio salieron de mirar la
+    /// **La segunda pareja es con quién**: de dónde sale el nombre que titula la pantalla y a qué
+    /// dirección fue la conexión. Van juntos porque se explican el uno al otro —un nombre deducido
+    /// del DNS es el nombre *de esa dirección*— y entraron de dos en dos para no dejar fila suelta.
+    /// La dirección no estaba en ningún sitio de la app para una conexión con nombre.
+    ///
+    /// **Eran seis y antes siete**, y las dos cosas que arregla ese cambio salieron de mirar la
     /// pantalla. La séptima dejaba una **fila suelta** al final de una rejilla de dos columnas. Y
     /// *Started* y *Last packet* eran los dos extremos de un mismo tramo repartidos en **distinta
     /// fila y distinta columna** —arriba a la derecha el principio, abajo a la izquierda el final—,
@@ -500,6 +505,33 @@ public enum FlowInspectorPresentation {
                 value: .span(flow.firstSeen ..< Swift.max(flow.firstSeen, flow.lastSeen))
             ),
             FlowFact(
+                id: "nameOrigin",
+                label: String(
+                    localized: "flowInspector.fact.nameOrigin",
+                    defaultValue: "Name",
+                    comment: """
+                        Label, in a connection's header grid, of where the host name in the \
+                        screen's title comes from. Its value is a short phrase: announced by the \
+                        connection, inferred from a DNS lookup, or none seen.
+                        """
+                ),
+                value: .text(FlowDisplay.nameOrigin(flow))
+            ),
+            FlowFact(
+                id: "address",
+                label: String(
+                    localized: "flowInspector.fact.address",
+                    defaultValue: "Address",
+                    comment: """
+                        Label of the IP address a connection went to, in its header grid. Shown \
+                        for every connection, named or not.
+                        """
+                ),
+                // Sin reparto de extremos no hay dirección que dar, y se dice con la misma copia
+                // que el título usa para ese caso en vez de enseñar la del propio dispositivo.
+                value: .text(flow.remoteAddress ?? FlowDisplay.unknownHost)
+            ),
+            FlowFact(
                 id: "duration",
                 label: String(
                     localized: "flowInspector.fact.duration",
@@ -540,6 +572,30 @@ public enum FlowInspectorPresentation {
                 value: .text(DisplayFormat.bytes(flow.stored.bytesOut))
             ),
         ]
+    }
+
+    /// Los otros nombres que la dirección de la conexión tenía vivos cuando se la nombró, dichos en
+    /// una frase, o `nil` si el nombre no tenía competencia (o no salió del DNS).
+    ///
+    /// Va **fuera de la rejilla**: es una salvedad sobre un dato de ella y no un dato más, casi
+    /// nunca existe, y cuando existe es una lista de largo arbitrario que una celda de media
+    /// pantalla no encaja. La lista la escribe el sistema —dónde va la coma y la conjunción es de un
+    /// idioma— y los nombres van en el orden en que el mapa los dio, del más reciente al más antiguo.
+    public static func sharedAddressNote(for flow: HistoryFlow) -> String? {
+        guard let name = flow.name, name.origin == .dns, !name.otherCandidates.isEmpty else { return nil }
+        let others = name.otherCandidates.formatted(.list(type: .and))
+        return String(
+            localized: "flowInspector.note.sharedAddress",
+            defaultValue: """
+                The same address had also been looked up as \(others). The name shown is the \
+                most recent lookup; this connection could belong to any of them.
+                """,
+            comment: """
+                Caveat under a connection's header grid when its name was inferred from DNS and \
+                the address is shared by several names. The placeholder is an already-formatted \
+                list of one or more host names ('a.example', or 'a.example and b.example').
+                """
+        )
     }
 
     /// El encabezado de la lista de paquetes.

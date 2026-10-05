@@ -53,6 +53,70 @@ public enum FlowDisplay {
     }
 }
 
+extension FlowDisplay {
+
+    /// El servicio seguido de la **dirección** remota, para la fila de una conexión cuyo nombre se
+    /// dedujo del DNS, o el servicio a secas en cualquier otro caso.
+    ///
+    /// Es lo que distingue en la lista un nombre deducido de uno anunciado, y lo hace diciendo un
+    /// hecho en vez de poniendo una marca: un SNI es de la conexión y no necesita nada al lado; un
+    /// nombre del DNS es de una **dirección**, así que la dirección va con él. Una insignia habría
+    /// salido en casi todas las filas —QUIC es la mayor parte del tráfico de un teléfono—, y una
+    /// marca que sale en todas no marca nada.
+    public static func serviceLine(_ flow: HistoryFlow) -> String {
+        let service = service(flow)
+        guard flow.name?.origin == .dns, let address = flow.remoteAddress else { return service }
+        return String(
+            localized: "flow.service.withAddress",
+            defaultValue: "\(service) · \(address)",
+            comment: """
+                Secondary line of a connection row whose name was inferred from a DNS lookup \
+                rather than announced by the connection: what the connection was, then the \
+                address it actually went to. First placeholder is the already-worded service \
+                ('UDP · port 443'), second the IP address. Only the separator is ours to word.
+                """
+        )
+    }
+
+    /// De dónde sale el nombre de una conexión, dicho en lo que cabe en **una línea** de una celda de
+    /// media pantalla: la primera redacción («Announced by the connection») se partía en dos y
+    /// descuadraba su fila de la rejilla contra la de la dirección.
+    public static func nameOrigin(_ flow: HistoryFlow) -> String {
+        switch flow.name?.origin {
+        case .sni:
+            return String(
+                localized: "flow.name.origin.announced",
+                defaultValue: "Announced (SNI)",
+                comment: """
+                    Value of the 'Name' fact of a connection whose host name was read from its \
+                    own TLS handshake (the SNI): the connection itself said who it was calling.
+                    """
+            )
+        case .dns:
+            return String(
+                localized: "flow.name.origin.lookedUp",
+                defaultValue: "Inferred from DNS",
+                comment: """
+                    Value of the 'Name' fact of a connection that did not say who it was calling: \
+                    the name shown is the one the device had last looked up for the address the \
+                    connection went to. It is an inference, and the wording must not read as a \
+                    statement by the connection.
+                    """
+            )
+        case nil:
+            return String(
+                localized: "flow.name.origin.none",
+                defaultValue: "None seen",
+                comment: """
+                    Value of the 'Name' fact of a connection with no host name at all: it \
+                    announced none and no DNS lookup seen by the tunnel led to its address. A \
+                    statement of what is known, not an error.
+                    """
+            )
+        }
+    }
+}
+
 /// Cómo se nombra cada sentido del tráfico, en un solo sitio: el gráfico, las fichas de la Dashboard,
 /// la fila de un host y la lista de paquetes tienen que llamarlo igual, o el usuario no puede leer
 /// dos pantallas seguidas. El color y el símbolo de cada sentido los pone `TrafficDirectionStyle`,

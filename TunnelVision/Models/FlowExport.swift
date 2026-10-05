@@ -44,14 +44,24 @@ public struct FlowExportEntry: Codable, Sendable, Equatable {
 
     public let proto: String
 
-    /// Lo que la app enseña como host: el SNI si se vio, y si no la IP del extremo remoto. Es `null`
-    /// cuando no se pudo repartir los extremos, por lo mismo que en pantalla: señalar al propio
-    /// dispositivo como si fuera el otro lado invertiría lo que el usuario lee.
+    /// Lo que la app enseña como host: el nombre de la conexión si lo tiene (el SNI, y si no el
+    /// deducido del DNS) y, si no, la IP del extremo remoto. Es `null` cuando no hay nombre ni se
+    /// pudo repartir los extremos, por lo mismo que en pantalla: señalar al propio dispositivo como
+    /// si fuera el otro lado invertiría lo que el usuario lee.
     public let host: String?
 
     /// El nombre que viajó en el ClientHello, si lo hubo. Va aparte de `host` porque no son lo mismo:
-    /// `host` puede ser una IP.
+    /// `host` puede ser una IP, o un nombre que la conexión no anunció.
     public let sni: String?
+
+    /// El nombre que el DNS había dado a la dirección remota cuando la conexión empezó, si había
+    /// alguno. **Es una deducción y no una declaración de la conexión**, y por eso no va en `sni`:
+    /// quien lea el fichero tiene que poder saber cuál de las dos cosas tiene delante.
+    public let dnsName: String?
+
+    /// Los demás nombres que esa dirección tenía vivos, del más reciente al más antiguo. Vacío si
+    /// no había competencia o no hay `dnsName`. La conexión pudo ser de cualquiera de ellos.
+    public let dnsOtherNames: [String]
 
     public let local: FlowExportEndpoint?
     public let remote: FlowExportEndpoint?
@@ -72,6 +82,8 @@ public struct FlowExportEntry: Codable, Sendable, Equatable {
         proto: String,
         host: String?,
         sni: String?,
+        dnsName: String?,
+        dnsOtherNames: [String],
         local: FlowExportEndpoint?,
         remote: FlowExportEndpoint?,
         peers: [FlowExportEndpoint],
@@ -87,6 +99,8 @@ public struct FlowExportEntry: Codable, Sendable, Equatable {
         self.proto = proto
         self.host = host
         self.sni = sni
+        self.dnsName = dnsName
+        self.dnsOtherNames = dnsOtherNames
         self.local = local
         self.remote = remote
         self.peers = peers
@@ -103,7 +117,7 @@ public struct FlowExportEntry: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id
         case proto = "protocol"
-        case host, sni, local, remote, peers
+        case host, sni, dnsName, dnsOtherNames, local, remote, peers
         case firstSeen, lastSeen, durationSeconds
         case bytesOut, bytesIn, packetCount, tlsStatus
     }
@@ -117,7 +131,10 @@ public enum FlowExport {
 
     /// Sube cuando cambie la forma de una entrada. Va en el fichero para que un script que lo lea
     /// pueda negarse a interpretar un formato que no conoce en vez de adivinar.
-    public static let formatVersion = 1
+    ///
+    /// La 2 añade `dnsName` y `dnsOtherNames`, y con ellos `host` puede ser un nombre deducido del
+    /// DNS: un lector de la 1 que tomara `host` por anunciado cuando no es una IP leería mal.
+    public static let formatVersion = 2
 
     /// Lo que el fichero dice de sí mismo. Está para que quien lo abra fuera de la app sepa qué **no**
     /// va a encontrar dentro, sin tener que deducirlo de la ausencia de un campo.
@@ -192,6 +209,8 @@ public enum FlowExport {
             proto: name(of: flow.proto),
             host: flow.displayHost,
             sni: flow.stored.sni,
+            dnsName: flow.stored.resolvedName?.name,
+            dnsOtherNames: flow.stored.resolvedName?.otherNames ?? [],
             local: flow.endpoints.map { FlowExportEndpoint($0.local) },
             remote: flow.endpoints.map { FlowExportEndpoint($0.remote) },
             peers: [

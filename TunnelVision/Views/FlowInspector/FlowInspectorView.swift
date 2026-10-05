@@ -143,8 +143,19 @@ struct FlowInspectorView: View {
     }
 
     private var facts: some View {
-        FactGrid(facts: viewModel.facts, layout: .pairs)
-            .padding(.vertical, Spacing.tight)
+        VStack(alignment: .leading, spacing: Spacing.row) {
+            FactGrid(facts: viewModel.facts, layout: .pairs)
+
+            // Debajo de la rejilla y no dentro: es una salvedad sobre el nombre, no un dato más, y
+            // su largo no lo decide nadie (`FlowInspectorPresentation.sharedAddressNote`).
+            if let note = viewModel.sharedAddressNote {
+                Text(note)
+                    .font(.supporting)
+                    .foregroundStyle(Color(.neutral))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, Spacing.tight)
     }
 
     // MARK: - Contenido descifrado

@@ -165,6 +165,10 @@ public struct FixtureFlow: Sendable, Equatable {
     /// es un caso que también hay que poder mirar.
     public let sni: String?
 
+    /// El nombre que el DNS había dado a su dirección remota, o `nil`. Es lo que nombra en la app a
+    /// los flujos que no anuncian host —QUIC, sobre todo—, y se enseña distinto de un SNI.
+    public let resolvedName: ResolvedFlowName?
+
     public let tlsStatus: TLSInspectionStatus
 
     /// En orden temporal ascendente.
@@ -178,6 +182,7 @@ public struct FixtureFlow: Sendable, Equatable {
     public init(
         key: FlowKey,
         sni: String?,
+        resolvedName: ResolvedFlowName?,
         tlsStatus: TLSInspectionStatus,
         packets: [FixturePacket],
         plaintext: [FixturePlaintextChunk] = []
@@ -201,6 +206,7 @@ public struct FixtureFlow: Sendable, Equatable {
         )
         self.key = key
         self.sni = sni
+        self.resolvedName = resolvedName
         self.tlsStatus = tlsStatus
         self.packets = packets
         self.plaintext = plaintext
@@ -227,7 +233,7 @@ public struct FixtureFlow: Sendable, Equatable {
             packetCount: UInt64(packets.count),
             tlsStatus: tlsStatus,
             sni: sni,
-            resolvedName: nil,
+            resolvedName: resolvedName,
             serverTLS: nil
         )
     }
@@ -378,6 +384,9 @@ enum FixtureLookups {
 /// pantallas pueden enseñar y que un sorteo solo cubriría por suerte.
 private struct FlowScript {
     let sni: String?
+    /// El nombre deducido del DNS. Los guiones lo llevan **en vez** del SNI y no además: es el caso
+    /// de un flujo que no anuncia a quién llama, que es donde este nombre se ve.
+    var resolvedName: ResolvedFlowName?
     let proto: IPProtocolNumber
     let version: IPVersion
     let remotePort: UInt16
@@ -577,6 +586,7 @@ private struct FixtureBuilder {
         return FixtureFlow(
             key: key,
             sni: script.sni,
+            resolvedName: script.resolvedName,
             tlsStatus: script.tlsStatus,
             packets: packets,
             plaintext: Self.conversation(
@@ -908,8 +918,16 @@ extension FixtureBuilder {
             FlowScript(sni: "pinned.example.net", proto: .tcp, version: .v4, remotePort: 443,
                        tlsStatus: .notInspectable, packetCount: 8),
 
-            // QUIC sobre IPv6 y DNS en claro: UDP por los dos lados de su rango de tamaños.
-            FlowScript(sni: "quic.example.com", proto: .udp, version: .v6, remotePort: 443,
+            // QUIC sobre IPv6 y DNS en claro: UDP por los dos lados de su rango de tamaños. El de
+            // QUIC **no tiene SNI** —su ClientHello va dentro del paquete Initial, donde nadie lo
+            // lee— y se llama como el DNS llamó a su dirección, que además comparte con otros dos
+            // nombres: es la fila con el segundo renglón más largo que la lista tiene que encajar.
+            FlowScript(sni: nil,
+                       resolvedName: ResolvedFlowName(
+                           name: "quic.example.com",
+                           otherNames: ["edge.example.net", "static.example.org"]
+                       ),
+                       proto: .udp, version: .v6, remotePort: 443,
                        tlsStatus: .encrypted, packetCount: 40),
             FlowScript(sni: nil, proto: .udp, version: .v4, remotePort: 53,
                        tlsStatus: .plaintext, packetCount: FixtureLookups.dns.count,
@@ -958,7 +976,9 @@ extension FixtureBuilder {
         let statuses: [TLSInspectionStatus] = [.encrypted, .encrypted, .encrypted, .inspected, .plaintext]
 
         return FlowScript(
-            sni: host,
+            // Lo que va por UDP es QUIC, que no anuncia host: su nombre es el del DNS.
+            sni: isUDP ? nil : host,
+            resolvedName: isUDP ? ResolvedFlowName(name: host, otherNames: []) : nil,
             proto: isUDP ? .udp : .tcp,
             version: isV6 ? .v6 : .v4,
             remotePort: isUDP ? 443 : (index % 13 == 0 ? 80 : 443),

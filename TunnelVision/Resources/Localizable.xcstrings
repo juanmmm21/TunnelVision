@@ -5053,6 +5053,42 @@
         }
       }
     },
+    "flow.name.origin.announced" : {
+      "comment" : "Value of the 'Name' fact of a connection whose host name was read from its own TLS handshake (the SNI): the connection itself said who it was calling.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Announced (SNI)"
+          }
+        }
+      }
+    },
+    "flow.name.origin.lookedUp" : {
+      "comment" : "Value of the 'Name' fact of a connection that did not say who it was calling: the name shown is the one the device had last looked up for the address the connection went to. It is an inference, and the wording must not read as a statement by the connection.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Inferred from DNS"
+          }
+        }
+      }
+    },
+    "flow.name.origin.none" : {
+      "comment" : "Value of the 'Name' fact of a connection with no host name at all: it announced none and no DNS lookup seen by the tunnel led to its address. A statement of what is known, not an error.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "None seen"
+          }
+        }
+      }
+    },
     "flow.service.protocolAndPort" : {
       "comment" : "Secondary line naming what a connection was: its protocol and the port on the far side. First placeholder is the protocol name (TCP, UDP, …), second the port number. Only the separator and the word 'port' are ours to word.",
       "extractionState" : "extracted_with_value",
@@ -5061,6 +5097,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "%1$@ · port %2$@"
+          }
+        }
+      }
+    },
+    "flow.service.withAddress" : {
+      "comment" : "Secondary line of a connection row whose name was inferred from a DNS lookup rather than announced by the connection: what the connection was, then the address it actually went to. First placeholder is the already-worded service ('UDP · port 443'), second the IP address. Only the separator is ours to word.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$@"
           }
         }
       }
@@ -5257,6 +5305,18 @@
         }
       }
     },
+    "flowInspector.fact.address" : {
+      "comment" : "Label of the IP address a connection went to, in its header grid. Shown for every connection, named or not.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Address"
+          }
+        }
+      }
+    },
     "flowInspector.fact.duration" : {
       "comment" : "Label of how long the connection was seen for — the length of the span named above it in the same grid.",
       "extractionState" : "extracted_with_value",
@@ -5265,6 +5325,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Duration"
+          }
+        }
+      }
+    },
+    "flowInspector.fact.nameOrigin" : {
+      "comment" : "Label, in a connection's header grid, of where the host name in the screen's title comes from. Its value is a short phrase: announced by the connection, inferred from a DNS lookup, or none seen.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Name"
           }
         }
       }
@@ -5361,6 +5433,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Try again"
+          }
+        }
+      }
+    },
+    "flowInspector.note.sharedAddress" : {
+      "comment" : "Caveat under a connection's header grid when its name was inferred from DNS and the address is shared by several names. The placeholder is an already-formatted list of one or more host names ('a.example', or 'a.example and b.example').",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The same address had also been looked up as %@. The name shown is the most recent lookup; this connection could belong to any of them."
           }
         }
       }

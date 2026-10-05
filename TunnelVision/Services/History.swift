@@ -29,14 +29,40 @@ public struct HistoryFlow: Sendable, Hashable, Identifiable {
 
     public var remoteEndpoint: IPEndpoint? { endpoints?.remote }
 
-    /// Lo que encabeza la fila: el SNI si se vio en el ClientHello y, si no, la IP del host remoto.
+    /// El nombre del flujo con su origen: el SNI que anunció y, si no anunció ninguno, el que el
+    /// DNS había dado a su dirección. `nil` si no tiene ninguno de los dos.
     ///
-    /// Es `nil` —y no una IP cualquiera— cuando no se pudo repartir los extremos: enseñar como host
-    /// la dirección del propio dispositivo invertiría lo que el usuario lee. La copia para ese caso
-    /// es de la vista, no de este servicio.
-    public var displayHost: String? {
-        if let sni = stored.sni, !sni.isEmpty { return sni }
-        return endpoints?.remote.address.description
+    /// Un SNI vacío cuenta como que no hay: no nombra a nadie, y dejarle ganar taparía el nombre
+    /// resuelto con una cadena en blanco.
+    public var name: FlowName? {
+        FlowName(sni: stored.sni.flatMap { $0.isEmpty ? nil : $0 }, resolved: stored.resolvedName)
+    }
+
+    /// La dirección del host remoto tal y como se escribe, o `nil` si no se pudo repartir los extremos.
+    public var remoteAddress: String? { endpoints?.remote.address.description }
+
+    /// Lo que encabeza la fila: el nombre del flujo si lo tiene y, si no, la IP del host remoto.
+    ///
+    /// Es `nil` —y no una IP cualquiera— cuando no hay nombre ni se pudo repartir los extremos:
+    /// enseñar como host la dirección del propio dispositivo invertiría lo que el usuario lee. La
+    /// copia para ese caso es de la vista, no de este servicio.
+    public var displayHost: String? { name?.text ?? remoteAddress }
+
+    /// Todo aquello por lo que se puede buscar esta conexión: su nombre, los otros nombres que su
+    /// dirección tenía vivos, y la propia dirección.
+    ///
+    /// Van los candidatos porque el flujo **pudo ser de cualquiera de ellos**: quien busca un
+    /// dominio para saber si el dispositivo habló con él tiene que encontrar también las conexiones
+    /// que quizá lo fueran. Y va la dirección aunque haya nombre, porque desde que un nombre puede
+    /// ser deducido la dirección se enseña a su lado, y lo que se ve tiene que poder buscarse.
+    public var searchableNames: [String] {
+        var names: [String] = []
+        if let name {
+            names.append(name.text)
+            names.append(contentsOf: name.otherCandidates)
+        }
+        if let remoteAddress { names.append(remoteAddress) }
+        return names
     }
 
     /// Puerto del host remoto: lo que distingue "web" (443) de cualquier otro servicio.
@@ -53,14 +79,15 @@ public struct HistoryFlow: Sendable, Hashable, Identifiable {
 /// Los filtros de la Timeline (`docs/ux/screens.md`): host, protocolo, estado TLS y rango temporal.
 ///
 /// Se aplican **en memoria**, sobre las filas que el store ya devolvió ordenadas y paginadas. Es una
-/// decisión deliberada: el texto se busca contra el host que se enseña, y ese host puede ser un SNI
-/// (columna) o la IP formateada del extremo remoto (que en disco es un blob canónico, sin saber cuál
-/// de los dos extremos es), así que empujar la búsqueda a SQL solo podría filtrar la mitad de los
+/// decisión deliberada: el texto se busca contra lo que la conexión enseña de con quién habló
+/// (`HistoryFlow.searchableNames`), y eso puede ser un nombre (dos columnas, y una de ellas una
+/// lista) o la IP formateada del extremo remoto (que en disco es un blob canónico, sin saber cuál
+/// de los dos extremos es), así que empujar la búsqueda a SQL solo podría filtrar una parte de los
 /// casos y mentiría sobre lo que encuentra. El coste —leer filas que se descartan— lo acota el
 /// lector con un tope de páginas por carga.
 public struct HistoryFilter: Sendable, Equatable {
 
-    /// Texto libre contra el host visible (SNI o IP remota). Vacío = sin filtro.
+    /// Texto libre contra los nombres y la dirección de la conexión. Vacío = sin filtro.
     public var searchText: String
 
     /// Protocolos admitidos. Vacío = todos.
@@ -108,11 +135,10 @@ public struct HistoryFilter: Sendable, Equatable {
         }
         let needle = searchText.trimmingCharacters(in: .whitespaces)
         if !needle.isEmpty {
-            guard let host = flow.displayHost,
-                  host.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil
-            else {
-                return false
+            let found = flow.searchableNames.contains {
+                $0.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil
             }
+            guard found else { return false }
         }
         return true
     }
