@@ -23,7 +23,7 @@ architecture — see
   module with concrete Swift interfaces, and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
   explains how the pieces fit. Most surprises in this codebase are deliberate and written down.
 - **Run the tests.** `xcodebuild test -scheme TunnelVision -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:TunnelVisionTests`.
-  All 1710 must pass. Do not add `CODE_SIGNING_ALLOWED=NO` — see
+  All of them must pass. Do not add `CODE_SIGNING_ALLOWED=NO` — see
   [`docs/BUILDING.md`](docs/BUILDING.md#running-the-tests) for why it silently breaks the TLS tests.
 - **Run `xcodegen generate` first.** The `.xcodeproj` is not committed. A stale one fails with
   `cannot find <symbol> in scope`, which looks like a code regression and is not one.

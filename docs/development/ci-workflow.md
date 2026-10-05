@@ -14,7 +14,7 @@ details of the test invocation are load-bearing and were verified before this wa
   `project.yml`) so that tests inherit its Keychain entitlements. Disabling signing removes them,
   `SecItemAdd` returns `errSecMissingEntitlement` (-34018), and the five `LoopbackTLSServerSession`
   tests fail. Ad-hoc Simulator signing keeps the entitlements and needs no developer account —
-  the full suite of 1710 tests passes with `DEVELOPMENT_TEAM` empty.
+  the full suite passes with `DEVELOPMENT_TEAM` empty.
 - **The simulator is resolved, not hard-coded.** Runner images change which iPhone models they
   carry, and a destination that does not exist fails with an error that does not say so.
 

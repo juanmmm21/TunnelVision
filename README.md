@@ -103,7 +103,7 @@ The interesting engineering is in doing that inside the envelope iOS gives a net
 | `PacketTunnel/` | The `NEPacketTunnelProvider` extension: flow table, TCP reassembly, TLS termination, relay |
 | `Shared/` | Framework linked by both: models, persistence, IPC ring buffer, pcap, IP parsing, TLS primitives |
 | `CTVAtomics/`, `CTVResolv/` | Small C shims — C11 atomics for the ring buffer, `<resolv.h>` for the system's DNS servers. Both exist because Swift cannot reach those APIs on iOS |
-| `TunnelVisionTests/` | 1710 unit tests |
+| `TunnelVisionTests/` | The unit tests — about two thousand, all runnable on the Simulator |
 | `Tools/` | Bundle-prefix script, screenshot driver, app icon renderer |
 | `docs/` | Architecture, module specs, UX specs, decision records |
 

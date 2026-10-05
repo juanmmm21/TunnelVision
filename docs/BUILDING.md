@@ -99,7 +99,7 @@ xcodebuild test -scheme TunnelVision \
   -only-testing:TunnelVisionTests
 ```
 
-1710 tests currently pass. Two things about this command are load-bearing:
+The whole suite — about two thousand tests — passes. Two things about this command are load-bearing:
 
 - **Do not add `CODE_SIGNING_ALLOWED=NO`.** It looks harmless for a Simulator run, and it makes the
   TLS session tests fail. The test bundle runs *inside the app* (`TEST_HOST` in `project.yml`) so
