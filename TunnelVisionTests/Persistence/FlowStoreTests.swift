@@ -174,6 +174,57 @@ final class FlowStoreTests: XCTestCase {
         XCTAssertNil(flow.serverTLS)
     }
 
+    /// La v9 parte de base cero: una fila de antes conserva sus totales, el siguiente volcado de
+    /// su misma vida los fija como siempre, y una vida nueva se suma encima.
+    func testMigrationV9KeepsTotalsAndStartsCountingLivesFromThere() async throws {
+        let legacy = try DatabaseQueue(path: dbURL.path)
+        try Schema.migrator().migrate(legacy, upTo: "v8")
+        let remote = ModelFixtures.v4(1, 1, 1, 1)
+        let session = PersistenceFixtures.anchor.wallClockNanoseconds
+        let firstSeen = PersistenceFixtures.anchor.nanosecondsSince1970(forUptime: PersistenceFixtures.uptime(1))
+        let lastSeen = PersistenceFixtures.anchor.nanosecondsSince1970(forUptime: PersistenceFixtures.uptime(20))
+        let key = PersistenceFixtures.key(remote: remote)
+        try await legacy.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO flows
+                    (session, proto, addr_a, port_a, addr_b, port_b,
+                     first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni)
+                VALUES (?, 6, ?, ?, ?, ?, ?, ?, 700, 300, 9, 1, 'example.com')
+                """,
+                arguments: [
+                    session,
+                    Data(key.endpointA.address.bytes), Int(key.endpointA.port),
+                    Data(key.endpointB.address.bytes), Int(key.endpointB.port),
+                    firstSeen, lastSeen,
+                ]
+            )
+        }
+        try legacy.close()
+
+        let store = try makeStore()
+        let migrated = try await store.flow(matching: key)
+        XCTAssertEqual(migrated?.bytesOut, 700)
+        XCTAssertEqual(migrated?.packetCount, 9)
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(
+                remote: remote, firstSeen: 1, lastSeen: 30, bytesOut: 900, bytesIn: 400, packetCount: 12
+            )
+        )
+        let sameLife = try await store.flow(matching: key)
+        XCTAssertEqual(sameLife?.bytesOut, 900, "la misma vida trae sus acumulados: no se suman")
+        XCTAssertEqual(sameLife?.packetCount, 12)
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 200, lastSeen: 200, bytesOut: 60, packetCount: 1)
+        )
+        let secondLife = try await store.flow(matching: key)
+        XCTAssertEqual(secondLife?.bytesOut, 960)
+        XCTAssertEqual(secondLife?.packetCount, 13)
+        XCTAssertEqual(secondLife?.sni, "example.com")
+    }
+
     // MARK: - Fechado
 
     func testStampsAreStoredAsWallClockTime() async throws {
@@ -272,6 +323,157 @@ final class FlowStoreTests: XCTestCase {
         XCTAssertEqual(flow.bytesOut, 5_000)
         XCTAssertEqual(flow.packetCount, 50)
         XCTAssertEqual(flow.lastSeen, PersistenceFixtures.date(1_050))
+    }
+
+    // MARK: - Un flujo que la tabla en memoria vuelve a crear
+
+    /// La tabla en memoria suelta un flujo que lleva dos minutos callado (o lo desaloja, o lo
+    /// cierra un RST) y, si esa 5-tupla vuelve a tener tráfico, lo crea de nuevo **desde cero**. La
+    /// fila es la misma, así que sus totales son los de las dos vidas: lo que ya se contó no puede
+    /// desaparecer porque la segunda empiece en un paquete.
+    func testAFlowCreatedAgainAddsToTheTotalsItAlreadyHad() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(
+                remote: remote, firstSeen: 1, lastSeen: 20, bytesOut: 5_000, bytesIn: 9_000, packetCount: 50
+            )
+        )
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(
+                remote: remote, firstSeen: 200, lastSeen: 200, bytesOut: 60, bytesIn: 0, packetCount: 1
+            )
+        )
+
+        let stored = try await store.flow(id: id)
+        let flow = try XCTUnwrap(stored)
+        XCTAssertEqual(flow.bytesOut, 5_060)
+        XCTAssertEqual(flow.bytesIn, 9_000)
+        XCTAssertEqual(flow.packetCount, 51)
+        XCTAssertEqual(flow.firstSeen, PersistenceFixtures.date(1))
+        XCTAssertEqual(flow.lastSeen, PersistenceFixtures.date(200))
+    }
+
+    /// Y los volcados siguientes de esa segunda vida traen **sus** acumulados, no incrementos: se
+    /// suman una vez a lo que había, no una vez por volcado.
+    func testLaterWritesOfTheSecondLifeAreNotAddedTwice() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(
+                remote: remote, firstSeen: 1, lastSeen: 20, bytesOut: 5_000, bytesIn: 9_000, packetCount: 50
+            )
+        )
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(
+                remote: remote, firstSeen: 200, lastSeen: 200, bytesOut: 60, bytesIn: 0, packetCount: 1
+            )
+        )
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(
+                remote: remote, firstSeen: 200, lastSeen: 230, bytesOut: 120, bytesIn: 40, packetCount: 3
+            )
+        )
+
+        let stored = try await store.flow(id: id)
+        let flow = try XCTUnwrap(stored)
+        XCTAssertEqual(flow.bytesOut, 5_120)
+        XCTAssertEqual(flow.bytesIn, 9_040)
+        XCTAssertEqual(flow.packetCount, 53)
+    }
+
+    /// Una tercera vida se apoya en las dos anteriores, no solo en la última.
+    func testAThirdLifeBuildsOnBothEarlierOnes() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 20, bytesOut: 1_000, packetCount: 10)
+        )
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 200, lastSeen: 230, bytesOut: 200, packetCount: 2)
+        )
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 500, lastSeen: 510, bytesOut: 30, packetCount: 1)
+        )
+
+        let stored = try await store.flow(id: id)
+        let flow = try XCTUnwrap(stored)
+        XCTAssertEqual(flow.bytesOut, 1_230)
+        XCTAssertEqual(flow.packetCount, 13)
+    }
+
+    /// La segunda vida nace sin nombre —el ClientHello pasó en la primera—, y eso no puede
+    /// borrarle a la fila el host que la conexión anunció.
+    func testAFlowCreatedAgainKeepsTheSNITheRowHad() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 20, sni: "api.example.com")
+        )
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 200, lastSeen: 200, sni: nil)
+        )
+
+        let stored = try await store.flow(id: id)
+        XCTAssertEqual(stored?.sni, "api.example.com")
+    }
+
+    /// Pero si la segunda vida anuncia otro host —un handshake nuevo sobre la misma 5-tupla—, el
+    /// que vale es el último.
+    func testANewSNIReplacesTheOneTheRowHad() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 20, sni: "api.example.com")
+        )
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 200, lastSeen: 200, sni: "cdn.example.net")
+        )
+
+        let stored = try await store.flow(id: id)
+        XCTAssertEqual(stored?.sni, "cdn.example.net")
+    }
+
+    /// Un flujo vuelto a crear nace `encrypted`, que es el estado **de partida**: no es noticia de
+    /// que la inspección se deshiciera, y no puede bajar de `inspected` una fila que lo fue. Para
+    /// una auditoría es la diferencia entre «confía en una raíz del usuario» y «no se sabe».
+    func testAnInitialStatusDoesNotUndoAnInspectionOutcome() async throws {
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        for outcome in [TLSInspectionStatus.inspected, .notInspectable] {
+            PersistenceFixtures.removeDatabase(at: dbURL)
+            let store = try makeStore()
+            let id = try await store.upsertFlow(
+                PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 20, tlsStatus: outcome)
+            )
+
+            _ = try await store.upsertFlow(
+                PersistenceFixtures.flow(remote: remote, firstSeen: 200, lastSeen: 200, tlsStatus: .encrypted)
+            )
+
+            let stored = try await store.flow(id: id)
+            XCTAssertEqual(stored?.tlsStatus, outcome)
+        }
+    }
+
+    /// Un desenlace nuevo sí sustituye al anterior: es otro intento, y dijo otra cosa.
+    func testANewInspectionOutcomeReplacesThePreviousOne() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 20, tlsStatus: .inspected)
+        )
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 200, lastSeen: 210, tlsStatus: .notInspectable)
+        )
+
+        let stored = try await store.flow(id: id)
+        XCTAssertEqual(stored?.tlsStatus, .notInspectable)
     }
 
     // MARK: - Respuesta TLS del servidor

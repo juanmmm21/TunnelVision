@@ -262,6 +262,8 @@ actor RecordingPlaintext: PlaintextSink {
 /// y todos los paquetes de cada flujo.
 actor RecordingStore: FlowPersisting {
     private(set) var flows: [FlowKey: FlowRecord] = [:]
+    /// Todos los records recibidos, en orden: lo que distingue «el último gana» de «llegaron los dos».
+    private(set) var upserts: [FlowRecord] = []
     private(set) var packets: [Int64: [PacketMeta]] = [:]
     private(set) var plaintext: [Int64: [PlaintextChunkMeta]] = [:]
     private(set) var upsertCount = 0
@@ -281,6 +283,7 @@ actor RecordingStore: FlowPersisting {
     func upsertFlow(_ record: FlowRecord) async throws -> Int64 {
         if failing { throw Failure.databaseUnavailable }
         upsertCount += 1
+        upserts.append(record)
         flows[record.key] = record
         if let id = ids[record.key] { return id }
         let id = nextID

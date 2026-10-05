@@ -634,6 +634,40 @@ final class PacketPipelineTests: XCTestCase {
         XCTAssertEqual(persisted.count, 1)
     }
 
+    /// Un flujo que se cierra y vuelve a nacer **dentro del mismo lote** son dos vidas, y el store
+    /// tiene que ver el final de la primera: suma cada una a lo que la fila ya llevaba, así que si
+    /// el record de cierre se pisara con el de la vida nueva, sus paquetes dejarían de constar.
+    func testAFlowClosedAndCreatedAgainInOneBatchReachesTheStoreAsTwoLives() async {
+        let h = makeHarness(batchSize: 1_000, flushInterval: .max)
+        let key = PipelineFixtures.tcpV4Key()
+
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(), protocolFamily: Int32(AF_INET))
+        h.clock.advance(by: 1_000)
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(flagsByte: 0x04), protocolFamily: Int32(AF_INET))  // RST
+        h.clock.advance(by: 1_000)
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(), protocolFamily: Int32(AF_INET))
+        await h.pipeline.flush()
+
+        let lives = await h.store.upserts.filter { $0.key == key }
+        XCTAssertEqual(lives.map(\.packetCount), [2, 1], "la primera vida entera, y después la segunda")
+        XCTAssertLessThan(lives[0].firstSeen, lives[1].firstSeen)
+        let persisted = await h.store.packets(for: key)
+        XCTAssertEqual(persisted.count, 3, "y los tres paquetes cuelgan de la misma fila")
+    }
+
+    /// Dentro de una vida sigue ganando el último: un upsert por flujo y lote, no uno por paquete.
+    func testWithinOneLifeTheLatestRecordIsTheOnlyOneWritten() async {
+        let h = makeHarness(batchSize: 1_000, flushInterval: .max)
+
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(), protocolFamily: Int32(AF_INET))
+        h.clock.advance(by: 1_000)
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(payloadBytes: 8), protocolFamily: Int32(AF_INET))
+        await h.pipeline.flush()
+
+        let upserts = await h.store.upserts
+        XCTAssertEqual(upserts.map(\.packetCount), [2])
+    }
+
     func testShutdownFlushesPendingWorkAndSyncsTheCapture() async {
         let h = makeHarness(batchSize: 1_000, flushInterval: .max)
 
