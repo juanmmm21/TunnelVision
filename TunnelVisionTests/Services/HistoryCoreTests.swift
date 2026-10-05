@@ -46,6 +46,78 @@ final class HistoryCoreTests: XCTestCase {
         XCTAssertEqual(flow.displayHost, "93.184.216.34")
     }
 
+    // MARK: - El nombre deducido del DNS
+
+    private static let resolved = ResolvedFlowName(
+        name: "quic.example.com", otherNames: ["edge.example.net", "static.example.org"]
+    )
+
+    /// Un flujo que no anunció host se titula con el nombre que el DNS dio a su dirección, que es
+    /// lo que nombra a QUIC — la mayor parte del tráfico de un teléfono.
+    func testAResolvedNameHeadsTheRowWhenThereIsNoSNI() {
+        let flow = HistoryFixtures.historyFlow(resolvedName: Self.resolved)
+
+        XCTAssertEqual(flow.displayHost, "quic.example.com")
+        XCTAssertEqual(flow.name?.origin, .dns)
+        XCTAssertEqual(flow.remoteAddress, "93.184.216.34", "y la dirección sigue ahí, para decirse al lado")
+    }
+
+    func testTheSNIWinsOverTheResolvedName() {
+        let flow = HistoryFixtures.historyFlow(sni: "announced.example.com", resolvedName: Self.resolved)
+
+        XCTAssertEqual(flow.displayHost, "announced.example.com")
+        XCTAssertEqual(flow.name?.origin, .sni)
+    }
+
+    /// Un SNI en blanco no nombra a nadie, así que no puede tapar el nombre que sí hay.
+    func testAnEmptySNIDoesNotHideTheResolvedName() {
+        let flow = HistoryFixtures.historyFlow(sni: "", resolvedName: Self.resolved)
+
+        XCTAssertEqual(flow.displayHost, "quic.example.com")
+        XCTAssertEqual(flow.name?.origin, .dns)
+    }
+
+    /// Sin reparto de extremos no hay dirección, pero el nombre no depende de ella.
+    func testAResolvedNameDoesNotNeedTheEndpointsToBeTold() {
+        let flow = HistoryFixtures.historyFlow(resolvedName: Self.resolved, localAddresses: [])
+
+        XCTAssertEqual(flow.displayHost, "quic.example.com")
+        XCTAssertNil(flow.remoteAddress)
+    }
+
+    func testTheSearchTextMatchesAResolvedName() {
+        let flow = HistoryFixtures.historyFlow(resolvedName: Self.resolved)
+
+        XCTAssertTrue(HistoryFilter(searchText: "QUIC.example").matches(flow))
+        XCTAssertFalse(HistoryFilter(searchText: "apple").matches(flow))
+    }
+
+    /// La conexión pudo ser de cualquiera de los nombres de su dirección: quien busca uno de ellos
+    /// tiene que encontrarla aunque no sea el que la titula.
+    func testTheSearchTextMatchesTheOtherNamesOfASharedAddress() {
+        let flow = HistoryFixtures.historyFlow(resolvedName: Self.resolved)
+
+        XCTAssertTrue(HistoryFilter(searchText: "static.example.org").matches(flow))
+    }
+
+    /// Pero solo cuando son alternativas: si la conexión anunció su host, los candidatos del DNS
+    /// ya no lo son y buscarlos no la encuentra.
+    func testTheOtherNamesAreNotSearchedOnceTheConnectionAnnouncedItsHost() {
+        let flow = HistoryFixtures.historyFlow(sni: "announced.example.com", resolvedName: Self.resolved)
+
+        XCTAssertFalse(HistoryFilter(searchText: "static.example.org").matches(flow))
+        XCTAssertFalse(HistoryFilter(searchText: "quic.example.com").matches(flow))
+    }
+
+    /// La dirección se busca aunque la conexión tenga nombre: se enseña a su lado, y lo que se ve
+    /// tiene que poder buscarse.
+    func testTheSearchTextMatchesTheAddressOfANamedConnectionToo() {
+        let filter = HistoryFilter(searchText: "93.184")
+
+        XCTAssertTrue(filter.matches(HistoryFixtures.historyFlow(resolvedName: Self.resolved)))
+        XCTAssertTrue(filter.matches(HistoryFixtures.historyFlow(sni: "example.com")))
+    }
+
     func testDurationAndTotalsComeFromTheStoredRow() {
         let flow = HistoryFixtures.historyFlow(firstSeen: 10, lastSeen: 70)
         XCTAssertEqual(flow.duration, 60, accuracy: 0.000_001)

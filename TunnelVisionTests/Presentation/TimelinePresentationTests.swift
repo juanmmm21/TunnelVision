@@ -335,6 +335,46 @@ final class TimelinePresentationTests: XCTestCase {
         }
     }
 
+    // MARK: - La fila de un nombre deducido
+
+    /// Un nombre que salió del DNS es el nombre de una **dirección**, así que la dirección va con
+    /// él en el renglón de abajo: es lo que lo distingue de un nombre anunciado sin poner una marca
+    /// en casi todas las filas.
+    func testARowNamedFromDNSSaysTheAddressNextToTheService() {
+        let row = TimelinePresentation.row(
+            HistoryFixtures.historyFlow(
+                proto: .udp, resolvedName: ResolvedFlowName(name: "quic.example.com", otherNames: [])
+            )
+        )
+
+        XCTAssertEqual(row.host, "quic.example.com")
+        XCTAssertEqual(row.service, "UDP · port 443 · 93.184.216.34")
+        XCTAssertTrue(row.accessibilityValue.contains("93.184.216.34"), "y se oye, no solo se ve")
+    }
+
+    /// Un nombre anunciado es de la conexión y no lleva nada al lado, y una fila sin nombre ya
+    /// tiene la dirección de titular: repetirla debajo sería decir un hecho dos veces.
+    func testARowWithAnAnnouncedNameOrWithNoneDoesNotRepeatTheAddress() {
+        let announced = TimelinePresentation.row(HistoryFixtures.historyFlow(sni: "example.com"))
+        let unnamed = TimelinePresentation.row(HistoryFixtures.historyFlow())
+
+        XCTAssertEqual(announced.service, "TCP · port 443")
+        XCTAssertEqual(unnamed.host, "93.184.216.34")
+        XCTAssertEqual(unnamed.service, "TCP · port 443")
+    }
+
+    /// Sin reparto de extremos no hay dirección que poner, y el renglón no se queda con un hueco.
+    func testARowNamedFromDNSWithoutEndpointsKeepsThePlainService() {
+        let row = TimelinePresentation.row(
+            HistoryFixtures.historyFlow(
+                resolvedName: ResolvedFlowName(name: "quic.example.com", otherNames: []), localAddresses: []
+            )
+        )
+
+        XCTAssertEqual(row.host, "quic.example.com")
+        XCTAssertFalse(row.service.contains("·  "), row.service)
+    }
+
     // MARK: - La copia por el catálogo (M11)
 
     /// Quitar los filtros se ofrece en dos sitios —el menú y el vacío que no encuentra nada— y sale

@@ -97,12 +97,14 @@ enum HistoryFixtures {
         lastSeen: UInt64 = 10,
         tlsStatus: TLSInspectionStatus = .encrypted,
         sni: String? = nil,
+        resolvedName: ResolvedFlowName? = nil,
         localAddresses: Set<IPAddress> = HistoryFixtures.localAddresses
     ) -> HistoryFlow {
         HistoryFlow(
             storedFlow(
                 id: id, remote: remote, remotePort: remotePort, proto: proto, local: local,
-                firstSeen: firstSeen, lastSeen: lastSeen, tlsStatus: tlsStatus, sni: sni
+                firstSeen: firstSeen, lastSeen: lastSeen, tlsStatus: tlsStatus, sni: sni,
+                resolvedName: resolvedName
             ),
             localAddresses: localAddresses
         )

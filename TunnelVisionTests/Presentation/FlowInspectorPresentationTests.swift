@@ -120,12 +120,12 @@ final class FlowInspectorPresentationTests: XCTestCase {
         )
 
         XCTAssertEqual(facts.map(\.label), [
-            "Service", "First to last packet", "Duration", "Packets", "Received", "Sent",
+            "Service", "First to last packet", "Name", "Address", "Duration", "Packets", "Received", "Sent",
         ])
         XCTAssertEqual(facts.first?.value, .text("TCP · port 443"))
-        XCTAssertEqual(facts[2].value, .text("10 s"))
-        XCTAssertEqual(facts[4].value, .text("2 KB"))
-        XCTAssertEqual(facts[5].value, .text("1 KB"))
+        XCTAssertEqual(facts[4].value, .text("10 s"))
+        XCTAssertEqual(facts[6].value, .text("2 KB"))
+        XCTAssertEqual(facts[7].value, .text("1 KB"))
         // El tramo viaja como dos fechas, no como texto: la hora sí se localiza —y el guion que las
         // separa también— y las formatea la vista, al revés que los números.
         guard case .span(let seen) = facts[1].value else {
@@ -323,6 +323,78 @@ final class FlowInspectorPresentationTests: XCTestCase {
         }
     }
 
+    // MARK: - De dónde sale el nombre
+
+    private static let resolved = ResolvedFlowName(
+        name: "quic.example.com", otherNames: ["edge.example.net", "static.example.org"]
+    )
+
+    private func fact(_ id: String, of flow: HistoryFlow) -> FlowFact.Value? {
+        FlowInspectorPresentation.facts(for: flow).first { $0.id == id }?.value
+    }
+
+    /// Los tres casos se dicen distinto, y el deducido **no puede leerse como anunciado**: es lo
+    /// que un informe tiene que poder afirmar de cada conexión.
+    func testTheNameFactSaysWhereTheNameComesFrom() {
+        XCTAssertEqual(
+            fact("nameOrigin", of: HistoryFixtures.historyFlow(sni: "example.com")),
+            .text("Announced (SNI)")
+        )
+        XCTAssertEqual(
+            fact("nameOrigin", of: HistoryFixtures.historyFlow(resolvedName: Self.resolved)),
+            .text("Inferred from DNS")
+        )
+        XCTAssertEqual(fact("nameOrigin", of: HistoryFixtures.historyFlow()), .text("None seen"))
+    }
+
+    /// La dirección se da siempre: una conexión con nombre no la enseñaba en ningún sitio.
+    func testTheAddressIsGivenWhateverTheNameIs() {
+        for flow in [
+            HistoryFixtures.historyFlow(sni: "example.com"),
+            HistoryFixtures.historyFlow(resolvedName: Self.resolved),
+            HistoryFixtures.historyFlow(),
+        ] {
+            XCTAssertEqual(fact("address", of: flow), .text("93.184.216.34"))
+        }
+    }
+
+    /// Sin reparto de extremos no se enseña la dirección del propio dispositivo como si fuera la
+    /// del otro lado.
+    func testWithoutEndpointsTheAddressSaysItIsUnknown() {
+        let flow = HistoryFixtures.historyFlow(localAddresses: [])
+
+        XCTAssertEqual(fact("address", of: flow), .text(FlowDisplay.unknownHost))
+    }
+
+    /// La rejilla se lee por parejas: un número impar de datos deja una fila suelta al final.
+    func testTheHeaderGridHasNoLooseRow() {
+        XCTAssertTrue(FlowInspectorPresentation.facts(for: flow).count.isMultiple(of: 2))
+    }
+
+    func testASharedAddressIsSaidWithItsOtherNamesInOrder() throws {
+        let note = try XCTUnwrap(
+            FlowInspectorPresentation.sharedAddressNote(
+                for: HistoryFixtures.historyFlow(resolvedName: Self.resolved)
+            )
+        )
+
+        XCTAssertTrue(note.contains("edge.example.net and static.example.org"), note)
+        XCTAssertFalse(note.contains("quic.example.com"), "el nombre que titula no es uno de los otros")
+    }
+
+    func testThereIsNoNoteWithoutCompetitionOrWhenTheConnectionAnnouncedItsHost() {
+        let alone = ResolvedFlowName(name: "quic.example.com", otherNames: [])
+
+        XCTAssertNil(FlowInspectorPresentation.sharedAddressNote(for: HistoryFixtures.historyFlow(resolvedName: alone)))
+        XCTAssertNil(FlowInspectorPresentation.sharedAddressNote(for: HistoryFixtures.historyFlow()))
+        XCTAssertNil(
+            FlowInspectorPresentation.sharedAddressNote(
+                for: HistoryFixtures.historyFlow(sni: "example.com", resolvedName: Self.resolved)
+            ),
+            "con SNI los candidatos ya no son alternativas"
+        )
+    }
+
     // MARK: - La copia por el catálogo (M11)
 
     /// La identidad de un dato de la cabecera **no es su rótulo**, que es lo que era: al volverse
@@ -332,7 +404,7 @@ final class FlowInspectorPresentationTests: XCTestCase {
         let facts = FlowInspectorPresentation.facts(for: flow)
 
         XCTAssertEqual(facts.map(\.id), [
-            "service", "seen", "duration", "packetCount", "bytesIn", "bytesOut",
+            "service", "seen", "nameOrigin", "address", "duration", "packetCount", "bytesIn", "bytesOut",
         ])
         XCTAssertEqual(Set(facts.map(\.id)).count, facts.count, "dos datos con la misma identidad")
         for fact in facts {

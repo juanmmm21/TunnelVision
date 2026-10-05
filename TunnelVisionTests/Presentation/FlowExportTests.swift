@@ -131,6 +131,48 @@ final class FlowExportTests: XCTestCase {
         XCTAssertNil(entry["sni"] as? String)
     }
 
+    /// Un nombre deducido del DNS titula la conexión, pero **no** se escribe como SNI: quien lea el
+    /// fichero tiene que poder saber que la conexión no lo anunció.
+    func testAResolvedNameIsWrittenApartFromTheSNIWithItsOtherNames() throws {
+        let flow = HistoryFixtures.historyFlow(
+            resolvedName: ResolvedFlowName(name: "quic.example.com", otherNames: ["edge.example.net"])
+        )
+
+        let entry = try connections(try document([flow]))[0]
+
+        XCTAssertEqual(entry["host"] as? String, "quic.example.com")
+        XCTAssertNil(entry["sni"] as? String)
+        XCTAssertEqual(entry["dnsName"] as? String, "quic.example.com")
+        XCTAssertEqual(entry["dnsOtherNames"] as? [String], ["edge.example.net"])
+    }
+
+    /// Y cuando hay los dos viajan los dos: el SNI titula, y lo que el DNS decía no se pierde.
+    func testBothNamesTravelWhenTheConnectionHasBoth() throws {
+        let flow = HistoryFixtures.historyFlow(
+            sni: "announced.example.com",
+            resolvedName: ResolvedFlowName(name: "quic.example.com", otherNames: [])
+        )
+
+        let entry = try connections(try document([flow]))[0]
+
+        XCTAssertEqual(entry["host"] as? String, "announced.example.com")
+        XCTAssertEqual(entry["sni"] as? String, "announced.example.com")
+        XCTAssertEqual(entry["dnsName"] as? String, "quic.example.com")
+        XCTAssertEqual(entry["dnsOtherNames"] as? [String], [])
+    }
+
+    func testAConnectionWithoutAResolvedNameSaysSoWithAnEmptyList() throws {
+        let entry = try connections(try document([HistoryFixtures.historyFlow(sni: "example.com")]))[0]
+
+        XCTAssertNil(entry["dnsName"] as? String)
+        XCTAssertEqual(entry["dnsOtherNames"] as? [String], [])
+    }
+
+    /// El formato cambió de forma: `host` puede ser ahora un nombre que nadie anunció.
+    func testTheFormatVersionIsTheOneThatKnowsAboutResolvedNames() {
+        XCTAssertEqual(FlowExport.formatVersion, 2)
+    }
+
     func testTheEndpointsComeSplitWhenTheDeviceCouldBeTold() throws {
         let flow = HistoryFixtures.historyFlow(remote: HistoryFixtures.remote(34), remotePort: 443)
 
