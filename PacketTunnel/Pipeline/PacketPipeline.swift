@@ -309,10 +309,8 @@ public actor PacketPipeline {
     // MARK: - Volcado por lotes al store
 
     private func enqueue(meta: PacketMeta, record: FlowRecord, now: UInt64) async {
-        // El último record gana: la tabla de flujos mantiene los acumulados, así que el más
-        // reciente ya incluye a todos los anteriores.
         var entry = pending[record.key] ?? PendingFlow(record: record)
-        entry.record = record
+        entry.update(with: record)
         entry.metas.append(meta)
         pending[record.key] = entry
         pendingPackets += 1
@@ -378,7 +376,7 @@ public actor PacketPipeline {
     /// cierre la conexión saliente que el relay mantenga por él.
     private func merge(closed record: FlowRecord) {
         var entry = pending[record.key] ?? PendingFlow(record: record)
-        entry.record = record
+        entry.update(with: record)
         pending[record.key] = entry
         closedFlowKeys.append(record.key)
         // Y es también donde muere lo que el flujo tenía abierto en los ficheros de contenido
@@ -417,6 +415,9 @@ public actor PacketPipeline {
 
         for entry in batch.values {
             do {
+                for earlier in entry.earlierLives {
+                    try await store.upsertFlow(earlier)
+                }
                 let flowID = try await store.upsertFlow(entry.record)
                 stats.flowsPersisted &+= 1
                 if !entry.metas.isEmpty {
@@ -575,7 +576,7 @@ public actor PacketPipeline {
     /// siguen disparando ellos y el tick. Contarlo aquí volcaría a mitad de una ráfaga de bytes.
     private func enqueue(plaintext chunk: PlaintextChunkMeta, record: FlowRecord) {
         var entry = pending[record.key] ?? PendingFlow(record: record)
-        entry.record = record
+        entry.update(with: record)
         entry.plaintext.append(chunk)
         pending[record.key] = entry
     }
@@ -600,10 +601,47 @@ public actor PacketPipeline {
 
     /// Metadatos de un flujo pendientes de volcado, agrupados para escribirlos con un solo upsert.
     private struct PendingFlow {
-        var record: FlowRecord
+        private(set) var record: FlowRecord
+        /// Los records finales de **vidas anteriores** del flujo dentro de este mismo lote: la
+        /// tabla lo cerró (un RST, un desalojo) y lo volvió a crear antes del volcado. Se escriben
+        /// antes que `record` y en orden, porque el store suma cada vida a lo que la fila ya
+        /// llevaba: sin esto la primera se quedaría en su último volcado y perdería la cola.
+        private(set) var earlierLives: [FlowRecord] = []
         var metas: [PacketMeta] = []
         /// Filas del índice de contenido descifrado, que cuelgan del mismo id que los paquetes.
         var plaintext: [PlaintextChunkMeta] = []
+
+        init(record: FlowRecord) {
+            self.record = record
+        }
+
+        /// El último record gana **dentro de una vida**: la tabla mantiene los acumulados, así que
+        /// el más reciente ya incluye a los anteriores. Una vida se reconoce por su `firstSeen`,
+        /// que la tabla fija al crear el flujo y no vuelve a tocar.
+        ///
+        /// Los records **no llegan en orden de vida**: el de cierre de una vida lo entrega la
+        /// tabla al volcar (`drainClosed`), y para entonces puede haber entrado ya un paquete de la
+        /// siguiente. Por eso se coloca cada uno por su `firstSeen` en vez de fiarse del orden de
+        /// llegada, que escribiría la vida vieja encima de la nueva.
+        mutating func update(with newer: FlowRecord) {
+            if newer.firstSeen == record.firstSeen {
+                record = newer
+                return
+            }
+            let earlier: FlowRecord
+            if newer.firstSeen > record.firstSeen {
+                earlier = record
+                record = newer
+            } else {
+                earlier = newer
+            }
+            if let index = earlierLives.firstIndex(where: { $0.firstSeen == earlier.firstSeen }) {
+                earlierLives[index] = earlier
+            } else {
+                let position = earlierLives.firstIndex(where: { $0.firstSeen > earlier.firstSeen })
+                earlierLives.insert(earlier, at: position ?? earlierLives.endIndex)
+            }
+        }
     }
 
     /// Lo que un flujo tiene abierto en los ficheros de contenido descifrado: su conversación y lo

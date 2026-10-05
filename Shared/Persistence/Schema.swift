@@ -270,6 +270,23 @@ public enum Schema {
             }
         }
 
+        // v9 — lo que un flujo llevaba acumulado **antes de que la tabla en memoria lo volviera a
+        // crear**.
+        //
+        // Por qué: un record trae los totales de la vida actual del flujo en la tabla, y la tabla
+        // lo suelta por inactividad, por desalojo o por un RST. Si esa 5-tupla vuelve a tener
+        // tráfico nace otra vez desde cero, y fijar la fila a sus totales —lo que hacía el upsert—
+        // borraba todo lo anterior: una conexión que había movido megas pasaba a constar con un
+        // paquete. Estas tres columnas guardan el punto de partida de la vida en curso, así que el
+        // total de la fila es base + lo que diga el record (`FlowStore.upsertFlow`).
+        migrator.registerMigration("v9") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "base_bytes_out", .integer).notNull().defaults(to: 0)
+                t.add(column: "base_bytes_in", .integer).notNull().defaults(to: 0)
+                t.add(column: "base_packet_count", .integer).notNull().defaults(to: 0)
+            }
+        }
+
         return migrator
     }
 }

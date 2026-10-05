@@ -74,10 +74,30 @@ public actor FlowStore {
 
     // MARK: - Escritura (extensión)
 
+    /// Los estados de inspección que son un **desenlace** y no el punto de partida de un flujo,
+    /// como lista de SQL. Sale del enum para que un caso nuevo no se quede fuera por un literal.
+    private static let outcomeStatuses: String = [TLSInspectionStatus.inspected, .notInspectable]
+        .map { String($0.rawValue) }
+        .joined(separator: ", ")
+
     /// Inserta el flujo o, si ya existe (misma 5-tupla canónica **en esta sesión**), actualiza su
-    /// estado agregado: `last_seen`, contadores, `tls_status` y `sni` se fijan a los del record (el
-    /// llamante — la tabla de flujos en memoria — mantiene los totales acumulados); `first_seen`
-    /// conserva el mínimo. Devuelve el `rowid` del flujo, con el que enlazar sus paquetes.
+    /// estado agregado. Devuelve el `rowid` del flujo, con el que enlazar sus paquetes.
+    ///
+    /// Un record trae los totales acumulados de **la vida actual** del flujo en la tabla en memoria,
+    /// no de la fila: la tabla suelta un flujo que calla dos minutos (o lo desaloja, o lo cierra un
+    /// RST) y lo crea de nuevo desde cero si esa 5-tupla vuelve a tener tráfico. Así que la fila no
+    /// se puede fijar sin más a lo que diga el record, o la segunda vida borraría la primera:
+    ///
+    /// - **Los contadores** son `base_*` + los del record. Una vida nueva se reconoce porque empieza
+    ///   después de lo último que la fila vio (`first_seen` del record > `last_seen` de la fila; en
+    ///   una misma vida es al revés por construcción), y en ese instante lo acumulado pasa a ser la
+    ///   base. Los volcados siguientes de esa vida vuelven a traer acumulados, y se suman a la
+    ///   misma base: una vez, no una por volcado.
+    /// - **El `sni`** se conserva si el record no trae uno: el ClientHello pasó en la vida anterior.
+    /// - **El `tls_status`** no baja de un desenlace (`inspected` / `notInspectable`) a un estado de
+    ///   partida (`plaintext` / `encrypted`), que es con lo que nace todo flujo: no es noticia de
+    ///   que la inspección se deshiciera. Un desenlace nuevo sí sustituye al anterior.
+    /// - `last_seen` es el del record y `first_seen` conserva el mínimo.
     ///
     /// El **nombre resuelto por DNS** es la excepción: una fila que ya lo tiene lo conserva. Un flujo
     /// se nombra al crearse, y la tabla en memoria puede crear dos veces el mismo (lo desaloja, o
@@ -117,11 +137,22 @@ public actor FlowStore {
                         (SELECT id FROM audit_sessions WHERE ended_at IS NULL))
                 ON CONFLICT (session, proto, addr_a, port_a, addr_b, port_b) DO UPDATE SET
                     last_seen = excluded.last_seen,
-                    bytes_out = excluded.bytes_out,
-                    bytes_in = excluded.bytes_in,
-                    packet_count = excluded.packet_count,
-                    tls_status = excluded.tls_status,
-                    sni = excluded.sni,
+                    base_bytes_out = CASE WHEN excluded.first_seen > flows.last_seen
+                        THEN flows.bytes_out ELSE flows.base_bytes_out END,
+                    base_bytes_in = CASE WHEN excluded.first_seen > flows.last_seen
+                        THEN flows.bytes_in ELSE flows.base_bytes_in END,
+                    base_packet_count = CASE WHEN excluded.first_seen > flows.last_seen
+                        THEN flows.packet_count ELSE flows.base_packet_count END,
+                    bytes_out = excluded.bytes_out + CASE WHEN excluded.first_seen > flows.last_seen
+                        THEN flows.bytes_out ELSE flows.base_bytes_out END,
+                    bytes_in = excluded.bytes_in + CASE WHEN excluded.first_seen > flows.last_seen
+                        THEN flows.bytes_in ELSE flows.base_bytes_in END,
+                    packet_count = excluded.packet_count + CASE WHEN excluded.first_seen > flows.last_seen
+                        THEN flows.packet_count ELSE flows.base_packet_count END,
+                    tls_status = CASE WHEN flows.tls_status IN (\(Self.outcomeStatuses))
+                            AND excluded.tls_status NOT IN (\(Self.outcomeStatuses))
+                        THEN flows.tls_status ELSE excluded.tls_status END,
+                    sni = COALESCE(excluded.sni, flows.sni),
                     dns_name = COALESCE(flows.dns_name, excluded.dns_name),
                     dns_other_names = CASE WHEN flows.dns_name IS NULL
                         THEN excluded.dns_other_names ELSE flows.dns_other_names END,
