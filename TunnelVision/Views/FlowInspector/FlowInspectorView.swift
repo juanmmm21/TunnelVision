@@ -101,6 +101,11 @@ struct FlowInspectorView: View {
         .listCanvas()
         .navigationTitle(viewModel.host)
         .navigationBarTitleDisplayMode(.inline)
+        // La regla escrita (`docs/ux/design-system.md`: lo que se desliza bajo la barra necesita
+        // que la barra sea opaca), que aquí estaba medida y sin aplicar: a AX5 los rótulos de la
+        // rejilla y la hora de una fila de paquete se leían **a través** del nombre del host.
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarBackground(Color(.canvas), for: .navigationBar)
         .navigationDestination(for: PacketSummary.self) { packet in
             PacketDetailView(viewModel: PacketDetailViewModel(packet: packet, library: library))
         }

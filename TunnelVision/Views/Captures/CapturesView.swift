@@ -20,11 +20,25 @@ struct CapturesView: View {
     /// porque no sobrevive a la pantalla: nada que confirmar queda pendiente al salir de ella.
     @State private var pendingDeletion: CaptureFileDisplay?
 
+    /// Decide si la barra de navegación tiene que ser opaca (ver `body`).
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
         NavigationStack {
             content
                 .navigationTitle(CapturesPresentation.screenTitle)
                 .screenCanvas()
+                // La misma regla que en la Timeline y por el mismo defecto, aquí medido a AX5: la
+                // hora de una fila y la palabra *Share* atravesaban el título al deslizar la lista.
+                //
+                // **Solo en los cuerpos de accesibilidad**, que es donde ocurre: con la letra normal
+                // la lista cabe sin deslizarse bajo la barra, y una barra opaca sobre un título
+                // grande lo deja **sin dibujar** hasta que se toca la lista (visto en el Simulator:
+                // la pantalla abría sin su *Captures*). Por eso en esos cuerpos el título va **en
+                // línea**, que es la salida que ya usan las pantallas de Audit: opaca y con título.
+                .navigationBarTitleDisplayMode(dynamicTypeSize.isAccessibilitySize ? .inline : .automatic)
+                .toolbarBackground(dynamicTypeSize.isAccessibilitySize ? .visible : .automatic, for: .navigationBar)
+                .toolbarBackground(Color(.canvas), for: .navigationBar)
                 .toolbar { rotateButton }
                 .refreshable { await viewModel.refresh() }
                 .sheet(item: exportSheet) { summary in
