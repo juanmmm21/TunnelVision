@@ -50,7 +50,7 @@ final class RelayInspectionTests: XCTestCase {
         await deliver(h, syn, synRaw, candidate: candidate)
 
         // La conexión llana del flujo es la última creada: los tests con dos flujos van en orden.
-        h.factory.tcpConnections.last?.fireReady()
+        await h.factory.tcpConnections.last?.fireReadyAndAwaitSynAck(from: h.relay)
 
         let (ack, ackRaw) = RelayFixtures.tcpV4(
             localPort: localPort, flagsByte: RelayFixtures.TCPFlagByte.ack,

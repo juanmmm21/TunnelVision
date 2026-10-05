@@ -45,13 +45,13 @@ final class RelayServerHelloTests: XCTestCase {
         }
     }
 
-    /// Lleva el flujo hasta `established` (SYN → ready → ACK).
+    /// Lleva el flujo hasta `established` (SYN → ready → SYN-ACK → ACK).
     private func establish(_ h: Harness, remotePort: UInt16 = 443, candidate: Bool = false) async {
         let (syn, synRaw) = RelayFixtures.tcpV4(
             localPort: Self.localPort, remotePort: remotePort,
             flagsByte: RelayFixtures.TCPFlagByte.syn, sequence: Self.clientISN)
         await deliver(h, syn, synRaw, candidate: candidate)
-        h.factory.tcpConnections[0].fireReady()
+        await h.factory.tcpConnections[0].fireReadyAndAwaitSynAck(from: h.relay)
 
         let (ack, ackRaw) = RelayFixtures.tcpV4(
             localPort: Self.localPort, remotePort: remotePort,

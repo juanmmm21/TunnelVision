@@ -37,7 +37,7 @@ final class RelaySNITests: XCTestCase {
             localPort: Self.localPort, remotePort: remotePort,
             flagsByte: RelayFixtures.TCPFlagByte.syn, sequence: Self.clientISN)
         await h.relay.passthrough(syn, raw: synRaw)
-        h.factory.tcpConnections[0].fireReady()
+        await h.factory.tcpConnections[0].fireReadyAndAwaitSynAck(from: h.relay)
 
         let (ack, ackRaw) = RelayFixtures.tcpV4(
             localPort: Self.localPort, remotePort: remotePort,

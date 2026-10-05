@@ -1,4 +1,5 @@
 import Foundation
+import XCTest
 import Shared
 
 /// Dobles y constructores para los tests del relay (M8). Una `NWConnection` no se puede ejercitar en
@@ -177,6 +178,32 @@ final class FakeRelayConnection: RelayConnection, @unchecked Sendable {
     }
 
     /// Simula el cierre de la conexión (con error o limpio; limpio = EOF/FIN de recepción).
+    /// Dispara el `ready` y **espera a que el relay haya dado su SYN-ACK** antes de volver.
+    ///
+    /// `fireReady` entra al relay por una tarea, así que quien manda el ACK del handshake justo
+    /// detrás puede adelantársele. Un dispositivo de verdad no puede —no tiene SYN-ACK al que
+    /// contestar—, y por eso `TCPRelayFlow` se traga con razón todo lo que le llegue en
+    /// `connecting`: en un test eso es un ACK y un ClientHello perdidos en silencio, y un rojo que
+    /// solo sale con la máquina cargada. Los arneses que llevan un flujo hasta `established` pasan
+    /// por aquí.
+    func fireReadyAndAwaitSynAck(
+        from relay: Relay,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let before = await relay.stats.tcpSegmentsReinjected
+        fireReady()
+        for _ in 0..<10_000 {
+            if await relay.stats.tcpSegmentsReinjected > before { return }
+            do {
+                try await Task.sleep(nanoseconds: 1_000_000)
+            } catch {
+                return   // el test fue cancelado: no hay nada más que esperar
+            }
+        }
+        XCTFail("el relay no dio su SYN-ACK en 10 s", file: file, line: line)
+    }
+
     func fireClose(_ error: RelayConnectionError?) {
         lock.lock(); let handler = onClose; lock.unlock()
         handler?(error)

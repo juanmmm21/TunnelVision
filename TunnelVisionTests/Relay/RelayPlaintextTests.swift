@@ -45,7 +45,7 @@ final class RelayPlaintextTests: XCTestCase {
         let (syn, synRaw) = RelayFixtures.tcpV4(
             localPort: localPort, flagsByte: RelayFixtures.TCPFlagByte.syn, sequence: Self.clientISN)
         await h.relay.inspect(syn, raw: synRaw)
-        h.factory.tcpConnections.last?.fireReady()
+        await h.factory.tcpConnections.last?.fireReadyAndAwaitSynAck(from: h.relay)
 
         let (ack, ackRaw) = RelayFixtures.tcpV4(
             localPort: localPort, flagsByte: RelayFixtures.TCPFlagByte.ack,
