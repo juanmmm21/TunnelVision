@@ -354,12 +354,15 @@ public struct HistoryFlow: Sendable, Hashable, Identifiable {
     public let endpoints: FlowEndpoints?
     public init(_ stored: StoredFlow, localAddresses: Set<IPAddress>)
     public var id: Int64 { get }              // el rowid del flujo
-    public var displayHost: String? { get }   // SNI si lo hay, si no la IP remota, nil si no se sabe
+    public var name: FlowName? { get }        // el SNI, y si no el nombre deducido del DNS, con su origen
+    public var remoteAddress: String? { get } // la IP remota escrita, nil si no se repartieron los extremos
+    public var displayHost: String? { get }   // el nombre si lo hay, si no la IP remota, nil si no se sabe
+    public var searchableNames: [String] { get }   // el nombre, sus otros candidatos y la dirección
     public var remotePort: UInt16? { get }
 }
 
 public struct HistoryFilter: Sendable, Equatable {
-    public var searchText: String                     // contra el host visible
+    public var searchText: String                     // contra `searchableNames`
     public var protocols: Set<IPProtocolNumber>       // vacío = todos
     public var tlsStatuses: Set<TLSInspectionStatus>  // vacío = todos
     public var dateRange: ClosedRange<Date>?          // por solape, no por contención
@@ -434,11 +437,27 @@ view.
 
 Two decisions carry the honesty of the list:
 
-- **The filter runs in memory, not in SQL.** The text is searched against the host the user actually
-  sees, and that host is either the `sni` column or the *formatted* IP of the remote endpoint — which
-  on disk is a canonical blob that does not know which end is the device. Pushing the search into SQL
-  could only cover half the cases while claiming to cover all of them. The cost (reading rows that get
-  discarded) is what `maxPagesPerLoad` bounds.
+- **The filter runs in memory, not in SQL.** The text is searched against what the connection shows
+  of who it talked to, and that is a name — two columns, one of them a list — or the *formatted* IP of
+  the remote endpoint, which on disk is a canonical blob that does not know which end is the device.
+  Pushing the search into SQL could only cover part of the cases while claiming to cover all of them.
+  The cost (reading rows that get discarded) is what `maxPagesPerLoad` bounds.
+- **A connection is found by any name it could have had.** `searchableNames` is the flow's name, the
+  **other candidates** of a name inferred from DNS, and the remote address. The candidates are there
+  because the flow could belong to any of them: someone searching a domain to learn whether the device
+  talked to it must also find the connections that *may* have been it. They are searched only while
+  they are alternatives — once the connection announced its host (SNI) they no longer are. The address
+  is searched even when there is a name, because since a name can be inferred the address is shown
+  next to it, and what is shown must be searchable.
+- **A name inferred from DNS heads the row, and is never shown as announced.** `displayHost` is the
+  flow's `FlowName` — the SNI, else the resolved name — else the address. What tells the two kinds of
+  name apart on screen is a fact, not a badge: a row named from DNS carries the **address** in its
+  second line (`FlowDisplay.serviceLine`, *UDP · port 443 · 2001:db8::5*), because a resolved name is
+  the name of an address. A badge would have appeared on nearly every row — QUIC is most of a phone's
+  traffic — and a mark on every row marks nothing. The Flow Inspector says it in words (a *Name* fact:
+  *Announced (SNI)* / *Inferred from DNS* / *None seen*), always gives the *Address*, and lists the
+  other names of a shared address in a note under the grid. The connections export carries `dnsName`
+  and `dnsOtherNames` apart from `sni` (`formatVersion` 2).
 - **A page is merged without duplicates.** The history is not frozen while it is paginated: the
   extension keeps writing, and a flow already on the list can update its `last_seen` and show up again
   in a later page.

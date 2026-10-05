@@ -211,6 +211,11 @@ close — correct is not the same as good-looking.
   the axis's caption read *through* the title and the search field. Re-pinning the axis is not the way
   out (see above); `.toolbarBackground(.visible, for: .navigationBar)` with the canvas colour is. The
   colour is what is already underneath, so at the top of the list there is no seam to see.
+  Applied since 2026-10-05 to the Flow Inspector and to Captures too, where it had been measured at
+  AX5 and left alone. **On a screen with a large title it has a price**: an opaque bar leaves the
+  large title undrawn until the list is touched. So Captures makes the bar opaque — and its title
+  inline — **only at accessibility text sizes**, which is where its list slides under the bar; at the
+  default size it keeps its large title and the system's bar.
 
 ### Typography
 System font (SF Pro) via text styles (`.largeTitle`…`.caption`) so Dynamic Type just works.
