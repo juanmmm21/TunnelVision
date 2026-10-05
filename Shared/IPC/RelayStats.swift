@@ -57,6 +57,18 @@ public struct RelayStats: Sendable, Equatable, Codable {
     /// enseñando nombres o direcciones.
     public var sniUnavailable: UInt64 = 0
 
+    /// Flujos TLS a los que se les leyó la respuesta del servidor: la versión y la suite de su
+    /// ServerHello. Solo los que **no** se inspeccionan: en uno inspeccionado lo que el dispositivo
+    /// recibe es el ServerHello de nuestra terminación, y ese no se lee.
+    public var serverHelloObserved: UInt64 = 0
+    /// Flujos en los que el servidor contestó con una alerta en vez de negociar. Aparte del
+    /// siguiente porque una negativa **es** una respuesta sobre TLS, y el flujo se la lleva apuntada.
+    public var serverHelloRefused: UInt64 = 0
+    /// Flujos hacia el 443 cuyo stream entrante no se dejó leer: no era un handshake TLS, no
+    /// empezaba por un ServerHello, o venía malformado. Los que se cierran antes de que el servidor
+    /// diga nada no están en ninguno de los tres.
+    public var serverHelloUnavailable: UInt64 = 0
+
     /// Flujos abiertos como candidatos a inspección (el pipeline los enrutó a `.inspect` y hay
     /// interceptor). Es el denominador de todo lo que sigue.
     public var inspectionCandidates: UInt64 = 0
