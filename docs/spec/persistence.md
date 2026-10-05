@@ -146,6 +146,16 @@ public enum Schema {
                 t.add(column: "tls_alert", .integer)         // excluye a las otras tres
             }
         }
+
+        // v9 — lo que un flujo llevaba acumulado antes de que la tabla en memoria lo volviera a
+        // crear: el total de la fila es base + lo que diga el record.
+        m.registerMigration("v9") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "base_bytes_out", .integer).notNull().defaults(to: 0)
+                t.add(column: "base_bytes_in", .integer).notNull().defaults(to: 0)
+                t.add(column: "base_packet_count", .integer).notNull().defaults(to: 0)
+            }
+        }
         return m
     }
 }
@@ -278,10 +288,27 @@ introducirá un reloj monotónico cuando lo necesite el código productor (parse
 - **Batched writes:** the extension accumulates `PacketMeta` and flushes with `appendPackets`
   in a single transaction; per-packet inserts are forbidden on the hot path.
 - **Upsert flows:** `upsertFlow` inserts a new flow or, keyed by the canonical 5-tuple, updates
-  an existing one. `FlowRecord` is the flow's **full aggregate state** (the in-memory flow table
-  keeps the running totals and flushes them), so the upsert *sets* `last_seen`/counters/
-  `tls_status`/`sni` to the record's values; `first_seen` keeps the minimum seen. It returns the
-  flow's `rowid` for linking its packets.
+  an existing one, and returns the flow's `rowid` for linking its packets. `last_seen` is set to the
+  record's and `first_seen` keeps the minimum seen.
+- **A record is the aggregate of one *life* of the flow in the in-memory table, not of the row**
+  (`v9`). The table lets go of a flow that is silent for two minutes, or evicts it, or closes it on a
+  RST, and creates it again **from zero** if that 5-tuple has traffic again. Setting the row to the
+  record's values — what the upsert did until `v9` — erased everything before: a connection that had
+  moved megabytes was left on record with one packet, without its SNI, and back to `encrypted` if it
+  had been `inspected`. So:
+  - **Counters are `base_*` + the record's.** A new life is recognised because it starts after the
+    last thing the row saw (the record's `first_seen` > the row's `last_seen`; within one life it is
+    the other way round by construction), and at that moment the row's totals become the base. Later
+    writes of that life bring running totals again and are added to the same base — once, not once
+    per write.
+  - **The `sni` is kept when the record brings none**; a new one replaces it.
+  - **`tls_status` does not fall from an outcome (`inspected` / `notInspectable`) to a starting
+    state (`plaintext` / `encrypted`)**, which is what every flow is born with. A new outcome does
+    replace the previous one.
+  - The pipeline's half: within one batch the last record wins **per life**. A flow closed and
+    created again before the flush keeps the final record of each earlier life, placed by its
+    `firstSeen` rather than by arrival — the closing record of a life is drained at flush time,
+    after a packet of the next one may already have come in — and they are written oldest first.
 - **The resolved name is the one exception to "the record wins"** (`v7`): a row that already has a
   `dns_name` keeps it. A flow is named when it is created, and the in-memory table can create the same
   flow twice — it is evicted or goes idle and then has traffic again — at which point the name map may
@@ -355,6 +382,10 @@ underneath. Never share a raw `Database` handle across actors — go through the
   returns it; a record without one does not erase the row's; a new one replaces the previous whole in
   both directions; a half-written or out-of-range answer is a `corruptRow`; and a database stopped at
   `v7` migrates keeping its flows, without an answer.
+- A flow created again (`v9`): its totals are added to what the row had, later writes of the second
+  life are not added twice, a third life builds on both, the SNI survives a life that brings none
+  and is replaced by a new one, an inspection outcome is not undone by a starting state and is
+  replaced by a new outcome; and a database stopped at `v8` migrates keeping its totals.
 - `recentFlows`/`packets` pagination and ordering.
 - `prune` deletes the right rows and cascades to `packets`; `totalBytesOnDisk` is sane.
 - `flowCount` counts what is stored, does not count an upsert onto an existing row as a new connection,

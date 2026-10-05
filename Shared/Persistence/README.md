@@ -30,4 +30,9 @@ Since schema v8 it carries what the server answered to its ClientHello too (`tls
 `tls_cipher_suite`, `tls_hello_retry`, `tls_alert`): the wire values, with no table behind them. A
 record that brings no answer does not erase the row's, and one that brings it replaces it whole.
 
+Since schema v9 a row's counters are a base plus the record's (`base_bytes_out`, `base_bytes_in`,
+`base_packet_count`): a record carries the totals of one life of the flow in the in-memory table,
+and a flow that goes idle and comes back starts again from zero. Its SNI and its inspection outcome
+survive that too.
+
 **Spec:** [`../../docs/spec/persistence.md`](../../docs/spec/persistence.md) · **Milestone:** M2
