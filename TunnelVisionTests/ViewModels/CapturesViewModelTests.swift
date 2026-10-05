@@ -317,6 +317,9 @@ final class CapturesViewModelTests: XCTestCase {
         await viewModel.refresh()
 
         XCTAssertEqual(viewModel.evidenceSequences, [0, 1])
+        // Y es lo que el diálogo de borrado de cada una tiene que poder decir.
+        XCTAssertEqual(viewModel.evidenceStanding(ofSequence: 0), .held)
+        XCTAssertEqual(viewModel.evidenceStanding(ofSequence: 2), .none)
         // Las dos capturas cerradas son evidencia, y la tercera no la ha cerrado nadie: no hay nada
         // que pueda caducar.
         guard case .bounded(_, let expiry) = viewModel.headroom else {
@@ -333,6 +336,8 @@ final class CapturesViewModelTests: XCTestCase {
 
         // Sin saber qué es evidencia, la comparación prometería borrados que la limpieza no hará.
         XCTAssertEqual(viewModel.content, .list)
+        // Y el diálogo de borrado no puede afirmar que una captura no la guarda.
+        XCTAssertEqual(viewModel.evidenceStanding(ofSequence: 0), .unknown)
         XCTAssertEqual(viewModel.rows.count, 2)
         XCTAssertNil(viewModel.headroom)
         XCTAssertEqual(viewModel.notice?.role, .warning)

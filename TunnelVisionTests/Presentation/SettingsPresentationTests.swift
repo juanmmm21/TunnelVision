@@ -80,6 +80,26 @@ final class SettingsPresentationTests: XCTestCase {
         XCTAssertTrue(prompt.contains("can't be undone"))
         // Con el túnel parado no hay fichero abierto, así que prometer que se conserva uno sería falso.
         XCTAssertFalse(prompt.contains("kept"))
+        XCTAssertFalse(prompt.contains("audit"), "sin evidencia guardada no se habla de auditorías")
+    }
+
+    /// La limpieza automática respeta la evidencia de auditoría y este botón no: quien llega aquí
+    /// puede dar por hecho lo contrario, así que se dice, con cuánta es.
+    func testClearingEverythingNamesTheAuditEvidenceItTakes() {
+        let usage = StorageUsage(
+            captureBytes: 350_000_000,
+            captureFileCount: 4,
+            historyBytes: 12_000_000,
+            historyFlowCount: 1_204,
+            auditFlowCount: 312
+        )
+
+        let prompt = SettingsPresentation.clearEverythingPrompt(usage: usage, isMonitoring: false)
+
+        XCTAssertTrue(prompt.contains("audit sessions"))
+        XCTAssertTrue(prompt.contains("312"))
+        XCTAssertTrue(prompt.contains("nothing left to export"))
+        XCTAssertTrue(prompt.contains("can't be undone"))
     }
 
     func testWhileMonitoringTheRecordingFileIsAnnouncedAsKept() {

@@ -572,6 +572,23 @@ final class AuditStoreTests: XCTestCase {
         XCTAssertEqual(none, 0)
     }
 
+    /// Lo que tiene que poder contar quien vaya a vaciar el historial: las conexiones que son
+    /// evidencia de **cualquier** sesión, abierta o cerrada, y ninguna de las demás.
+    func testTheAuditFlowCountCoversEverySessionAndNothingElse() async throws {
+        let store = try makeStore()
+        let project = try await makeProject(store)
+        _ = try await upsert(store, remote: ModelFixtures.v4(9, 9, 9, 9), firstSeen: 1, lastSeen: 2)
+        let before = try await store.auditFlowCount()
+        XCTAssertEqual(before, 0)
+
+        _ = try await store.startAuditSession(sessionDraft(project: project.id), at: PersistenceFixtures.date(10))
+        _ = try await upsert(store, remote: ModelFixtures.v4(1, 1, 1, 1), firstSeen: 12, lastSeen: 20)
+        _ = try await upsert(store, remote: ModelFixtures.v4(2, 2, 2, 2), firstSeen: 13, lastSeen: 21)
+
+        let count = try await store.auditFlowCount()
+        XCTAssertEqual(count, 2)
+    }
+
     func testASessionWithoutCapturedPacketsHasNoCaptureFiles() async throws {
         let store = try makeStore()
         let project = try await makeProject(store)

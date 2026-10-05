@@ -270,12 +270,37 @@ final class CapturesPresentationTests: XCTestCase {
 
     func testDeletionPromptNamesWhatIsLostAndWhatStays() {
         let row = CapturesPresentation.rows([file(4, bytes: 2_000_000)], recordingSequence: nil)[0]
-        let prompt = CapturesPresentation.deletionPrompt(for: row)
+        let prompt = CapturesPresentation.deletionPrompt(for: row, evidence: .none)
 
         XCTAssertTrue(prompt.contains("Capture 4"))
         XCTAssertTrue(prompt.contains("2 MB"))
         XCTAssertTrue(prompt.contains("history"))
         XCTAssertTrue(prompt.contains("can't be brought back"))
+        XCTAssertFalse(prompt.contains("audit"), "una captura sin evidencia no habla de auditorías")
+    }
+
+    /// La limpieza automática nunca borra evidencia de auditoría, así que este diálogo es el único
+    /// sitio donde se puede perder: lo dice **antes** que lo demás, y sin quitar lo demás.
+    func testDeletingACaptureThatHoldsAuditEvidenceSaysSoFirst() throws {
+        let row = CapturesPresentation.rows([file(4, bytes: 2_000_000)], recordingSequence: nil)[0]
+        let prompt = CapturesPresentation.deletionPrompt(for: row, evidence: .held)
+
+        let warning = try XCTUnwrap(prompt.range(of: "audit session"))
+        let standard = try XCTUnwrap(prompt.range(of: "Capture 4"))
+        XCTAssertLessThan(warning.lowerBound, standard.lowerBound)
+        XCTAssertTrue(prompt.contains("removes that evidence"))
+        XCTAssertTrue(prompt.contains("can't be brought back"))
+    }
+
+    /// Si el historial no se deja leer no se sabe si la hay, y no se afirma ni que sí ni que no.
+    func testDeletingACaptureWhoseEvidenceIsUnknownSaysItCannotTell() {
+        let row = CapturesPresentation.rows([file(4, bytes: 2_000_000)], recordingSequence: nil)[0]
+        let prompt = CapturesPresentation.deletionPrompt(for: row, evidence: .unknown)
+
+        XCTAssertTrue(prompt.contains("can't tell"))
+        XCTAssertTrue(prompt.contains("If it does"))
+        XCTAssertNotEqual(prompt, CapturesPresentation.deletionPrompt(for: row, evidence: .held))
+        XCTAssertNotEqual(prompt, CapturesPresentation.deletionPrompt(for: row, evidence: .none))
     }
 
     func testRotatingWithTheTunnelOffIsNotAFailure() {
@@ -510,7 +535,7 @@ final class CapturesPresentationTests: XCTestCase {
             ("action.export", CapturesPresentation.exportActionTitle),
             ("action.share", CapturesPresentation.shareActionTitle),
             ("delete.confirm.title", CapturesPresentation.deletionDialogTitle),
-            ("delete.confirm.message", CapturesPresentation.deletionPrompt(for: row)),
+            ("delete.confirm.message", CapturesPresentation.deletionPrompt(for: row, evidence: .none)),
             ("export.description", CapturesPresentation.exportActionDescription),
             ("export.sheet.title", CapturesPresentation.exportSheetTitle),
             ("export.share", CapturesPresentation.exportShareTitle),
