@@ -546,6 +546,44 @@ final class PacketPipelineTests: XCTestCase {
         XCTAssertEqual(record?.sni, "www.example.com")
     }
 
+    // MARK: - Respuesta TLS del servidor de un flujo
+
+    /// Lo que el relay lee del ServerHello acaba en el historial, sin llevarse por delante el
+    /// nombre —que llegó por la otra costura— ni ascender el flujo a inspeccionado.
+    func testObservedServerTLSReachesTheStore() async {
+        let h = makeHarness(batchSize: 1_000, flushInterval: .max)
+        let key = PipelineFixtures.tcpV4Key()
+        let answer = ServerTLSAnswer.negotiated(
+            NegotiatedTLS(version: .tls12, cipherSuite: TLSCipherSuite(rawValue: 0xC02F), fromHelloRetryRequest: false)
+        )
+
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(), protocolFamily: Int32(AF_INET))
+        await h.pipeline.observe(sni: "www.example.com", for: key)
+        await h.pipeline.observe(serverTLS: answer, for: key)
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(payloadBytes: 8), protocolFamily: Int32(AF_INET))
+        await h.pipeline.flush()
+
+        let record = await h.store.flows[key]
+        XCTAssertEqual(record?.serverTLS, answer)
+        XCTAssertEqual(record?.sni, "www.example.com")
+        XCTAssertEqual(record?.tlsStatus, .encrypted)
+    }
+
+    /// Un servidor que se niega cierra la conexión acto seguido: la negativa llega al historial
+    /// con el record de cierre, sin que haga falta otro paquete.
+    func testARefusalReachesTheStoreEvenIfTheFlowClosesRightAfter() async {
+        let h = makeHarness(batchSize: 1_000, flushInterval: .max)
+        let key = PipelineFixtures.tcpV4Key()
+
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(), protocolFamily: Int32(AF_INET))
+        await h.pipeline.observe(serverTLS: .refused(alert: 70), for: key)
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(flagsByte: 0x04), protocolFamily: Int32(AF_INET))  // RST
+        await h.pipeline.flush()
+
+        let record = await h.store.flows[key]
+        XCTAssertEqual(record?.serverTLS, .refused(alert: 70))
+    }
+
     // MARK: - Desenlace de la inspección de un flujo
 
     /// La otra mitad del enganche: lo que el relay decide sobre una terminación acaba en el historial,

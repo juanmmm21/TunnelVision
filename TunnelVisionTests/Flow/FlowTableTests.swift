@@ -97,6 +97,66 @@ final class FlowTableTests: XCTestCase {
         XCTAssertEqual(closed.first?.sni, "www.example.com")
     }
 
+    // MARK: - Respuesta TLS del servidor
+
+    private static let tls13 = ServerTLSAnswer.negotiated(
+        NegotiatedTLS(version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1301), fromHelloRetryRequest: false)
+    )
+
+    /// Lo que el servidor contestó se apunta sin tocar ni el estado de inspección ni el nombre: es
+    /// otra lectura de bytes en claro, y haberla hecho no es haber descifrado nada.
+    func testSetServerTLSRecordsTheAnswerWithoutChangingStatusOrName() async {
+        let table = FlowTable(config: .init(), clock: ManualClock())
+        let packet = FlowFixtures.tcp(source: local(51000), destination: remote(443))
+        _ = await table.observe(packet, direction: .outbound, length: 60, resolvedName: nil)
+        await table.setSNI("www.example.com", for: packet.flowKey)
+
+        await table.setServerTLS(Self.tls13, for: packet.flowKey)
+        let live = await table.observe(packet, direction: .inbound, length: 60, resolvedName: nil)
+
+        XCTAssertEqual(live.record.serverTLS, Self.tls13)
+        XCTAssertEqual(live.record.tlsStatus, .encrypted)
+        XCTAssertEqual(live.record.sni, "www.example.com")
+    }
+
+    func testAFlowStartsWithoutAServerAnswer() async {
+        let table = FlowTable(config: .init(), clock: ManualClock())
+        let packet = FlowFixtures.tcp(source: local(51000), destination: remote(443))
+
+        let live = await table.observe(packet, direction: .outbound, length: 60, resolvedName: nil)
+
+        XCTAssertNil(live.record.serverTLS)
+    }
+
+    /// Llega por una tarea aparte, como el nombre, así que puede llegar con el flujo ya cerrado:
+    /// no lo resucita ni se lo apunta a quien reutilice esa 5-tupla después.
+    func testSetServerTLSOnAnUnknownFlowIsANoOp() async {
+        let table = FlowTable(config: .init(), clock: ManualClock())
+        let packet = FlowFixtures.tcp(source: local(51000), destination: remote(443))
+
+        await table.setServerTLS(.refused(alert: 70), for: packet.flowKey)
+
+        let count = await table.count
+        XCTAssertEqual(count, 0)
+        let live = await table.observe(packet, direction: .outbound, length: 60, resolvedName: nil)
+        XCTAssertNil(live.record.serverTLS)
+    }
+
+    /// Una conexión que el servidor rechaza se cierra enseguida: el record de cierre es el único
+    /// que va a llegar al store, y tiene que llevar la negativa puesta.
+    func testClosedFlowCarriesItsServerAnswer() async {
+        let table = FlowTable(config: .init(), clock: ManualClock())
+        let opening = FlowFixtures.tcp(source: local(51000), destination: remote(443))
+        let reset = FlowFixtures.tcp(source: local(51000), destination: remote(443), flags: [.rst])
+        _ = await table.observe(opening, direction: .outbound, length: 60, resolvedName: nil)
+
+        await table.setServerTLS(.refused(alert: 70), for: opening.flowKey)
+        _ = await table.observe(reset, direction: .outbound, length: 60, resolvedName: nil)
+
+        let closed = await table.drainClosed()
+        XCTAssertEqual(closed.first?.serverTLS, .refused(alert: 70))
+    }
+
     // MARK: - Nombre resuelto por DNS
 
     /// El nombre se fija al crear el flujo: el que llega con sus paquetes siguientes no lo cambia.

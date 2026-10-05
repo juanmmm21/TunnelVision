@@ -68,7 +68,8 @@ final class CodableRoundTripTests: XCTestCase {
             packetCount: 12,
             tlsStatus: .inspected,
             sni: "example.com",
-            resolvedName: nil
+            resolvedName: nil,
+            serverTLS: nil
         )
         try roundTrip(withSNI)
 
@@ -83,7 +84,8 @@ final class CodableRoundTripTests: XCTestCase {
             packetCount: 1,
             tlsStatus: .encrypted,
             sni: nil,
-            resolvedName: nil
+            resolvedName: nil,
+            serverTLS: nil
         )
         try roundTrip(withoutSNI)
 
@@ -98,9 +100,19 @@ final class CodableRoundTripTests: XCTestCase {
             packetCount: 1,
             tlsStatus: .plaintext,
             sni: nil,
-            resolvedName: ResolvedFlowName(name: "api.example.com", otherNames: ["cdn.example.net"])
+            resolvedName: ResolvedFlowName(name: "api.example.com", otherNames: ["cdn.example.net"]),
+            serverTLS: nil
         )
         try roundTrip(named)
+
+        // Y lo que el servidor contestó, en sus dos formas.
+        var answered = withSNI
+        answered.serverTLS = .negotiated(
+            NegotiatedTLS(version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1301), fromHelloRetryRequest: true)
+        )
+        try roundTrip(answered)
+        answered.serverTLS = .refused(alert: 70)
+        try roundTrip(answered)
     }
 
     func testPacketMetaEquatableAndHashable() {

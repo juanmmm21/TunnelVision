@@ -146,6 +146,34 @@ final class FlowStoreTests: XCTestCase {
         XCTAssertEqual(flow.name?.origin, .sni)
     }
 
+    /// La v8 tampoco toca filas: un flujo de antes sigue ahí, con su nombre y sin respuesta TLS.
+    func testMigrationV8KeepsEarlierFlowsAndLeavesThemWithoutAServerAnswer() async throws {
+        let legacy = try DatabaseQueue(path: dbURL.path)
+        try Schema.migrator().migrate(legacy, upTo: "v7")
+        try await legacy.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO flows
+                    (session, proto, addr_a, port_a, addr_b, port_b,
+                     first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni, dns_name)
+                VALUES (0, 6, ?, 51000, ?, 443, 100, 200, 0, 0, 1, 1, 'example.com', 'api.example.com')
+                """,
+                arguments: [
+                    Data(PersistenceFixtures.deviceIP.bytes),
+                    Data(ModelFixtures.v4(1, 1, 1, 1).bytes),
+                ]
+            )
+        }
+        try legacy.close()
+
+        let store = try makeStore()
+        let flows = try await store.recentFlows(limit: 10)
+        let flow = try XCTUnwrap(flows.first)
+        XCTAssertEqual(flow.sni, "example.com")
+        XCTAssertEqual(flow.resolvedName?.name, "api.example.com")
+        XCTAssertNil(flow.serverTLS)
+    }
+
     // MARK: - Fechado
 
     func testStampsAreStoredAsWallClockTime() async throws {
@@ -244,6 +272,175 @@ final class FlowStoreTests: XCTestCase {
         XCTAssertEqual(flow.bytesOut, 5_000)
         XCTAssertEqual(flow.packetCount, 50)
         XCTAssertEqual(flow.lastSeen, PersistenceFixtures.date(1_050))
+    }
+
+    // MARK: - Respuesta TLS del servidor
+
+    private static let tls13 = ServerTLSAnswer.negotiated(
+        NegotiatedTLS(version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1301), fromHelloRetryRequest: false)
+    )
+
+    private func storeAndReadBack(_ answer: ServerTLSAnswer?) async throws -> StoredFlow {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(
+                remote: ModelFixtures.v4(93, 184, 216, 34), firstSeen: 1, lastSeen: 2, serverTLS: answer
+            )
+        )
+        let stored = try await store.flow(id: id)
+        return try XCTUnwrap(stored)
+    }
+
+    func testANegotiatedAnswerRoundTrips() async throws {
+        let flow = try await storeAndReadBack(Self.tls13)
+
+        XCTAssertEqual(flow.serverTLS, Self.tls13)
+    }
+
+    /// Que salió de un HelloRetryRequest es parte de la lectura y vuelve con ella.
+    func testTheHelloRetryMarkRoundTrips() async throws {
+        let answer = ServerTLSAnswer.negotiated(
+            NegotiatedTLS(version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1302), fromHelloRetryRequest: true)
+        )
+
+        let flow = try await storeAndReadBack(answer)
+
+        XCTAssertEqual(flow.serverTLS, answer)
+    }
+
+    /// Los valores son los del cable: uno que no existe en ninguna tabla vuelve tal cual, incluidos
+    /// los extremos del rango.
+    func testUnpublishedVersionsAndSuitesRoundTripAsSent() async throws {
+        let answer = ServerTLSAnswer.negotiated(
+            NegotiatedTLS(
+                version: TLSProtocolVersion(rawValue: 0xFFFF),
+                cipherSuite: TLSCipherSuite(rawValue: 0x0000),
+                fromHelloRetryRequest: false
+            )
+        )
+
+        let flow = try await storeAndReadBack(answer)
+
+        XCTAssertEqual(flow.serverTLS, answer)
+    }
+
+    func testARefusalRoundTripsWithItsAlertCode() async throws {
+        let flow = try await storeAndReadBack(.refused(alert: 70))
+
+        XCTAssertEqual(flow.serverTLS, .refused(alert: 70))
+    }
+
+    /// La alerta 0 (`close_notify`) es un código válido y no puede leerse como «sin alerta».
+    func testARefusalWithAlertZeroIsStillARefusal() async throws {
+        let flow = try await storeAndReadBack(.refused(alert: 0))
+
+        XCTAssertEqual(flow.serverTLS, .refused(alert: 0))
+    }
+
+    func testAFlowWithoutAServerAnswerReadsBackWithoutOne() async throws {
+        let flow = try await storeAndReadBack(nil)
+
+        XCTAssertNil(flow.serverTLS)
+    }
+
+    /// Todas las lecturas de flujos traen la respuesta, no solo la que va por id.
+    func testEveryFlowQueryReturnsTheServerAnswer() async throws {
+        let store = try makeStore()
+        let record = PersistenceFixtures.flow(
+            remote: ModelFixtures.v4(93, 184, 216, 34), firstSeen: 1, lastSeen: 2, serverTLS: Self.tls13
+        )
+
+        let id = try await store.upsertFlow(record)
+
+        let byID = try await store.flow(id: id)
+        let byKey = try await store.flow(matching: record.key)
+        let recent = try await store.recentFlows(limit: 10)
+        XCTAssertEqual(byID?.serverTLS, Self.tls13)
+        XCTAssertEqual(byKey?.serverTLS, Self.tls13)
+        XCTAssertEqual(recent.map(\.serverTLS), [Self.tls13])
+    }
+
+    /// El ServerHello se lee una vez. Un flujo que la tabla en memoria vuelve a crear llega sin
+    /// respuesta, y eso no puede borrar la que la fila ya tenía.
+    func testARecordWithoutAnAnswerDoesNotEraseTheOneTheRowHas() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 2, serverTLS: Self.tls13)
+        )
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 9, serverTLS: nil)
+        )
+
+        let stored = try await store.flow(id: id)
+        let flow = try XCTUnwrap(stored)
+        XCTAssertEqual(flow.serverTLS, Self.tls13)
+        XCTAssertEqual(flow.lastSeen, PersistenceFixtures.date(9), "lo demás sí se actualiza")
+    }
+
+    /// Y una respuesta nueva sustituye a la anterior **entera**: no queda la versión de una
+    /// negociación bajo la alerta de otra, ni al revés.
+    func testANewAnswerReplacesThePreviousOneWhole() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 2, serverTLS: Self.tls13)
+        )
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 5, serverTLS: .refused(alert: 40))
+        )
+        let refused = try await store.flow(id: id)
+        XCTAssertEqual(refused?.serverTLS, .refused(alert: 40))
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 9, serverTLS: Self.tls13)
+        )
+        let negotiated = try await store.flow(id: id)
+        XCTAssertEqual(negotiated?.serverTLS, Self.tls13)
+    }
+
+    /// Una versión sin suite no la escribe este store: es una fila corrupta, y se dice en vez de
+    /// inventar la mitad que falta.
+    func testAVersionWithoutASuiteIsACorruptRow() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: ModelFixtures.v4(93, 184, 216, 34), firstSeen: 1, lastSeen: 2)
+        )
+        let raw = try DatabaseQueue(path: dbURL.path)
+        try await raw.write { db in
+            try db.execute(sql: "UPDATE flows SET tls_version = 772 WHERE id = ?", arguments: [id])
+        }
+        try raw.close()
+
+        do {
+            _ = try await store.flow(id: id)
+            XCTFail("una fila con la respuesta a medias no puede leerse como buena")
+        } catch FlowStore.StoreError.corruptRow {
+            // Lo esperado.
+        }
+    }
+
+    func testAnAnswerOutOfTheWireRangeIsACorruptRow() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: ModelFixtures.v4(93, 184, 216, 34), firstSeen: 1, lastSeen: 2)
+        )
+        let raw = try DatabaseQueue(path: dbURL.path)
+        try await raw.write { db in
+            try db.execute(
+                sql: "UPDATE flows SET tls_version = 70000, tls_cipher_suite = 4865 WHERE id = ?", arguments: [id]
+            )
+        }
+        try raw.close()
+
+        do {
+            _ = try await store.flow(id: id)
+            XCTFail("un valor que no cabe en dos bytes no salió de un ServerHello")
+        } catch FlowStore.StoreError.corruptRow {
+            // Lo esperado.
+        }
     }
 
     // MARK: - Nombre resuelto por DNS

@@ -109,6 +109,9 @@ final class ControlChannelTests: XCTestCase {
         relay.tcpResetsToDevice = 3
         relay.sniObserved = 40
         relay.sniUnavailable = 15
+        relay.serverHelloObserved = 36
+        relay.serverHelloRefused = 1
+        relay.serverHelloUnavailable = 3
         relay.inspectionCandidates = 30
         relay.terminationsOpened = 20
         relay.inspectionsAbandoned = 8
