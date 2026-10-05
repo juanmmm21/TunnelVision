@@ -1185,6 +1185,29 @@ public enum SettingsPresentation {
             )
         }
 
+        // La evidencia de auditoría se nombra aparte por lo mismo que lo descifrado, y con más
+        // razón: es lo único del dispositivo que la limpieza automática no toca nunca, así que
+        // quien llega aquí puede dar por hecho que también sobrevive a esto. No sobrevive.
+        if let usage, usage.auditFlowCount > 0 {
+            sentences.append(
+                String(
+                    localized: "settings.clear.confirm.auditEvidence",
+                    defaultValue: """
+                        That includes the evidence of your audit sessions \
+                        (\(DisplayFormat.count(UInt64(usage.auditFlowCount))) connections): the \
+                        sessions stay, with nothing left to export.
+                        """,
+                    comment: """
+                        Sentence of the delete-everything dialog when some saved connections \
+                        belong to an audit session. The placeholder is how many, already grouped. \
+                        Automatic cleanup never deletes audit evidence, so a reader may assume \
+                        this action spares it too; it does not, and the session records survive \
+                        empty.
+                        """
+                )
+            )
+        }
+
         if isMonitoring {
             // Nombra la pantalla de capturas leyendo **su** clave: una instrucción que nombra un sitio
             // al que el usuario tiene que ir no puede llamarlo de otra manera que la propia pestaña.

@@ -55,7 +55,11 @@ struct CapturesView: View {
                     }
                     Button(CommonCopy.cancel, role: .cancel) {}
                 } message: { file in
-                    Text(CapturesPresentation.deletionPrompt(for: file))
+                    Text(
+                        CapturesPresentation.deletionPrompt(
+                            for: file, evidence: viewModel.evidenceStanding(ofSequence: file.sequence)
+                        )
+                    )
                 }
         }
         .task {

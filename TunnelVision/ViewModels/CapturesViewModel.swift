@@ -203,6 +203,12 @@ public final class CapturesViewModel {
     /// Borra un fichero. Se niega con el que está abierto: la vista ya no ofrece el gesto, pero la
     /// regla vive aquí porque la consecuencia (la extensión escribiendo en un fichero sin nombre) es
     /// del dominio y no del dibujo.
+    /// Si una captura guarda evidencia de auditoría, para que el diálogo de borrado lo diga.
+    public func evidenceStanding(ofSequence sequence: UInt32) -> CaptureEvidenceStanding {
+        guard let evidenceSequences else { return .unknown }
+        return evidenceSequences.contains(sequence) ? .held : .none
+    }
+
     public func delete(sequence: UInt32) async {
         guard activity == .idle else { return }
         guard rows.first(where: { $0.sequence == sequence })?.isActionable ?? false else {

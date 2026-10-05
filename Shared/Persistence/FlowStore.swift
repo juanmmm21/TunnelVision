@@ -391,6 +391,14 @@ public actor FlowStore {
         }
     }
 
+    /// Cuántos flujos son evidencia de **alguna** sesión de auditoría. Es lo que tiene que poder
+    /// decir quien vaya a vaciar el historial entero, antes de hacerlo.
+    public func auditFlowCount() throws -> Int {
+        try dbPool.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM flows WHERE audit_session_id IS NOT NULL") ?? 0
+        }
+    }
+
     /// Cuántos flujos lleva una sesión de auditoría. Es la cifra que su pantalla enseña mientras
     /// graba: sin ella no hay forma de ver que el etiquetado está pasando.
     public func flowCount(inAuditSession id: Int64) throws -> Int {

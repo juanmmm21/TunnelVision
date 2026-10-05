@@ -71,10 +71,12 @@ public actor StorageManager {
         var historyBytes: UInt64 = 0
         var historyFlowCount = 0
         var plaintextChunkCount = 0
+        var auditFlowCount = 0
         if let store = try? openStore() {
             historyBytes = UInt64(max(0, (try? await store.totalBytesOnDisk()) ?? 0))
             historyFlowCount = (try? await store.flowCount()) ?? 0
             plaintextChunkCount = (try? await store.plaintextChunkCount()) ?? 0
+            auditFlowCount = (try? await store.auditFlowCount()) ?? 0
         }
         return StorageUsage(
             captureBytes: files.reduce(UInt64(0)) { $0 + $1.byteCount },
@@ -82,7 +84,8 @@ public actor StorageManager {
             historyBytes: historyBytes,
             historyFlowCount: historyFlowCount,
             plaintextBytes: plaintextBytesOnDisk(),
-            plaintextChunkCount: plaintextChunkCount
+            plaintextChunkCount: plaintextChunkCount,
+            auditFlowCount: auditFlowCount
         )
     }
 

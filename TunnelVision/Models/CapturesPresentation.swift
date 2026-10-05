@@ -50,6 +50,16 @@ public enum CapturesContent: Sendable, Equatable {
 /// datos se formatea de forma **determinista** a propósito (`DisplayFormat`, para que la etiqueta no
 /// baile ni dependa de la región), mientras que un instante sí debe salir en el formato del
 /// dispositivo del usuario, y eso lo hace la vista.
+/// Qué se sabe de si una captura guarda evidencia de una sesión de auditoría.
+///
+/// Son tres y no un `Bool` porque «no se pudo saber» no es «no»: el historial es quien lo dice, y
+/// si no se deja leer, callarlo sería prometer que el fichero no tiene nada que perder.
+public enum CaptureEvidenceStanding: Sendable, Equatable {
+    case none
+    case held
+    case unknown
+}
+
 public struct CaptureFileDisplay: Sendable, Equatable, Identifiable {
 
     public var id: UInt32 { sequence }
@@ -889,7 +899,62 @@ public enum CapturesPresentation {
 
     /// Lo que hay que decirle al usuario **antes** de borrar. La consecuencia real no es obvia y no
     /// se puede deshacer, así que se nombra entera: se van los bytes, se queda el historial.
-    public static func deletionPrompt(for file: CaptureFileDisplay) -> String {
+    ///
+    /// Y si el fichero guarda evidencia de una sesión de auditoría, **eso también se dice**: la
+    /// limpieza automática no la toca nunca, así que el borrado a mano es el único camino por el que
+    /// se pierde, y hasta ahora se la llevaba como a cualquier otro fichero, sin nombrarla.
+    public static func deletionPrompt(for file: CaptureFileDisplay, evidence: CaptureEvidenceStanding) -> String {
+        let base = deletionPrompt(for: file)
+        switch evidence {
+        case .none:
+            return base
+        case .held:
+            let warning = String(
+                localized: "captures.delete.confirm.evidence",
+                defaultValue: """
+                    This capture holds packets of an audit session. Deleting it removes that \
+                    evidence: the session keeps its connections, but its packets can no longer be \
+                    exported.
+                    """,
+                comment: """
+                    Extra paragraph of the confirmation dialog for deleting one capture, shown \
+                    when the capture holds traffic recorded during an audit session. Automatic \
+                    cleanup never deletes such a capture, so this dialog is the only place where \
+                    that evidence can be lost, and it has to say so before it happens.
+                    """
+            )
+            return paragraphs(warning, base)
+        case .unknown:
+            let warning = String(
+                localized: "captures.delete.confirm.evidenceUnknown",
+                defaultValue: """
+                    Your history couldn't be read, so this can't tell whether this capture holds \
+                    packets of an audit session. If it does, deleting it removes that evidence.
+                    """,
+                comment: """
+                    Extra paragraph of the confirmation dialog for deleting one capture, shown \
+                    when the history database could not be read and so it is not known whether \
+                    the capture holds audit evidence. It must not claim either way.
+                    """
+            )
+            return paragraphs(warning, base)
+        }
+    }
+
+    /// Dos párrafos de un diálogo. El salto lo pone el catálogo y no una concatenación aquí: cómo
+    /// se separan dos párrafos es lo único de esto que un idioma podría querer distinto.
+    private static func paragraphs(_ first: String, _ second: String) -> String {
+        String(
+            localized: "captures.delete.confirm.paragraphs",
+            defaultValue: "\(first)\n\n\(second)",
+            comment: """
+                Joins the two paragraphs of the delete-capture dialog: the audit-evidence warning \
+                first, then the standard explanation. Only the separation between them is ours.
+                """
+        )
+    }
+
+    private static func deletionPrompt(for file: CaptureFileDisplay) -> String {
         String(
             localized: "captures.delete.confirm.message",
             defaultValue: """

@@ -40,13 +40,18 @@ public struct StorageUsage: Sendable, Equatable {
     /// filas y ningún fichero sigue siendo contenido guardado a efectos de lo que se puede leer.
     public let plaintextChunkCount: Int
 
+    /// Cuántas de las conexiones guardadas son evidencia de una sesión de auditoría. La limpieza
+    /// automática no las toca; el borrado total sí, y por eso tiene que poder contarlas antes.
+    public let auditFlowCount: Int
+
     public init(
         captureBytes: UInt64,
         captureFileCount: Int,
         historyBytes: UInt64,
         historyFlowCount: Int,
         plaintextBytes: UInt64 = 0,
-        plaintextChunkCount: Int = 0
+        plaintextChunkCount: Int = 0,
+        auditFlowCount: Int = 0
     ) {
         self.captureBytes = captureBytes
         self.captureFileCount = captureFileCount
@@ -54,6 +59,7 @@ public struct StorageUsage: Sendable, Equatable {
         self.historyFlowCount = historyFlowCount
         self.plaintextBytes = plaintextBytes
         self.plaintextChunkCount = plaintextChunkCount
+        self.auditFlowCount = auditFlowCount
     }
 
     public var totalBytes: UInt64 { captureBytes + historyBytes + plaintextBytes }

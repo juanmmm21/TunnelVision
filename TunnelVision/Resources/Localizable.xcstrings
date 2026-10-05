@@ -1729,6 +1729,30 @@
         }
       }
     },
+    "captures.delete.confirm.evidence" : {
+      "comment" : "Extra paragraph of the confirmation dialog for deleting one capture, shown when the capture holds traffic recorded during an audit session. Automatic cleanup never deletes such a capture, so this dialog is the only place where that evidence can be lost, and it has to say so before it happens.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This capture holds packets of an audit session. Deleting it removes that evidence: the session keeps its connections, but its packets can no longer be exported."
+          }
+        }
+      }
+    },
+    "captures.delete.confirm.evidenceUnknown" : {
+      "comment" : "Extra paragraph of the confirmation dialog for deleting one capture, shown when the history database could not be read and so it is not known whether the capture holds audit evidence. It must not claim either way.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Your history couldn't be read, so this can't tell whether this capture holds packets of an audit session. If it does, deleting it removes that evidence."
+          }
+        }
+      }
+    },
     "captures.delete.confirm.message" : {
       "comment" : "Body of the confirmation dialog for deleting one capture. The placeholders are that capture's name and how much it occupies. Both halves matter: what is lost (the packet bytes, for good) and what is not (the connections, which stay in the history) — a reader who takes 'delete' to mean the history would keep the file out of fear.",
       "extractionState" : "extracted_with_value",
@@ -1737,6 +1761,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "%1$@ holds %2$@ of raw packets. The connections recorded while it was being written stay in your history — only the packet bytes are deleted, and they can't be brought back."
+          }
+        }
+      }
+    },
+    "captures.delete.confirm.paragraphs" : {
+      "comment" : "Joins the two paragraphs of the delete-capture dialog: the audit-evidence warning first, then the standard explanation. Only the separation between them is ours.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@\n\n%2$@"
           }
         }
       }
@@ -6885,6 +6921,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Delete everything"
+          }
+        }
+      }
+    },
+    "settings.clear.confirm.auditEvidence" : {
+      "comment" : "Sentence of the delete-everything dialog when some saved connections belong to an audit session. The placeholder is how many, already grouped. Automatic cleanup never deletes audit evidence, so a reader may assume this action spares it too; it does not, and the session records survive empty.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "That includes the evidence of your audit sessions (%@ connections): the sessions stay, with nothing left to export."
           }
         }
       }
