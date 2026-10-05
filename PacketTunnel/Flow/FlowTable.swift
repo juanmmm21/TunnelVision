@@ -110,6 +110,16 @@ public actor FlowTable {
         nodes[key]?.sni = sni
     }
 
+    /// Anota lo que el servidor contestó al ClientHello del flujo —la versión y la suite que eligió,
+    /// o la alerta con la que se negó—, que el relay lee del stream entrante
+    /// (`Relay.readServerHello`). No-op si el flujo ya no está en la tabla.
+    ///
+    /// Tampoco toca el estado de inspección, por lo mismo que `setSNI`: es otra lectura de bytes
+    /// que viajan en claro.
+    public func setServerTLS(_ answer: ServerTLSAnswer, for key: FlowKey) {
+        nodes[key]?.serverTLS = answer
+    }
+
     /// El agregado actual de un flujo vivo, o `nil` si la tabla ya no lo tiene.
     ///
     /// Existe para el contenido descifrado: un trozo llega del relay con la `FlowKey` y sin paquete
@@ -251,6 +261,7 @@ public actor FlowTable {
         var tlsStatus: TLSInspectionStatus
         var sni: String?
         let resolvedName: ResolvedFlowName?
+        var serverTLS: ServerTLSAnswer?
         var reassembler: TCPReassembler?
         var finOutbound: Bool
         var finInbound: Bool
@@ -277,6 +288,7 @@ public actor FlowTable {
             self.tlsStatus = tlsStatus
             self.sni = nil
             self.resolvedName = resolvedName
+            self.serverTLS = nil
             self.reassembler = nil
             self.finOutbound = false
             self.finInbound = false
@@ -296,7 +308,8 @@ public actor FlowTable {
                 packetCount: packetCount,
                 tlsStatus: tlsStatus,
                 sni: sni,
-                resolvedName: resolvedName
+                resolvedName: resolvedName,
+                serverTLS: serverTLS
             )
         }
     }

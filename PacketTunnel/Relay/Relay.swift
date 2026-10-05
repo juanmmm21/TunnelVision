@@ -25,7 +25,9 @@ import Shared
 /// De paso —y solo porque los bytes ya pasan por aquí en orden— el relay **le lee el nombre** a los
 /// flujos TLS: el SNI del ClientHello, que viaja en claro, sale por `SNIObserving` hacia quien lleva
 /// la tabla de flujos. Es lo que hace que la app diga con *quién* habló el dispositivo en vez de con
-/// qué dirección, y no descifra nada (`readHandshake`).
+/// qué dirección, y no descifra nada (`readHandshake`). Y por lo mismo, en el otro sentido, **le lee
+/// la respuesta del servidor**: la versión de TLS y la suite de su ServerHello, que también viajan
+/// en claro y salen por `ServerTLSObserving` (`readServerHello`).
 ///
 /// ## Inspección TLS (opt-in): la conexión saliente se **sustituye**
 ///
@@ -61,6 +63,9 @@ public actor Relay {
     /// nada: guardar bytes de handshake de un flujo que nadie va a nombrar sería memoria de la
     /// extensión gastada a cambio de nada.
     private let sniObserver: (any SNIObserving)?
+    /// Quien recoge lo que el servidor contestó al ClientHello. Sin observador tampoco se escanea
+    /// el stream entrante, por la misma cuenta de memoria.
+    private let serverTLSObserver: (any ServerTLSObserving)?
     /// Quien construye las terminaciones TLS. Sin interceptor no hay inspección posible, así que un
     /// flujo candidato se comporta exactamente como uno de passthrough.
     private let inspector: (any FlowInspecting)?
@@ -123,6 +128,11 @@ public actor Relay {
         /// cuanto lo da (o en cuanto se sabe que no lo dará), que es lo que hace que el resto del
         /// stream —ya cifrado— no se vuelva a mirar.
         var handshake: ClientHelloScanner?
+        /// Lector del ServerHello, el gemelo del anterior para el stream entrante. Existe **solo
+        /// mientras la conexión del flujo sea la del servidor de verdad** y aún no haya contestado:
+        /// cuando una terminación la sustituye se suelta, porque desde entonces lo que llega es el
+        /// ServerHello de nuestro leaf y leerlo sería apuntarle al servidor lo que elegimos nosotros.
+        var serverHello: ServerHelloScanner?
         var inspection: Inspection = .off
         /// El dispositivo ya mandó su FIN. Se anota en vez de trasladarse cuando el flujo está
         /// reteniendo bytes: el EOF va **detrás** de lo retenido, y lo aplica quien acabe soltándolo.
@@ -161,6 +171,7 @@ public actor Relay {
         reinject: @escaping @Sendable ([Data], [NSNumber]) -> Void,
         connectionFactory: RelayConnectionFactory = NetworkConnectionFactory(),
         sniObserver: (any SNIObserving)? = nil,
+        serverTLSObserver: (any ServerTLSObserving)? = nil,
         inspector: (any FlowInspecting)? = nil,
         statusObserver: (any TLSStatusObserving)? = nil,
         plaintextObserver: (any PlaintextObserving)? = nil,
@@ -171,6 +182,7 @@ public actor Relay {
         self.reinject = reinject
         self.factory = connectionFactory
         self.sniObserver = sniObserver
+        self.serverTLSObserver = serverTLSObserver
         self.inspector = inspector
         self.statusObserver = statusObserver
         self.plaintextObserver = plaintextObserver
@@ -324,6 +336,7 @@ public actor Relay {
                 localEndpoint: packet.source,
                 remoteEndpoint: packet.destination,
                 handshake: readsHandshake ? ClientHelloScanner() : nil,
+                serverHello: isTLSPort ? makeServerHelloScanner() : nil,
                 inspection: inspects ? .scanning(held: Data()) : .off
             )
             counters.tcpFlowsOpened &+= 1
@@ -357,6 +370,9 @@ public actor Relay {
         closeRollbackWindow(for: key)
         let actions = mutateFlow(key) { $0.receiveFromServer(bytes) }
         execute(actions, for: key)
+        // Después de entregarlo, nunca antes, igual que con el nombre: leer la respuesta es
+        // metadato y no puede meterse delante de los bytes que el dispositivo está esperando.
+        readServerHello(bytes, for: key)
     }
 
     /// La conexión saliente TCP terminó. `nil` es un cierre limpio / EOF de recepción (FIN del
@@ -580,6 +596,54 @@ public actor Relay {
         }
     }
 
+    // MARK: - Respuesta del servidor (ServerHello)
+
+    /// Alimenta el lector del ServerHello con los bytes que acaban de llegar del servidor.
+    ///
+    /// Se lee aquí por la misma razón que el ClientHello: `onReceive` de la conexión saliente
+    /// entrega el stream **en orden**, y en TLS 1.2 el record que lleva el ServerHello lleva detrás
+    /// el certificado y no cabe en un segmento. Y tampoco descifra nada: el ServerHello va antes de
+    /// que exista ninguna clave.
+    ///
+    /// **Solo lee al servidor de verdad.** El lector no existe mientras la conexión del flujo sea
+    /// una terminación (`install` lo suelta), así que lo que nuestra pata TLS le manda al
+    /// dispositivo no pasa nunca por aquí. La cifra de un flujo inspeccionado es la que negocia la
+    /// conexión de subida, y esa no se saca de un stream.
+    private func readServerHello(_ data: Data, for key: FlowKey) {
+        guard var state = tcpFlows[key], var scanner = state.serverHello else { return }
+
+        let outcome = scanner.scan(data)
+        let answer: ServerTLSAnswer?
+        switch outcome {
+        case .needMoreBytes:
+            state.serverHello = scanner
+            tcpFlows[key] = state
+            return
+        case .found(let negotiated):
+            counters.serverHelloObserved &+= 1
+            answer = .negotiated(negotiated)
+        case .unavailable(.alert(let description)):
+            counters.serverHelloRefused &+= 1
+            answer = .refused(alert: description)
+        case .unavailable(.notTLSHandshake), .unavailable(.notServerHello),
+             .unavailable(.malformed), .unavailable(.tooLarge):
+            counters.serverHelloUnavailable &+= 1
+            answer = nil
+        }
+        state.serverHello = nil
+        tcpFlows[key] = state
+
+        if let answer, let serverTLSObserver {
+            Task { await serverTLSObserver.observe(serverTLS: answer, for: key) }
+        }
+    }
+
+    /// Un lector nuevo para un flujo cuya conexión es —o vuelve a ser— la del servidor de verdad, o
+    /// `nil` si no hay a quién contarle lo que lea.
+    private func makeServerHelloScanner() -> ServerHelloScanner? {
+        serverTLSObserver == nil ? nil : ServerHelloScanner()
+    }
+
     // MARK: - Inspección TLS
 
     /// Hay nombre, así que se puede pedir la terminación.
@@ -652,6 +716,8 @@ public actor Relay {
         // Lo retenido se le entrega a la terminación **y** se conserva: hasta que el dispositivo
         // reciba el primer byte suyo, esto es lo único que hace falta para deshacer el cambio.
         state.inspection = .terminating(rollback: held)
+        // Desde aquí el stream entrante es el de nuestra terminación, no el del servidor.
+        state.serverHello = nil
         tcpFlows[key] = state
         counters.terminationsOpened &+= 1
 
@@ -697,6 +763,9 @@ public actor Relay {
         state.epoch &+= 1
         let connection = factory.makeTCPConnection(to: state.remoteEndpoint)
         state.connection = connection
+        // La conexión nueva sí es la del servidor, y va a recibir el ClientHello entero: su
+        // ServerHello es el de verdad y se lee desde el principio.
+        state.serverHello = makeServerHelloScanner()
         tcpFlows[key] = state
         counters.terminationsRolledBack &+= 1
 

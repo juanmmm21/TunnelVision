@@ -227,7 +227,8 @@ public struct FixtureFlow: Sendable, Equatable {
             packetCount: UInt64(packets.count),
             tlsStatus: tlsStatus,
             sni: sni,
-            resolvedName: nil
+            resolvedName: nil,
+            serverTLS: nil
         )
     }
 }

@@ -48,6 +48,11 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
     /// Se fija al crear el flujo y no cambia aunque después pase otra respuesta.
     public var resolvedName: ResolvedFlowName?
 
+    /// Lo que el servidor contestó al ClientHello —versión y suite, o una alerta—, leído del
+    /// ServerHello en claro. `nil` si no hubo lectura: el flujo no era TLS sobre TCP/443, el stream
+    /// no se dejó leer, o la respuesta aún no ha llegado.
+    public var serverTLS: ServerTLSAnswer?
+
     public init(
         id: Int64,
         key: FlowKey,
@@ -58,7 +63,8 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
         packetCount: UInt64,
         tlsStatus: TLSInspectionStatus,
         sni: String?,
-        resolvedName: ResolvedFlowName?
+        resolvedName: ResolvedFlowName?,
+        serverTLS: ServerTLSAnswer?
     ) {
         self.id = id
         self.key = key
@@ -70,6 +76,7 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
         self.tlsStatus = tlsStatus
         self.sni = sni
         self.resolvedName = resolvedName
+        self.serverTLS = serverTLS
     }
 
     /// El nombre del flujo con su origen: el SNI si lo anunció, y si no el que se dedujo del DNS.

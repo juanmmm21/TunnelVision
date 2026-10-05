@@ -30,6 +30,10 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
     /// `dns_name` / `dns_other_names`). Nunca es el `sni`: son dos hechos distintos.
     public let resolvedName: ResolvedFlowName?
 
+    /// Lo que el servidor contestó al ClientHello (columnas `tls_version`, `tls_cipher_suite`,
+    /// `tls_hello_retry` y `tls_alert`), o `nil` si no hubo lectura.
+    public let serverTLS: ServerTLSAnswer?
+
     public init(
         id: Int64,
         key: FlowKey,
@@ -40,7 +44,8 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
         packetCount: UInt64,
         tlsStatus: TLSInspectionStatus,
         sni: String?,
-        resolvedName: ResolvedFlowName?
+        resolvedName: ResolvedFlowName?,
+        serverTLS: ServerTLSAnswer?
     ) {
         self.id = id
         self.key = key
@@ -52,6 +57,7 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
         self.tlsStatus = tlsStatus
         self.sni = sni
         self.resolvedName = resolvedName
+        self.serverTLS = serverTLS
     }
 
     /// El nombre del flujo con su origen: el SNI si lo anunció, y si no el que se dedujo del DNS.

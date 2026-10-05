@@ -616,6 +616,7 @@ actor TunnelRuntime {
                 }
             }
         }, sniObserver: pipeline,
+           serverTLSObserver: pipeline,
            inspector: Self.makeInspector(),
            statusObserver: pipeline,
            // El pipeline recoge también el contenido descifrado, porque la fila que lo indexa cuelga

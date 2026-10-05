@@ -454,6 +454,18 @@ public actor PacketPipeline {
         await flowTable.setSNI(sni, for: key)
     }
 
+    // MARK: - Respuesta TLS del servidor de un flujo
+
+    /// Anota lo que el servidor contestó al ClientHello de un flujo: la versión y la suite que
+    /// eligió, o la alerta con la que se negó. Lo lee el relay del stream entrante —el ServerHello
+    /// viaja en claro— y llega aquí por la misma razón que el nombre.
+    ///
+    /// Tampoco hay que escribir nada al store: el siguiente paquete del flujo, o su record de
+    /// cierre, ya lo traen puesto.
+    public func observe(serverTLS: ServerTLSAnswer, for key: FlowKey) async {
+        await flowTable.setServerTLS(serverTLS, for: key)
+    }
+
     // MARK: - Desenlace de la inspección de un flujo
 
     /// Anota cómo acabó el intento de inspeccionar un flujo: `inspected` si se descifró de punta a
@@ -605,6 +617,9 @@ public actor PacketPipeline {
 /// El pipeline es quien recoge los nombres que el relay lee del handshake: es el dueño de la tabla
 /// de flujos, que es donde un nombre significa algo.
 extension PacketPipeline: SNIObserving {}
+
+/// Y lo que el servidor contestó, que es la otra mitad en claro del mismo handshake.
+extension PacketPipeline: ServerTLSObserving {}
 
 /// Y por lo mismo recoge el desenlace de las terminaciones TLS. Son dos costuras y no una porque son
 /// dos hechos distintos: tener nombre no es haber sido inspeccionado.

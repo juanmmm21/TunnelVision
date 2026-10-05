@@ -251,6 +251,25 @@ public enum Schema {
             }
         }
 
+        // v8 — lo que el **servidor contestó** al ClientHello de un flujo: la versión y la suite de
+        // su ServerHello, o la alerta con la que se negó.
+        //
+        // Son los valores del cable, enteros sin tabla detrás: los elige el otro extremo, y un
+        // borrador o una suite sin asignar es evidencia que se guarda como llegó. Las cuatro son
+        // `NULL` en un flujo sin lectura, que no es lo mismo que una lectura con malas noticias:
+        // `tls_alert` existe para que «el servidor se negó» no se confunda con «no se miró».
+        migrator.registerMigration("v8") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "tls_version", .integer)
+                t.add(column: "tls_cipher_suite", .integer)
+                // 1 si la versión y la suite salieron de un HelloRetryRequest y no del ServerHello
+                // definitivo. `NULL` cuando no hay versión de la que decirlo.
+                t.add(column: "tls_hello_retry", .integer)
+                // El código de la alerta. Excluye a las otras tres: o negoció o se negó.
+                t.add(column: "tls_alert", .integer)
+            }
+        }
+
         return migrator
     }
 }
