@@ -205,6 +205,14 @@ Three things this deliberately does **not** cover:
 - **What the user deletes by hand is still deleted**: a capture removed on the Captures screen, or
   *Delete everything* in Settings (`clearAll()` keeps projects and sessions, and empties them). The
   exemption is from the automatic sweep, not from the owner of the device.
+  **But neither does it happen unsaid** (2026-10-05): both confirmations name the evidence before it
+  goes. Deleting one capture asks the history whether it holds packets of an audit session
+  (`CaptureEvidenceStanding`: `held` / `none` / `unknown`) and, when it does, opens with that — the
+  session keeps its connections, its packets can no longer be exported; when the history cannot be
+  read it says it cannot tell, rather than implying there is nothing to lose. *Delete everything*
+  counts the connections that belong to any session (`FlowStore.auditFlowCount`, carried in
+  `StorageUsage`) and says that the sessions stay with nothing left to export. They are the only two
+  places where evidence can be lost, since the sweep never takes it.
 - **A capture file with no successor is not aged out anyway**, evidence or not — the planner's
   existing rule.
 
