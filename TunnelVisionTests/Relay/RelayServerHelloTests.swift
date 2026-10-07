@@ -117,7 +117,7 @@ final class RelayServerHelloTests: XCTestCase {
         XCTAssertEqual(
             observed.answer,
             .negotiated(NegotiatedTLS(
-                version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1302), fromHelloRetryRequest: false
+                version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1302), fromHelloRetryRequest: false, source: .serverHello
             ))
         )
         let stats = await h.relay.stats
@@ -146,7 +146,7 @@ final class RelayServerHelloTests: XCTestCase {
         XCTAssertEqual(
             observed.answer,
             .negotiated(NegotiatedTLS(
-                version: .tls12, cipherSuite: TLSCipherSuite(rawValue: 0xC030), fromHelloRetryRequest: false
+                version: .tls12, cipherSuite: TLSCipherSuite(rawValue: 0xC030), fromHelloRetryRequest: false, source: .serverHello
             ))
         )
     }
@@ -302,7 +302,7 @@ final class RelayServerHelloTests: XCTestCase {
         XCTAssertEqual(
             observed.answer,
             .negotiated(NegotiatedTLS(
-                version: .tls12, cipherSuite: TLSCipherSuite(rawValue: 0xC02F), fromHelloRetryRequest: false
+                version: .tls12, cipherSuite: TLSCipherSuite(rawValue: 0xC02F), fromHelloRetryRequest: false, source: .serverHello
             ))
         )
     }

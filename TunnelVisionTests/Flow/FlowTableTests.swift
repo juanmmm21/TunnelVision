@@ -100,7 +100,7 @@ final class FlowTableTests: XCTestCase {
     // MARK: - Respuesta TLS del servidor
 
     private static let tls13 = ServerTLSAnswer.negotiated(
-        NegotiatedTLS(version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1301), fromHelloRetryRequest: false)
+        NegotiatedTLS(version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1301), fromHelloRetryRequest: false, source: .serverHello)
     )
 
     /// Lo que el servidor contestó se apunta sin tocar ni el estado de inspección ni el nombre: es

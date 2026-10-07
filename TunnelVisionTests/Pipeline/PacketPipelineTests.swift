@@ -554,7 +554,7 @@ final class PacketPipelineTests: XCTestCase {
         let h = makeHarness(batchSize: 1_000, flushInterval: .max)
         let key = PipelineFixtures.tcpV4Key()
         let answer = ServerTLSAnswer.negotiated(
-            NegotiatedTLS(version: .tls12, cipherSuite: TLSCipherSuite(rawValue: 0xC02F), fromHelloRetryRequest: false)
+            NegotiatedTLS(version: .tls12, cipherSuite: TLSCipherSuite(rawValue: 0xC02F), fromHelloRetryRequest: false, source: .serverHello)
         )
 
         await h.pipeline.handle(packet: PipelineFixtures.tcpV4(), protocolFamily: Int32(AF_INET))

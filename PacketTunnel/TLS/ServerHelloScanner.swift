@@ -203,7 +203,8 @@ public struct ServerHelloScanner: Sendable {
         return .found(NegotiatedTLS(
             version: version,
             cipherSuite: TLSCipherSuite(rawValue: cipherSuite),
-            fromHelloRetryRequest: random.elementsEqual(Self.helloRetryRequestRandom)
+            fromHelloRetryRequest: random.elementsEqual(Self.helloRetryRequestRandom),
+            source: .serverHello
         ))
     }
 }

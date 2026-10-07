@@ -19,7 +19,8 @@ final class ServerHelloScannerTests: XCTestCase {
         .found(NegotiatedTLS(
             version: version,
             cipherSuite: TLSCipherSuite(rawValue: cipherSuite),
-            fromHelloRetryRequest: fromHelloRetryRequest
+            fromHelloRetryRequest: fromHelloRetryRequest,
+            source: .serverHello
         ))
     }
 

@@ -108,7 +108,7 @@ final class CodableRoundTripTests: XCTestCase {
         // Y lo que el servidor contestó, en sus dos formas.
         var answered = withSNI
         answered.serverTLS = .negotiated(
-            NegotiatedTLS(version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1301), fromHelloRetryRequest: true)
+            NegotiatedTLS(version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1301), fromHelloRetryRequest: true, source: .serverHello)
         )
         try roundTrip(answered)
         answered.serverTLS = .refused(alert: 70)

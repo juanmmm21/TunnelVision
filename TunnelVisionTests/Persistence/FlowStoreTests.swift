@@ -174,6 +174,34 @@ final class FlowStoreTests: XCTestCase {
         XCTAssertNil(flow.serverTLS)
     }
 
+    /// La v10 no toca filas, y una versión apuntada antes de ella se lee como lo que era: leída
+    /// del ServerHello, que hasta entonces era lo único que escribía una.
+    func testMigrationV10ReadsEarlierAnswersAsComingFromTheServerHello() async throws {
+        let legacy = try DatabaseQueue(path: dbURL.path)
+        try Schema.migrator().migrate(legacy, upTo: "v9")
+        try await legacy.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO flows
+                    (session, proto, addr_a, port_a, addr_b, port_b,
+                     first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
+                     tls_version, tls_cipher_suite, tls_hello_retry)
+                VALUES (0, 6, ?, 51000, ?, 443, 100, 200, 0, 0, 1, 1, 'example.com', 772, 4865, 0)
+                """,
+                arguments: [
+                    Data(PersistenceFixtures.deviceIP.bytes),
+                    Data(ModelFixtures.v4(1, 1, 1, 1).bytes),
+                ]
+            )
+        }
+        try legacy.close()
+
+        let store = try makeStore()
+        let flows = try await store.recentFlows(limit: 10)
+        let flow = try XCTUnwrap(flows.first)
+        XCTAssertEqual(flow.serverTLS, Self.tls13)
+    }
+
     /// La v9 parte de base cero: una fila de antes conserva sus totales, el siguiente volcado de
     /// su misma vida los fija como siempre, y una vida nueva se suma encima.
     func testMigrationV9KeepsTotalsAndStartsCountingLivesFromThere() async throws {
@@ -479,7 +507,14 @@ final class FlowStoreTests: XCTestCase {
     // MARK: - Respuesta TLS del servidor
 
     private static let tls13 = ServerTLSAnswer.negotiated(
-        NegotiatedTLS(version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1301), fromHelloRetryRequest: false)
+        NegotiatedTLS(version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1301), fromHelloRetryRequest: false, source: .serverHello)
+    )
+
+    private static let upstreamTLS12 = ServerTLSAnswer.negotiated(
+        NegotiatedTLS(
+            version: .tls12, cipherSuite: TLSCipherSuite(rawValue: 0xC02F),
+            fromHelloRetryRequest: false, source: .upstreamConnection
+        )
     )
 
     private func storeAndReadBack(_ answer: ServerTLSAnswer?) async throws -> StoredFlow {
@@ -502,12 +537,63 @@ final class FlowStoreTests: XCTestCase {
     /// Que salió de un HelloRetryRequest es parte de la lectura y vuelve con ella.
     func testTheHelloRetryMarkRoundTrips() async throws {
         let answer = ServerTLSAnswer.negotiated(
-            NegotiatedTLS(version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1302), fromHelloRetryRequest: true)
+            NegotiatedTLS(version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1302), fromHelloRetryRequest: true, source: .serverHello)
         )
 
         let flow = try await storeAndReadBack(answer)
 
         XCTAssertEqual(flow.serverTLS, answer)
+    }
+
+    /// De dónde salió la lectura vuelve con ella: la de la conexión de subida de un flujo
+    /// inspeccionado no se confunde con un ServerHello leído del stream.
+    func testTheSourceOfTheReadingRoundTrips() async throws {
+        let flow = try await storeAndReadBack(Self.upstreamTLS12)
+
+        XCTAssertEqual(flow.serverTLS, Self.upstreamTLS12)
+    }
+
+    /// El origen es parte de la respuesta y se sustituye con ella, en los dos sentidos: una
+    /// terminación deshecha deja paso a un ServerHello, y nada de la lectura anterior sobrevive.
+    func testANewAnswerReplacesTheSourceToo() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 2, serverTLS: Self.upstreamTLS12)
+        )
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 5, serverTLS: Self.tls13)
+        )
+        let fromTheStream = try await store.flow(id: id)
+        XCTAssertEqual(fromTheStream?.serverTLS, Self.tls13)
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 9, serverTLS: Self.upstreamTLS12)
+        )
+        let fromUpstream = try await store.flow(id: id)
+        XCTAssertEqual(fromUpstream?.serverTLS, Self.upstreamTLS12)
+    }
+
+    /// Una negativa no lleva origen: una alerta solo se lee de un stream. Sustituir una lectura
+    /// de subida por una alerta no deja la marca puesta para la negociación que venga después.
+    func testARefusalClearsTheSourceOfTheAnswerItReplaces() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 2, serverTLS: Self.upstreamTLS12)
+        )
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 5, serverTLS: .refused(alert: 40))
+        )
+
+        let raw = try DatabaseQueue(path: dbURL.path)
+        let upstream = try await raw.read { db in
+            try Bool.fetchOne(db, sql: "SELECT tls_upstream FROM flows WHERE id = ?", arguments: [id])
+        }
+        try raw.close()
+        XCTAssertNil(upstream)
     }
 
     /// Los valores son los del cable: uno que no existe en ninguna tabla vuelve tal cual, incluidos
@@ -517,7 +603,8 @@ final class FlowStoreTests: XCTestCase {
             NegotiatedTLS(
                 version: TLSProtocolVersion(rawValue: 0xFFFF),
                 cipherSuite: TLSCipherSuite(rawValue: 0x0000),
-                fromHelloRetryRequest: false
+                fromHelloRetryRequest: false,
+                source: .serverHello
             )
         )
 

@@ -35,10 +35,31 @@ public struct TLSCipherSuite: RawRepresentable, Sendable, Hashable, Codable {
     }
 }
 
-/// Lo que el **servidor** eligió para una conexión TLS: la versión y la suite de su ServerHello.
+/// De dónde sale una lectura de lo que eligió el servidor, que es también **a qué ClientHello
+/// estaba contestando**.
 ///
-/// Es una lectura de bytes que viajan en claro —el ServerHello va antes de que exista ninguna
-/// clave—, así que vale para los flujos que no se inspeccionan y no necesita la CA local.
+/// No se deduce de `TLSInspectionStatus`, y por eso viaja con la lectura: un flujo cuyo cliente
+/// rechazó nuestro leaf queda `notInspectable` y uno cuya terminación falló a medias se queda
+/// `encrypted`, y los dos pueden llevar una lectura de la conexión de subida, que llegó a
+/// negociar antes. Y la diferencia importa a quien firme un informe: lo que el servidor le
+/// contesta a un cliente que ofrece TLS 1.3 no dice qué habría negociado una app que solo
+/// ofrece 1.2.
+public enum TLSAnswerSource: String, Sendable, Hashable, Codable {
+    /// Leída del ServerHello que viajó en claro hacia el dispositivo: es la respuesta al
+    /// ClientHello **de la app**, y por tanto lo que esa conexión negoció de verdad.
+    case serverHello
+    /// La dio el sistema de la conexión que **el túnel** abrió contra el servidor real para
+    /// inspeccionar el flujo: es la respuesta del servidor a nuestro ClientHello, no al de la
+    /// app. Dice qué acepta el servidor; no qué ofreció la app.
+    case upstreamConnection
+}
+
+/// Lo que el **servidor** eligió para una conexión TLS: la versión y la suite.
+///
+/// En un flujo que no se inspecciona es una lectura de bytes que viajan en claro —el ServerHello
+/// va antes de que exista ninguna clave—, así que no necesita la CA local. En uno inspeccionado
+/// ese ServerHello es el de nuestra terminación y no se lee: la cifra es la que negoció la
+/// conexión de subida. `source` dice cuál de las dos.
 public struct NegotiatedTLS: Sendable, Hashable, Codable {
 
     /// La versión elegida: la de la extensión `supported_versions` si el servidor la mandó (así
@@ -55,12 +76,24 @@ public struct NegotiatedTLS: Sendable, Hashable, Codable {
     /// cambian), así que la lectura vale para cualquier handshake que llegue a completarse. Se
     /// marca porque no es lo mismo que haberlo leído del mensaje definitivo, y quien firme un
     /// informe con esto tiene que poder saberlo.
+    ///
+    /// Una lectura de la conexión de subida lo lleva siempre a `false`: el sistema informa de un
+    /// handshake **terminado**, así que la cifra es la definitiva hubiera o no un reintento por
+    /// medio, y si lo hubo no lo cuenta.
     public let fromHelloRetryRequest: Bool
 
-    public init(version: TLSProtocolVersion, cipherSuite: TLSCipherSuite, fromHelloRetryRequest: Bool) {
+    public let source: TLSAnswerSource
+
+    public init(
+        version: TLSProtocolVersion,
+        cipherSuite: TLSCipherSuite,
+        fromHelloRetryRequest: Bool,
+        source: TLSAnswerSource
+    ) {
         self.version = version
         self.cipherSuite = cipherSuite
         self.fromHelloRetryRequest = fromHelloRetryRequest
+        self.source = source
     }
 }
 

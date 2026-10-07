@@ -132,8 +132,9 @@ public actor FlowStore {
                     (session, proto, addr_a, port_a, addr_b, port_b,
                      first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
                      dns_name, dns_other_names,
-                     tls_version, tls_cipher_suite, tls_hello_retry, tls_alert, audit_session_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                     tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
+                     audit_session_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         (SELECT id FROM audit_sessions WHERE ended_at IS NULL))
                 ON CONFLICT (session, proto, addr_a, port_a, addr_b, port_b) DO UPDATE SET
                     last_seen = excluded.last_seen,
@@ -162,6 +163,8 @@ public actor FlowStore {
                         THEN flows.tls_cipher_suite ELSE excluded.tls_cipher_suite END,
                     tls_hello_retry = CASE WHEN excluded.tls_version IS NULL AND excluded.tls_alert IS NULL
                         THEN flows.tls_hello_retry ELSE excluded.tls_hello_retry END,
+                    tls_upstream = CASE WHEN excluded.tls_version IS NULL AND excluded.tls_alert IS NULL
+                        THEN flows.tls_upstream ELSE excluded.tls_upstream END,
                     tls_alert = CASE WHEN excluded.tls_version IS NULL AND excluded.tls_alert IS NULL
                         THEN flows.tls_alert ELSE excluded.tls_alert END,
                     first_seen = min(flows.first_seen, excluded.first_seen),
@@ -178,7 +181,7 @@ public actor FlowStore {
                     Int(record.tlsStatus.rawValue), record.sni,
                     record.resolvedName?.name,
                     Serialization.otherNames(record.resolvedName?.otherNames ?? []),
-                    tls.version, tls.cipherSuite, tls.helloRetry, tls.alert,
+                    tls.version, tls.cipherSuite, tls.helloRetry, tls.upstream, tls.alert,
                 ]
             )
             // El UPSERT pudo ser INSERT o UPDATE; `lastInsertedRowID` solo vale para INSERT, así
@@ -275,7 +278,7 @@ public actor FlowStore {
             SELECT id, proto, addr_a, port_a, addr_b, port_b,
                    first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
                    dns_name, dns_other_names,
-                   tls_version, tls_cipher_suite, tls_hello_retry, tls_alert
+                   tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert
             FROM flows
             """
             var arguments: [DatabaseValueConvertible] = []
@@ -326,7 +329,7 @@ public actor FlowStore {
                 SELECT id, proto, addr_a, port_a, addr_b, port_b,
                        first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
                        dns_name, dns_other_names,
-                       tls_version, tls_cipher_suite, tls_hello_retry, tls_alert
+                       tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert
                 FROM flows
                 WHERE proto = ? AND addr_a = ? AND port_a = ? AND addr_b = ? AND port_b = ?
                 ORDER BY last_seen DESC, id DESC
@@ -356,7 +359,7 @@ public actor FlowStore {
                 SELECT id, proto, addr_a, port_a, addr_b, port_b,
                        first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
                        dns_name, dns_other_names,
-                       tls_version, tls_cipher_suite, tls_hello_retry, tls_alert
+                       tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert
                 FROM flows
                 WHERE id = ?
                 """,
@@ -379,7 +382,7 @@ public actor FlowStore {
                 SELECT id, proto, addr_a, port_a, addr_b, port_b,
                        first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
                        dns_name, dns_other_names,
-                       tls_version, tls_cipher_suite, tls_hello_retry, tls_alert
+                       tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert
                 FROM flows
                 WHERE audit_session_id = ?
                 ORDER BY first_seen ASC, id ASC
@@ -838,16 +841,18 @@ private enum Serialization {
                 version: row["tls_version"],
                 cipherSuite: row["tls_cipher_suite"],
                 helloRetry: row["tls_hello_retry"],
+                upstream: row["tls_upstream"],
                 alert: row["tls_alert"]
             )
         )
     }
 
-    /// Las cuatro columnas de la respuesta TLS del servidor, tal y como van a la fila.
+    /// Las cinco columnas de la respuesta TLS del servidor, tal y como van a la fila.
     struct ServerTLSColumns {
         let version: Int?
         let cipherSuite: Int?
         let helloRetry: Bool?
+        let upstream: Bool?
         let alert: Int?
     }
 
@@ -858,22 +863,27 @@ private enum Serialization {
                 version: Int(negotiated.version.rawValue),
                 cipherSuite: Int(negotiated.cipherSuite.rawValue),
                 helloRetry: negotiated.fromHelloRetryRequest,
+                upstream: negotiated.source == .upstreamConnection,
                 alert: nil
             )
         case .refused(let alert):
-            return ServerTLSColumns(version: nil, cipherSuite: nil, helloRetry: nil, alert: Int(alert))
+            return ServerTLSColumns(
+                version: nil, cipherSuite: nil, helloRetry: nil, upstream: nil, alert: Int(alert)
+            )
         case nil:
-            return ServerTLSColumns(version: nil, cipherSuite: nil, helloRetry: nil, alert: nil)
+            return ServerTLSColumns(version: nil, cipherSuite: nil, helloRetry: nil, upstream: nil, alert: nil)
         }
     }
 
-    /// La alerta manda si está: excluye a las otras tres. Una versión sin suite —o al revés— no la
-    /// escribe este store, así que es una fila corrupta y se dice en vez de inventar la mitad que
-    /// falta.
+    /// La alerta manda si está: excluye a las otras cuatro. Una versión sin suite —o al revés— no
+    /// la escribe este store, así que es una fila corrupta y se dice en vez de inventar la mitad
+    /// que falta. Un origen sin apuntar es el ServerHello: es lo único que escribía una versión
+    /// antes de la `v10`.
     static func serverTLS(
         version: Int?,
         cipherSuite: Int?,
         helloRetry: Bool?,
+        upstream: Bool?,
         alert: Int?
     ) throws -> ServerTLSAnswer? {
         if let alert {
@@ -892,7 +902,8 @@ private enum Serialization {
             return .negotiated(NegotiatedTLS(
                 version: TLSProtocolVersion(rawValue: versionCode),
                 cipherSuite: TLSCipherSuite(rawValue: suiteCode),
-                fromHelloRetryRequest: helloRetry ?? false
+                fromHelloRetryRequest: helloRetry ?? false,
+                source: upstream == true ? .upstreamConnection : .serverHello
             ))
         case (.some, nil), (nil, .some):
             throw FlowStore.StoreError.corruptRow("versión y suite de TLS desparejadas")

@@ -31,7 +31,7 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
     public let resolvedName: ResolvedFlowName?
 
     /// Lo que el servidor contestó al ClientHello (columnas `tls_version`, `tls_cipher_suite`,
-    /// `tls_hello_retry` y `tls_alert`), o `nil` si no hubo lectura.
+    /// `tls_hello_retry`, `tls_upstream` y `tls_alert`), o `nil` si no hubo lectura.
     public let serverTLS: ServerTLSAnswer?
 
     public init(

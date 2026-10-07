@@ -287,6 +287,24 @@ public enum Schema {
             }
         }
 
+        // v10 — de dónde salió la versión y la suite de un flujo: del ServerHello que viajó en
+        // claro hacia el dispositivo, o de la conexión que el túnel abrió contra el servidor real
+        // para inspeccionarlo.
+        //
+        // Por qué una columna y no deducirlo de `tls_status`: un flujo que rechazó nuestro leaf
+        // (`notInspectable`) o cuya terminación falló a medias (`encrypted`) puede llevar la
+        // cifra de la conexión de subida, que negoció antes. Y son respuestas a ClientHellos
+        // distintos —el de la app y el nuestro—, cosa que un informe tiene que poder decir.
+        //
+        // 1 es la conexión de subida. `NULL` cuando no hay versión de la que decirlo, y también
+        // en las filas anteriores a esta migración, que se leen como ServerHello: hasta aquí era
+        // lo único que escribía una versión.
+        migrator.registerMigration("v10") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "tls_upstream", .integer)
+            }
+        }
+
         return migrator
     }
 }
