@@ -275,6 +275,9 @@ final class FakeFlowInspector: FlowInspecting, @unchecked Sendable {
     /// un hecho que hay que poder afirmar —significa que esa terminación no va a copiar ni un byte—,
     /// así que se conservan también los ausentes.
     private var plaintextSinks: [(@Sendable (Data, Direction) -> Void)?] = []
+    /// Por dónde cada terminación contaría lo que negoció con el servidor real, uno por `open`.
+    /// También se conservan los ausentes: sin observador el relay no debe pedirlo.
+    private var upstreamTLSSinks: [(@Sendable (NegotiatedTLS) -> Void)?] = []
     private var failure: TLSInterceptError?
     private var gate: AsyncGate?
 
@@ -293,11 +296,14 @@ final class FakeFlowInspector: FlowInspecting, @unchecked Sendable {
         to endpoint: IPEndpoint,
         clientHelloSNI: String?,
         plaintext: (@Sendable (Data, Direction) -> Void)?,
+        onUpstreamTLS: (@Sendable (NegotiatedTLS) -> Void)?,
         onResolve: @escaping @Sendable (TLSInterceptionPolicy.Decision) -> Void
     ) async throws -> any RelayConnection {
         // Tomar el candado va en métodos síncronos a propósito: no se puede sostener a través de un
         // `await`, y aquí hay uno (la puerta).
-        let (failure, gate) = record(Request(endpoint: endpoint, sni: clientHelloSNI), plaintext: plaintext)
+        let (failure, gate) = record(
+            Request(endpoint: endpoint, sni: clientHelloSNI), plaintext: plaintext, upstreamTLS: onUpstreamTLS
+        )
 
         if let gate { await gate.wait() }
         if let failure { throw failure }
@@ -307,12 +313,14 @@ final class FakeFlowInspector: FlowInspecting, @unchecked Sendable {
 
     private func record(
         _ request: Request,
-        plaintext: (@Sendable (Data, Direction) -> Void)?
+        plaintext: (@Sendable (Data, Direction) -> Void)?,
+        upstreamTLS: (@Sendable (NegotiatedTLS) -> Void)?
     ) -> (TLSInterceptError?, AsyncGate?) {
         lock.lock()
         defer { lock.unlock() }
         requests.append(request)
         plaintextSinks.append(plaintext)
+        upstreamTLSSinks.append(upstreamTLS)
         return (failure, gate)
     }
 
@@ -351,6 +359,21 @@ final class FakeFlowInspector: FlowInspecting, @unchecked Sendable {
         let sink = plaintextSinks.indices.contains(index) ? plaintextSinks[index] : nil
         lock.unlock()
         sink?(data, direction)
+    }
+
+    /// Si la última terminación pedida llegó con a quién contarle su TLS de subida.
+    var lastRequestHadUpstreamTLSSink: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return upstreamTLSSinks.last.map { $0 != nil } ?? false
+    }
+
+    /// Simula que la pata saliente de la terminación `index` terminó su handshake con el servidor
+    /// real y dice qué negoció.
+    func emitUpstreamTLS(_ negotiated: NegotiatedTLS, at index: Int = 0) {
+        lock.lock()
+        let sink = upstreamTLSSinks.indices.contains(index) ? upstreamTLSSinks[index] : nil
+        lock.unlock()
+        sink?(negotiated)
     }
 
     /// Dispara el desenlace de la terminación `index`, como haría el final de un flujo real.

@@ -112,6 +112,7 @@ final class ControlChannelTests: XCTestCase {
         relay.serverHelloObserved = 36
         relay.serverHelloRefused = 1
         relay.serverHelloUnavailable = 3
+        relay.upstreamTLSObserved = 19
         relay.inspectionCandidates = 30
         relay.terminationsOpened = 20
         relay.inspectionsAbandoned = 8

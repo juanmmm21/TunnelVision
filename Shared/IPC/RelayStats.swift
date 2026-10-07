@@ -59,7 +59,8 @@ public struct RelayStats: Sendable, Equatable, Codable {
 
     /// Flujos TLS a los que se les leyó la respuesta del servidor: la versión y la suite de su
     /// ServerHello. Solo los que **no** se inspeccionan: en uno inspeccionado lo que el dispositivo
-    /// recibe es el ServerHello de nuestra terminación, y ese no se lee.
+    /// recibe es el ServerHello de nuestra terminación, y ese no se lee (lo cuenta
+    /// `upstreamTLSObserved`).
     public var serverHelloObserved: UInt64 = 0
     /// Flujos en los que el servidor contestó con una alerta en vez de negociar. Aparte del
     /// siguiente porque una negativa **es** una respuesta sobre TLS, y el flujo se la lleva apuntada.
@@ -68,6 +69,11 @@ public struct RelayStats: Sendable, Equatable, Codable {
     /// empezaba por un ServerHello, o venía malformado. Los que se cierran antes de que el servidor
     /// diga nada no están en ninguno de los tres.
     public var serverHelloUnavailable: UInt64 = 0
+    /// Terminaciones cuya pata saliente dijo qué negoció con el servidor real: la versión y la
+    /// suite de un flujo inspeccionado. Contra `terminationsOpened` dice cuántas llegaron a
+    /// completar su TLS de subida; no es `flowsInspected`, porque un cliente que rechaza nuestro
+    /// leaf también puede haber dejado esta lectura.
+    public var upstreamTLSObserved: UInt64 = 0
 
     /// Flujos abiertos como candidatos a inspección (el pipeline los enrutó a `.inspect` y hay
     /// interceptor). Es el denominador de todo lo que sigue.

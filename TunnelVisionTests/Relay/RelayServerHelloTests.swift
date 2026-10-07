@@ -269,6 +269,106 @@ final class RelayServerHelloTests: XCTestCase {
         XCTAssertEqual(pending, 0)
     }
 
+    // MARK: - La inspección: la cifra la da la conexión de subida
+
+    private static let upstreamTLS13 = NegotiatedTLS(
+        version: .tls13, cipherSuite: TLSCipherSuite(rawValue: 0x1302),
+        fromHelloRetryRequest: false, source: .upstreamConnection
+    )
+
+    /// Lleva un candidato hasta tener su terminación instalada.
+    private func terminate(_ h: Harness) async throws {
+        await establish(h, candidate: true)
+        await sendClientHello(h, candidate: true)
+        try await waitUntil("terminación instalada") { await h.relay.stats.terminationsOpened == 1 }
+    }
+
+    /// Deja que el relay atienda lo que una tarea le haya dejado pendiente. Lo que la terminación
+    /// cuenta entra por una tarea, y cuando lo que se afirma es que **no** hizo nada no hay señal
+    /// que esperar: se le da tiempo y se pasa por el actor.
+    private func settle(_ h: Harness) async throws {
+        try await Task.sleep(nanoseconds: 50_000_000)
+        _ = await h.relay.stats
+    }
+
+    /// Lo que un flujo inspeccionado sabe de su TLS es lo que la terminación negoció con el
+    /// servidor real, y sale por la misma costura que un ServerHello leído del stream.
+    func testAnInspectedFlowCarriesWhatItsUpstreamNegotiated() async throws {
+        let h = makeHarness(inspecting: true)
+        try await terminate(h)
+        XCTAssertTrue(h.inspector.lastRequestHadUpstreamTLSSink)
+
+        h.inspector.emitUpstreamTLS(Self.upstreamTLS13)
+
+        let observed = await h.observer.next()
+        XCTAssertEqual(observed.key, flowKey())
+        XCTAssertEqual(observed.answer, .negotiated(Self.upstreamTLS13))
+        let stats = await h.relay.stats
+        XCTAssertEqual(stats.upstreamTLSObserved, 1)
+        XCTAssertEqual(stats.serverHelloObserved, 0, "no se leyó de ningún stream")
+    }
+
+    /// Un cliente que rechaza nuestro leaf deja el flujo `notInspectable`, pero el servidor ya
+    /// había contestado a la pata saliente: esa lectura se conserva. Es por lo que el origen
+    /// viaja con ella y no se deduce del estado de inspección.
+    func testAFlowWhoseClientPinsStillCarriesTheUpstreamReading() async throws {
+        let h = makeHarness(inspecting: true)
+        try await terminate(h)
+
+        h.inspector.emitUpstreamTLS(Self.upstreamTLS13)
+        let observed = await h.observer.next()
+        h.inspector.resolve(.notInspectable)
+        try await waitUntil("flujo marcado como pinning") { await h.relay.stats.flowsPinned == 1 }
+
+        XCTAssertEqual(observed.answer, .negotiated(Self.upstreamTLS13))
+        let extra = await h.observer.count
+        XCTAssertEqual(extra, 0, "el desenlace no vuelve a contar ni borra la lectura")
+    }
+
+    /// Sin observador no se le pide a la terminación: no hay a quién contárselo.
+    func testWithoutAnObserverTheTerminationIsNotAskedForItsTLS() async throws {
+        let h = makeHarness(observing: false, inspecting: true)
+        try await terminate(h)
+
+        XCTAssertFalse(h.inspector.lastRequestHadUpstreamTLSSink)
+    }
+
+    /// Una terminación deshecha deja el flujo en manos de una conexión llana cuyo ServerHello
+    /// contesta al ClientHello **de la app**. Si la lectura de la terminación muerta llega tarde,
+    /// no se apunta: podría pisar a la que vale.
+    func testAnUpstreamReadingThatArrivesAfterARollbackIsDropped() async throws {
+        let h = makeHarness(inspecting: true)
+        try await terminate(h)
+        h.inspector.openedTerminations[0].fireClose(RelayConnectionError("la pila no levantó"))
+        try await waitUntil("terminación deshecha") { await h.relay.stats.terminationsRolledBack == 1 }
+
+        h.inspector.emitUpstreamTLS(Self.upstreamTLS13)
+        try await settle(h)
+
+        let stats = await h.relay.stats
+        XCTAssertEqual(stats.upstreamTLSObserved, 0)
+        let pending = await h.observer.count
+        XCTAssertEqual(pending, 0)
+    }
+
+    /// Y lo mismo si el flujo ya no existe: una lectura rezagada no puede caer sobre otro flujo
+    /// que haya heredado la misma 5-tupla sin ser una terminación.
+    func testAnUpstreamReadingForAFlowAlreadyGoneIsDropped() async throws {
+        let h = makeHarness(inspecting: true)
+        try await terminate(h)
+        await h.relay.close(flowKey())
+
+        h.inspector.emitUpstreamTLS(Self.upstreamTLS13)
+        try await settle(h)
+
+        let stats = await h.relay.stats
+        XCTAssertEqual(stats.upstreamTLSObserved, 0)
+        let pending = await h.observer.count
+        XCTAssertEqual(pending, 0)
+    }
+
+    // MARK: - La inspección: lo que vuelve al passthrough
+
     /// Un candidato que vuelve al passthrough sin haberse terminado habla con el servidor de
     /// verdad por su conexión llana de siempre, así que su ServerHello sí se lee.
     func testACandidateThatFallsBackToPassthroughIsRead() async throws {

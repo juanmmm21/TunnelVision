@@ -25,6 +25,8 @@ public protocol TLSTerminationEngine: Sendable {
     ///   - endpoint: el destino **que eligió el dispositivo**. No se re-resuelve el nombre: inspeccionar
     ///     no puede cambiar con quién se habla.
     ///   - plaintext: sumidero del contenido descifrado, con su sentido. Nil = no se observa nada.
+    ///   - onUpstreamTLS: lo que negoció la pata saliente con el servidor real, **como mucho una
+    ///     vez**, cuando su handshake termina; nunca si no llega a terminar. Nil = nadie lo quiere.
     ///   - onOutcome: el desenlace del intento, una sola vez, cuando el flujo termina.
     /// - Throws: si no se pudo construir (no se pudo emitir el leaf, no arrancó la pila). El llamante
     ///   lo trata como razón transitoria: passthrough intacto y **sin** marcar el flujo.
@@ -32,6 +34,7 @@ public protocol TLSTerminationEngine: Sendable {
         host: String,
         to endpoint: IPEndpoint,
         plaintext: (@Sendable (Data, Direction) -> Void)?,
+        onUpstreamTLS: (@Sendable (NegotiatedTLS) -> Void)?,
         onOutcome: @escaping @Sendable (TLSTerminationOutcome) -> Void
     ) async throws -> any RelayConnection
 }
@@ -77,6 +80,10 @@ public actor TLSInterceptor {
     /// esta llega con la terminación ya en marcha, así que no hay flujo intacto que relayar — lo que se
     /// pierde es esa conexión, y el reintento del cliente entra como un flujo nuevo.
     ///
+    /// `onUpstreamTLS` va aparte de `onResolve` porque no llegan a la vez ni dependen uno de otro: la
+    /// pata saliente negocia al abrirse y la decisión llega al acabar el flujo, y un flujo cuyo
+    /// cliente rechaza nuestro leaf puede tener lo primero sin haber sido inspeccionado nunca.
+    ///
     /// - Throws: `TLSInterceptError` si las precondiciones residuales fallan (sin CA, sin SNI) o si el
     ///   motor no pudo construir la terminación. En los tres casos no se ha tocado la red y el llamante
     ///   relaya el flujo intacto y **sin** marcarlo.
@@ -84,6 +91,7 @@ public actor TLSInterceptor {
         to endpoint: IPEndpoint,
         clientHelloSNI: String?,
         plaintext: (@Sendable (Data, Direction) -> Void)? = nil,
+        onUpstreamTLS: (@Sendable (NegotiatedTLS) -> Void)? = nil,
         onResolve: @escaping @Sendable (TLSInterceptionPolicy.Decision) -> Void
     ) async throws -> any RelayConnection {
         switch TLSInterceptionPolicy.gate(caReady: caReady(), clientHelloSNI: clientHelloSNI) {
@@ -95,6 +103,7 @@ public actor TLSInterceptor {
                     host: sni,
                     to: endpoint,
                     plaintext: plaintext,
+                    onUpstreamTLS: onUpstreamTLS,
                     onOutcome: { outcome in onResolve(TLSInterceptionPolicy.decide(outcome)) }
                 )
             } catch let error as TLSInterceptError {

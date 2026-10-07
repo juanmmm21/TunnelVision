@@ -20,6 +20,10 @@ import Shared
 public protocol FlowInspecting: Sendable {
     /// Abre la terminación de un flujo hacia `endpoint` presentando el leaf de `clientHelloSNI`.
     ///
+    /// `onUpstreamTLS` entrega, como mucho una vez, lo que la terminación negoció con el servidor
+    /// real: es la única versión de TLS que un flujo inspeccionado puede dar, porque el ServerHello
+    /// que recibe el dispositivo es el nuestro.
+    ///
     /// - Throws: una razón **transitoria** (sin CA, sin nombre, no se pudo emitir el leaf). El relay
     ///   la trata como manda la política: devuelve el flujo al passthrough con lo que hubiera
     ///   retenido y **sin** marcarlo, porque la causa puede desaparecer.
@@ -27,6 +31,7 @@ public protocol FlowInspecting: Sendable {
         to endpoint: IPEndpoint,
         clientHelloSNI: String?,
         plaintext: (@Sendable (Data, Direction) -> Void)?,
+        onUpstreamTLS: (@Sendable (NegotiatedTLS) -> Void)?,
         onResolve: @escaping @Sendable (TLSInterceptionPolicy.Decision) -> Void
     ) async throws -> any RelayConnection
 }

@@ -27,7 +27,8 @@ import Shared
 /// la tabla de flujos. Es lo que hace que la app diga con *quién* habló el dispositivo en vez de con
 /// qué dirección, y no descifra nada (`readHandshake`). Y por lo mismo, en el otro sentido, **le lee
 /// la respuesta del servidor**: la versión de TLS y la suite de su ServerHello, que también viajan
-/// en claro y salen por `ServerTLSObserving` (`readServerHello`).
+/// en claro y salen por `ServerTLSObserving` (`readServerHello`). En un flujo inspeccionado ese
+/// ServerHello es el nuestro, así que la cifra la da la terminación (`observeUpstreamTLS`).
 ///
 /// ## Inspección TLS (opt-in): la conexión saliente se **sustituye**
 ///
@@ -690,6 +691,7 @@ public actor Relay {
                 // terminación no copia ni un byte, que es lo que hace que el interruptor signifique
                 // algo aquí abajo y no solo en la pantalla (ADR 0007).
                 plaintext: plaintextSink(for: key),
+                onUpstreamTLS: upstreamTLSSink(for: key),
                 onResolve: { [weak self] decision in
                     Task { await self?.resolve(decision, host: host, for: key) }
                 }
@@ -781,6 +783,30 @@ public actor Relay {
             connection.closeSend()
         }
         return true
+    }
+
+    /// Por dónde la terminación de un flujo cuenta lo que negoció con el servidor real, o `nil` si
+    /// no hay a quién contárselo.
+    private func upstreamTLSSink(for key: FlowKey) -> (@Sendable (NegotiatedTLS) -> Void)? {
+        guard serverTLSObserver != nil else { return nil }
+        return { [weak self] negotiated in
+            Task { await self?.observeUpstreamTLS(negotiated, for: key) }
+        }
+    }
+
+    /// La pata saliente de una terminación terminó su handshake: esto es lo que el servidor de
+    /// verdad eligió, y sale por la misma costura que un ServerHello leído del stream.
+    ///
+    /// **Solo vale mientras la conexión del flujo siga siendo esa terminación.** Llega por una
+    /// tarea, así que puede llegar tarde: con el flujo ya soltado, o devuelto al passthrough por
+    /// `rollbackTermination`. En el segundo caso no se pierde nada —la conexión llana que la
+    /// releva recibe el ClientHello del dispositivo y su ServerHello se lee del stream—, y
+    /// apuntarla entonces podría pisar esa lectura, que es la que contesta a la app, con una que
+    /// contestaba a nuestro ClientHello.
+    private func observeUpstreamTLS(_ negotiated: NegotiatedTLS, for key: FlowKey) {
+        guard let serverTLSObserver, let state = tcpFlows[key], case .terminating = state.inspection else { return }
+        counters.upstreamTLSObserved &+= 1
+        Task { await serverTLSObserver.observe(serverTLS: .negotiated(negotiated), for: key) }
     }
 
     /// Cómo acabó el intento de inspeccionar un flujo. Llega cuando el flujo termina, no cuando se

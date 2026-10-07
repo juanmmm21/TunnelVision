@@ -188,6 +188,32 @@ final class TLSInterceptorTests: XCTestCase {
         XCTAssertEqual(count, 1)
     }
 
+    // MARK: - Actor: lo que negoció la pata saliente
+
+    /// El interceptor no decide nada sobre esto: lo que el motor cuente de su TLS de subida llega
+    /// al llamante tal cual, por un canal que no es el del desenlace.
+    func testWhatTheUpstreamNegotiatedReachesTheCallerUntouched() async throws {
+        let engine = ScriptedTerminationEngine()
+        let interceptor = TLSInterceptor(engine: engine, caReady: { true })
+        let readings = ReadingRecorder()
+        let resolutions = DecisionRecorder()
+        let negotiated = NegotiatedTLS(
+            version: .tls12, cipherSuite: TLSCipherSuite(rawValue: 0xC030),
+            fromHelloRetryRequest: false, source: .upstreamConnection
+        )
+
+        _ = try await interceptor.open(
+            to: Self.endpoint,
+            clientHelloSNI: "example.com",
+            onUpstreamTLS: { reading in readings.record(reading) },
+            onResolve: { decision in resolutions.record(decision) }
+        )
+        await engine.fireUpstreamTLS(negotiated)
+
+        XCTAssertEqual(readings.readings, [negotiated])
+        XCTAssertTrue(resolutions.decisions.isEmpty, "saber qué negoció no es saber cómo acabó")
+    }
+
     // MARK: - Helpers
 
     /// Abre una terminación guionizada y devuelve las tres piezas que los tests de desenlace usan.
@@ -233,6 +259,7 @@ private actor ScriptedTerminationEngine: TLSTerminationEngine {
     private(set) var lastHost: String?
     private(set) var lastEndpoint: IPEndpoint?
     private var onOutcome: (@Sendable (TLSTerminationOutcome) -> Void)?
+    private var onUpstreamTLS: (@Sendable (NegotiatedTLS) -> Void)?
 
     init(failure: (any Error)? = nil) {
         self.failure = failure
@@ -242,6 +269,7 @@ private actor ScriptedTerminationEngine: TLSTerminationEngine {
         host: String,
         to endpoint: IPEndpoint,
         plaintext: (@Sendable (Data, Direction) -> Void)?,
+        onUpstreamTLS: (@Sendable (NegotiatedTLS) -> Void)?,
         onOutcome: @escaping @Sendable (TLSTerminationOutcome) -> Void
     ) async throws -> any RelayConnection {
         callCount += 1
@@ -249,7 +277,13 @@ private actor ScriptedTerminationEngine: TLSTerminationEngine {
         lastEndpoint = endpoint
         if let failure { throw failure }
         self.onOutcome = onOutcome
+        self.onUpstreamTLS = onUpstreamTLS
         return FakeRelayConnection()
+    }
+
+    /// Simula que la pata saliente terminó su handshake con el servidor real.
+    func fireUpstreamTLS(_ negotiated: NegotiatedTLS) {
+        onUpstreamTLS?(negotiated)
     }
 
     /// Simula que el flujo terminó con ese desenlace.
@@ -268,6 +302,21 @@ private final class DecisionRecorder: @unchecked Sendable {
     }
 
     var decisions: [TLSInterceptionPolicy.Decision] {
+        lock.lock(); defer { lock.unlock() }
+        return stored
+    }
+}
+
+/// Grabador de lo que el motor dice que negoció la pata saliente.
+private final class ReadingRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [NegotiatedTLS] = []
+
+    func record(_ reading: NegotiatedTLS) {
+        lock.lock(); stored.append(reading); lock.unlock()
+    }
+
+    var readings: [NegotiatedTLS] {
         lock.lock(); defer { lock.unlock() }
         return stored
     }

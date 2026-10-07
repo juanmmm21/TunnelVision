@@ -40,7 +40,12 @@ public struct NetworkTLSTerminationEngine: TLSTerminationEngine {
     private let queue: DispatchQueue
     /// Cómo se construye la pata saliente. Inyectable solo para poder afirmar que **no** se construye
     /// cuando no hay leaf; en producción es siempre `Self.upstream`.
-    private let makeUpstream: @Sendable (IPEndpoint, String, DispatchQueue) -> any RelayConnection
+    private let makeUpstream: UpstreamFactory
+
+    /// Destino, nombre, cola y a quién contarle lo que negocie.
+    typealias UpstreamFactory = @Sendable (
+        IPEndpoint, String, DispatchQueue, (@Sendable (NegotiatedTLS) -> Void)?
+    ) -> any RelayConnection
 
     public init(
         ca: any LeafMinting,
@@ -52,7 +57,7 @@ public struct NetworkTLSTerminationEngine: TLSTerminationEngine {
     init(
         ca: any LeafMinting,
         queue: DispatchQueue,
-        makeUpstream: @escaping @Sendable (IPEndpoint, String, DispatchQueue) -> any RelayConnection
+        makeUpstream: @escaping UpstreamFactory
     ) {
         self.ca = ca
         self.queue = queue
@@ -63,6 +68,7 @@ public struct NetworkTLSTerminationEngine: TLSTerminationEngine {
         host: String,
         to endpoint: IPEndpoint,
         plaintext: (@Sendable (Data, Direction) -> Void)?,
+        onUpstreamTLS: (@Sendable (NegotiatedTLS) -> Void)?,
         onOutcome: @escaping @Sendable (TLSTerminationOutcome) -> Void
     ) async throws -> any RelayConnection {
         // El leaf primero: sin algo que presentarle al cliente no hay inspección posible, y abrir la
@@ -71,7 +77,7 @@ public struct NetworkTLSTerminationEngine: TLSTerminationEngine {
         let identity = try await ca.mintLeaf(forHost: host)
         return TLSTerminationConnection(
             session: LoopbackTLSServerSession(identity: identity, queue: queue),
-            upstream: makeUpstream(endpoint, host, queue),
+            upstream: makeUpstream(endpoint, host, queue, onUpstreamTLS),
             plaintext: plaintext,
             onOutcome: onOutcome
         )
@@ -85,10 +91,15 @@ public struct NetworkTLSTerminationEngine: TLSTerminationEngine {
     /// un cliente TLS corriente: mandarlo en nuestro ClientHello (SNI) y validar contra él el
     /// certificado del servidor — sin él, la validación iría contra una IP, que no es lo que afirma
     /// ningún certificado de internet.
+    ///
+    /// `onTLSNegotiated` recibe lo que esta conexión negocie. No se fija versión mínima ni máxima
+    /// ni lista de suites: se ofrece lo que ofrece el sistema, y eso es parte de lo que la lectura
+    /// significa (`TLSAnswerSource.upstreamConnection`).
     static func upstream(
         to endpoint: IPEndpoint,
         serverName: String,
-        queue: DispatchQueue
+        queue: DispatchQueue,
+        onTLSNegotiated: (@Sendable (NegotiatedTLS) -> Void)?
     ) -> any RelayConnection {
         let tls = NWProtocolTLS.Options()
         sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, serverName)
@@ -97,6 +108,8 @@ public struct NetworkTLSTerminationEngine: TLSTerminationEngine {
             port: NetworkConnectionFactory.port(for: endpoint),
             using: NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
         )
-        return NetworkRelayConnection(connection: connection, queue: queue, mode: .stream)
+        return NetworkRelayConnection(
+            connection: connection, queue: queue, mode: .stream, onTLSNegotiated: onTLSNegotiated
+        )
     }
 }
