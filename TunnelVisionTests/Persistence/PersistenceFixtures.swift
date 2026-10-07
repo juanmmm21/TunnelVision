@@ -64,7 +64,8 @@ enum PersistenceFixtures {
         tlsStatus: TLSInspectionStatus = .encrypted,
         sni: String? = nil,
         resolvedName: ResolvedFlowName? = nil,
-        serverTLS: ServerTLSAnswer? = nil
+        serverTLS: ServerTLSAnswer? = nil,
+        clientTLS: ClientTLSOffer? = nil
     ) -> FlowRecord {
         FlowRecord(
             id: 0,
@@ -77,7 +78,8 @@ enum PersistenceFixtures {
             tlsStatus: tlsStatus,
             sni: sni,
             resolvedName: resolvedName,
-            serverTLS: serverTLS
+            serverTLS: serverTLS,
+            clientTLS: clientTLS
         )
     }
 

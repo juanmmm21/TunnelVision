@@ -80,6 +80,11 @@ public actor FlowStore {
         .map { String($0.rawValue) }
         .joined(separator: ", ")
 
+    /// La condición de SQL con la que el upsert reconoce un record que no trae oferta del cliente:
+    /// una oferta tiene siempre una de las dos columnas de versiones (`Schema`, `v11`).
+    private static let recordHasNoOffer =
+        "excluded.tls_offered_versions IS NULL AND excluded.tls_offered_legacy IS NULL"
+
     /// Inserta el flujo o, si ya existe (misma 5-tupla canónica **en esta sesión**), actualiza su
     /// estado agregado. Devuelve el `rowid` del flujo, con el que enlazar sus paquetes.
     ///
@@ -112,6 +117,10 @@ public actor FlowStore {
     /// suya. Y si llega con una es que hubo un handshake nuevo sobre la misma 5-tupla, y la que vale
     /// es la última.
     ///
+    /// La **oferta TLS del cliente** sigue esa misma regla y por la misma causa —el ClientHello
+    /// también se lee una vez—: un record sin oferta conserva la de la fila, y uno con oferta la
+    /// sustituye **entera**, sus cinco columnas juntas.
+    ///
     /// Si hay una **sesión de auditoría abierta**, el flujo queda etiquetado con ella. La sesión se
     /// lee de la propia BD en la misma sentencia, así que la extensión no necesita que nadie le avise
     /// de que la app abrió una: la BD compartida ya es ese aviso. Un flujo que venía de antes y sigue
@@ -125,6 +134,7 @@ public actor FlowStore {
         let firstSeen = anchor.nanosecondsSince1970(forUptime: record.firstSeen)
         let lastSeen = anchor.nanosecondsSince1970(forUptime: record.lastSeen)
         let tls = Serialization.serverTLSColumns(record.serverTLS)
+        let offer = Serialization.clientTLSColumns(record.clientTLS)
         return try dbPool.write { db in
             try db.execute(
                 sql: """
@@ -133,8 +143,10 @@ public actor FlowStore {
                      first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
                      dns_name, dns_other_names,
                      tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
+                     tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
+                     tls_offered_alpn_omitted, tls_offered_ech,
                      audit_session_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         (SELECT id FROM audit_sessions WHERE ended_at IS NULL))
                 ON CONFLICT (session, proto, addr_a, port_a, addr_b, port_b) DO UPDATE SET
                     last_seen = excluded.last_seen,
@@ -167,6 +179,16 @@ public actor FlowStore {
                         THEN flows.tls_upstream ELSE excluded.tls_upstream END,
                     tls_alert = CASE WHEN excluded.tls_version IS NULL AND excluded.tls_alert IS NULL
                         THEN flows.tls_alert ELSE excluded.tls_alert END,
+                    tls_offered_versions = CASE WHEN \(Self.recordHasNoOffer)
+                        THEN flows.tls_offered_versions ELSE excluded.tls_offered_versions END,
+                    tls_offered_legacy = CASE WHEN \(Self.recordHasNoOffer)
+                        THEN flows.tls_offered_legacy ELSE excluded.tls_offered_legacy END,
+                    tls_offered_alpn = CASE WHEN \(Self.recordHasNoOffer)
+                        THEN flows.tls_offered_alpn ELSE excluded.tls_offered_alpn END,
+                    tls_offered_alpn_omitted = CASE WHEN \(Self.recordHasNoOffer)
+                        THEN flows.tls_offered_alpn_omitted ELSE excluded.tls_offered_alpn_omitted END,
+                    tls_offered_ech = CASE WHEN \(Self.recordHasNoOffer)
+                        THEN flows.tls_offered_ech ELSE excluded.tls_offered_ech END,
                     first_seen = min(flows.first_seen, excluded.first_seen),
                     audit_session_id = COALESCE(flows.audit_session_id, excluded.audit_session_id)
                 """,
@@ -182,6 +204,8 @@ public actor FlowStore {
                     record.resolvedName?.name,
                     Serialization.otherNames(record.resolvedName?.otherNames ?? []),
                     tls.version, tls.cipherSuite, tls.helloRetry, tls.upstream, tls.alert,
+                    offer.versions, offer.legacyVersion, offer.applicationProtocols,
+                    offer.omittedApplicationProtocols, offer.encryptedClientHello,
                 ]
             )
             // El UPSERT pudo ser INSERT o UPDATE; `lastInsertedRowID` solo vale para INSERT, así
@@ -278,7 +302,9 @@ public actor FlowStore {
             SELECT id, proto, addr_a, port_a, addr_b, port_b,
                    first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
                    dns_name, dns_other_names,
-                   tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert
+                   tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
+                   tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
+                   tls_offered_alpn_omitted, tls_offered_ech
             FROM flows
             """
             var arguments: [DatabaseValueConvertible] = []
@@ -329,7 +355,9 @@ public actor FlowStore {
                 SELECT id, proto, addr_a, port_a, addr_b, port_b,
                        first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
                        dns_name, dns_other_names,
-                       tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert
+                       tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
+                       tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
+                       tls_offered_alpn_omitted, tls_offered_ech
                 FROM flows
                 WHERE proto = ? AND addr_a = ? AND port_a = ? AND addr_b = ? AND port_b = ?
                 ORDER BY last_seen DESC, id DESC
@@ -359,7 +387,9 @@ public actor FlowStore {
                 SELECT id, proto, addr_a, port_a, addr_b, port_b,
                        first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
                        dns_name, dns_other_names,
-                       tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert
+                       tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
+                       tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
+                       tls_offered_alpn_omitted, tls_offered_ech
                 FROM flows
                 WHERE id = ?
                 """,
@@ -382,7 +412,9 @@ public actor FlowStore {
                 SELECT id, proto, addr_a, port_a, addr_b, port_b,
                        first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
                        dns_name, dns_other_names,
-                       tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert
+                       tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
+                       tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
+                       tls_offered_alpn_omitted, tls_offered_ech
                 FROM flows
                 WHERE audit_session_id = ?
                 ORDER BY first_seen ASC, id ASC
@@ -843,6 +875,13 @@ private enum Serialization {
                 helloRetry: row["tls_hello_retry"],
                 upstream: row["tls_upstream"],
                 alert: row["tls_alert"]
+            ),
+            clientTLS: try clientTLS(
+                versions: row["tls_offered_versions"],
+                legacyVersion: row["tls_offered_legacy"],
+                applicationProtocols: row["tls_offered_alpn"],
+                omittedApplicationProtocols: row["tls_offered_alpn_omitted"],
+                encryptedClientHello: row["tls_offered_ech"]
             )
         )
     }
@@ -908,6 +947,86 @@ private enum Serialization {
         case (.some, nil), (nil, .some):
             throw FlowStore.StoreError.corruptRow("versión y suite de TLS desparejadas")
         }
+    }
+
+    /// Las cinco columnas de la oferta TLS del cliente, tal y como van a la fila.
+    struct ClientTLSColumns {
+        let versions: String?
+        let legacyVersion: Int?
+        let applicationProtocols: String?
+        let omittedApplicationProtocols: Int?
+        let encryptedClientHello: Bool?
+    }
+
+    /// Separador de las dos listas de la oferta. Una versión es un número y un identificador de
+    /// ALPN guardado no lleva espacios (`ClientHelloScanner.applicationProtocol`).
+    private static let offerListSeparator: Character = " "
+
+    static func clientTLSColumns(_ offer: ClientTLSOffer?) -> ClientTLSColumns {
+        guard let offer else {
+            return ClientTLSColumns(
+                versions: nil, legacyVersion: nil, applicationProtocols: nil,
+                omittedApplicationProtocols: nil, encryptedClientHello: nil
+            )
+        }
+        let versions: String?
+        let legacyVersion: Int?
+        switch offer.versions {
+        case .listed(let list):
+            // Vacía es `''` y no `NULL`: la extensión estaba, y `NULL` aquí significa que no.
+            versions = list.map { String($0.rawValue) }.joined(separator: String(offerListSeparator))
+            legacyVersion = nil
+        case .upTo(let ceiling):
+            versions = nil
+            legacyVersion = Int(ceiling.rawValue)
+        }
+        return ClientTLSColumns(
+            versions: versions,
+            legacyVersion: legacyVersion,
+            applicationProtocols: offer.applicationProtocols.isEmpty
+                ? nil : offer.applicationProtocols.joined(separator: String(offerListSeparator)),
+            omittedApplicationProtocols: offer.omittedApplicationProtocols,
+            encryptedClientHello: offer.hasEncryptedClientHello
+        )
+    }
+
+    /// Hay oferta si está una de las dos columnas de versiones, y solo una: las dos a la vez no las
+    /// escribe este store, así que es una fila corrupta y se dice en vez de elegir entre ellas.
+    static func clientTLS(
+        versions: String?,
+        legacyVersion: Int?,
+        applicationProtocols: String?,
+        omittedApplicationProtocols: Int?,
+        encryptedClientHello: Bool?
+    ) throws -> ClientTLSOffer? {
+        let offered: OfferedTLSVersions
+        switch (versions, legacyVersion) {
+        case (nil, nil):
+            return nil
+        case (let versions?, nil):
+            offered = .listed(try versions.split(separator: offerListSeparator).map { text in
+                guard let code = UInt16(text) else {
+                    throw FlowStore.StoreError.corruptRow("versión de TLS ofrecida ilegible: \(text)")
+                }
+                return TLSProtocolVersion(rawValue: code)
+            })
+        case (nil, let legacyVersion?):
+            guard let code = UInt16(exactly: legacyVersion) else {
+                throw FlowStore.StoreError.corruptRow("versión de TLS ofrecida fuera de rango: \(legacyVersion)")
+            }
+            offered = .upTo(TLSProtocolVersion(rawValue: code))
+        case (.some, .some):
+            throw FlowStore.StoreError.corruptRow("oferta de TLS con lista de versiones y techo a la vez")
+        }
+        guard let omitted = omittedApplicationProtocols, omitted >= 0 else {
+            throw FlowStore.StoreError.corruptRow("oferta de TLS sin la cuenta de protocolos omitidos")
+        }
+        return ClientTLSOffer(
+            versions: offered,
+            applicationProtocols: applicationProtocols?.split(separator: offerListSeparator).map(String.init) ?? [],
+            omittedApplicationProtocols: omitted,
+            hasEncryptedClientHello: encryptedClientHello ?? false
+        )
     }
 
     /// Separador de `dns_other_names`. Un nombre del mapa no puede contenerlo (`DomainPattern`).

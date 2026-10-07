@@ -34,6 +34,10 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
     /// `tls_hello_retry`, `tls_upstream` y `tls_alert`), o `nil` si no hubo lectura.
     public let serverTLS: ServerTLSAnswer?
 
+    /// Lo que el cliente ofreció en su ClientHello (columnas `tls_offered_*`), o `nil` si no hubo
+    /// lectura.
+    public let clientTLS: ClientTLSOffer?
+
     public init(
         id: Int64,
         key: FlowKey,
@@ -45,7 +49,8 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
         tlsStatus: TLSInspectionStatus,
         sni: String?,
         resolvedName: ResolvedFlowName?,
-        serverTLS: ServerTLSAnswer?
+        serverTLS: ServerTLSAnswer?,
+        clientTLS: ClientTLSOffer?
     ) {
         self.id = id
         self.key = key
@@ -58,6 +63,7 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
         self.sni = sni
         self.resolvedName = resolvedName
         self.serverTLS = serverTLS
+        self.clientTLS = clientTLS
     }
 
     /// El nombre del flujo con su origen: el SNI si lo anunció, y si no el que se dedujo del DNS.

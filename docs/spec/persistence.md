@@ -164,6 +164,18 @@ public enum Schema {
                 t.add(column: "tls_upstream", .integer)
             }
         }
+
+        // v11 — lo que el cliente ofreció en su ClientHello. Una fila con oferta tiene exactamente
+        // una de las dos primeras columnas: la lista de `supported_versions` o el `legacy_version`.
+        m.registerMigration("v11") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "tls_offered_versions", .text)        // valores del cable, separados por espacios
+                t.add(column: "tls_offered_legacy", .integer)
+                t.add(column: "tls_offered_alpn", .text)            // separados por espacios
+                t.add(column: "tls_offered_alpn_omitted", .integer)
+                t.add(column: "tls_offered_ech", .integer)
+            }
+        }
         return m
     }
 }
@@ -247,6 +259,7 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
     public let sni: String?
     public let resolvedName: ResolvedFlowName?   // `dns_name` / `dns_other_names`
     public let serverTLS: ServerTLSAnswer?       // `tls_version` / `tls_cipher_suite` / `tls_hello_retry` / `tls_upstream` / `tls_alert`
+    public let clientTLS: ClientTLSOffer?        // las cinco columnas `tls_offered_*`
     public var name: FlowName? { get }           // el nombre con su origen (`data-model.md`)
     public var duration: TimeInterval { get }
     public var totalBytes: UInt64 { get }
@@ -343,6 +356,22 @@ introducirá un reloj monotónico cuando lo necesite el código productor (parse
   `tls_version` and `tls_cipher_suite` are both set or both `NULL`. A row that has one without the
   other, or a value that does not fit the two bytes it came from, is a `corruptRow`, not a guess.
   Alert `0` is a valid code: the test is `NULL`, never zero.
+- **The client's TLS offer follows the server answer's rule, for the same cause** (`v11`): the
+  ClientHello is read once, so a record that brings no offer keeps the row's and one that brings an
+  offer replaces all five `tls_offered_*` columns together. The offer and the answer are independent
+  of each other: neither overwrites the other.
+- **The offered versions are two columns because they are two kinds of statement**
+  ([`relay-and-tls.md`](relay-and-tls.md) § *What the client offered*). `tls_offered_versions` is the
+  `supported_versions` list — exact —, as the wire values in decimal joined by a space, in the
+  client's order; `tls_offered_legacy` is the `legacy_version` of a ClientHello without that
+  extension — a ceiling. A row with an offer has **exactly one** of them, and that pair is the test
+  for "is there an offer": the other three columns cannot say (a client without ALPN leaves them as
+  an unread row would). An empty list is `''`, not `NULL` — the extension was there and offered
+  nothing. Both set, a version that is not a number or does not fit two bytes, or an offer without
+  its omitted count, is a `corruptRow`.
+- **`tls_offered_alpn` is one text column**, the identifiers joined by a single space, `NULL` when
+  there are none. The scanner only keeps printable ASCII without spaces, so no escaping is needed;
+  what it did not keep is counted in `tls_offered_alpn_omitted`.
 - **Retention:** `prune(before:)` enforces the user's storage cap; the app exposes it in Settings →
   Storage. The cutoff is a `Date` precisely because retention is about *real* age, which a monotonic
   stamp cannot express across a reboot. `ON DELETE CASCADE` removes a flow's packets automatically.
@@ -398,6 +427,12 @@ underneath. Never share a raw `Database` handle across actors — go through the
 - Its source (`v10`): an upstream reading round-trips as one; a new answer replaces the source with
   the rest, in both directions; a refusal leaves no source behind; and a version written before
   `v10` reads back as coming from the ServerHello.
+- The client's TLS offer (`v11`): a listed offer round-trips in order with its ALPN, its omitted count
+  and its ECH mark; a ceiling reads back as a ceiling, not as a list of one; an empty list is still an
+  offer; a version no table knows is kept by value; every flow query returns it; a record without one
+  does not erase the row's; a new one replaces the previous whole in both directions; it and the
+  server's answer do not overwrite each other; four shapes of corrupt row; and a database stopped at
+  `v10` migrates keeping its flows, without an offer.
 - A flow created again (`v9`): its totals are added to what the row had, later writes of the second
   life are not added twice, a third life builds on both, the SNI survives a life that brings none
   and is replaced by a new one, an inspection outcome is not undone by a starting state and is

@@ -67,7 +67,8 @@ enum HistoryFixtures {
         tlsStatus: TLSInspectionStatus = .encrypted,
         sni: String? = nil,
         resolvedName: ResolvedFlowName? = nil,
-        serverTLS: ServerTLSAnswer? = nil
+        serverTLS: ServerTLSAnswer? = nil,
+        clientTLS: ClientTLSOffer? = nil
     ) -> StoredFlow {
         StoredFlow(
             id: id,
@@ -83,7 +84,8 @@ enum HistoryFixtures {
             tlsStatus: tlsStatus,
             sni: sni,
             resolvedName: resolvedName,
-            serverTLS: serverTLS
+            serverTLS: serverTLS,
+            clientTLS: clientTLS
         )
     }
 
@@ -126,7 +128,8 @@ enum HistoryFixtures {
         tlsStatus: TLSInspectionStatus = .encrypted,
         sni: String? = nil,
         resolvedName: ResolvedFlowName? = nil,
-        serverTLS: ServerTLSAnswer? = nil
+        serverTLS: ServerTLSAnswer? = nil,
+        clientTLS: ClientTLSOffer? = nil
     ) -> FlowRecord {
         FlowRecord(
             id: 0,
@@ -139,7 +142,8 @@ enum HistoryFixtures {
             tlsStatus: tlsStatus,
             sni: sni,
             resolvedName: resolvedName,
-            serverTLS: serverTLS
+            serverTLS: serverTLS,
+            clientTLS: clientTLS
         )
     }
 

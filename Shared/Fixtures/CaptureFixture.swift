@@ -234,7 +234,8 @@ public struct FixtureFlow: Sendable, Equatable {
             tlsStatus: tlsStatus,
             sni: sni,
             resolvedName: resolvedName,
-            serverTLS: nil
+            serverTLS: nil,
+            clientTLS: nil
         )
     }
 }

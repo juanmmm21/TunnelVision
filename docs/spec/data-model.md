@@ -167,6 +167,7 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
     public var sni: String?             // hostname del ClientHello, si se vio
     public var resolvedName: ResolvedFlowName?   // el nombre que el DNS daba a la dirección remota
     public var serverTLS: ServerTLSAnswer?   // lo que el servidor contestó al ClientHello, si se leyó
+    public var clientTLS: ClientTLSOffer?    // lo que el cliente ofreció en su ClientHello, si se leyó
     public var name: FlowName? { get }  // el nombre con su origen: el SNI, y si no el resuelto
 }
 
@@ -175,6 +176,19 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
 public enum ServerTLSAnswer: Sendable, Hashable, Codable {
     case negotiated(NegotiatedTLS)      // versión, suite y si salió de un HelloRetryRequest
     case refused(alert: UInt8)          // el código de la alerta, tal cual
+}
+
+/// Lo que el cliente ofreció en su ClientHello (`relay-and-tls.md` § *What the client offered*).
+public struct ClientTLSOffer: Sendable, Hashable, Codable {
+    public let versions: OfferedTLSVersions
+    public let applicationProtocols: [String]     // ALPN, en el orden del cliente; sin GREASE
+    public let omittedApplicationProtocols: Int   // los que mandó y no están en la lista
+    public let hasEncryptedClientHello: Bool      // lo leído es el ClientHello exterior
+}
+
+public enum OfferedTLSVersions: Sendable, Hashable, Codable {
+    case listed([TLSProtocolVersion])   // `supported_versions`: la lista exacta, sin GREASE
+    case upTo(TLSProtocolVersion)       // sin la extensión: `legacy_version`, un techo
 }
 
 /// El nombre que un flujo recibió al crearse de las respuestas de DNS vistas por el túnel.
@@ -225,6 +239,21 @@ the tunnel's), so a reader that cites a version cites its source with it. A flow
 negotiated TLS 1.3, and setting one never changes the other. `nil` means there was no reading — the
 flow was not TLS over TCP/443, the stream could not be read, the upstream connection never completed
 its handshake, or the answer has not arrived — and is never to be read as "no TLS".
+
+### What the client offered is the app's, even on an inspected flow
+
+`clientTLS` is read from the ClientHello the **device** sent, so it describes the app whatever
+TunnelVision then did with the flow. That is the asymmetry with `serverTLS`: on a flow the tunnel
+terminated, the server's answer is an answer to the tunnel's ClientHello
+(`TLSAnswerSource.upstreamConnection`), and the offer is the only TLS fact left that comes from the
+app. A reader that wants to know whether the app would have accepted an old version reads the offer,
+not the negotiated version.
+
+`OfferedTLSVersions` is an enum because the two shapes are different claims. `.listed` is exhaustive:
+a version that is not in it was not offered. `.upTo` is only a maximum: the ClientHello does not say
+how far below it the client would go, and a reader must not treat it as a list of one. `nil` means
+the offer was not read — the flow was not TLS over TCP/443, or its ClientHello could not be walked
+to the end — and is never an empty offer.
 
 ## Tests to write (M1)
 

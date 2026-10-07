@@ -69,7 +69,8 @@ final class CodableRoundTripTests: XCTestCase {
             tlsStatus: .inspected,
             sni: "example.com",
             resolvedName: nil,
-            serverTLS: nil
+            serverTLS: nil,
+            clientTLS: nil
         )
         try roundTrip(withSNI)
 
@@ -85,7 +86,8 @@ final class CodableRoundTripTests: XCTestCase {
             tlsStatus: .encrypted,
             sni: nil,
             resolvedName: nil,
-            serverTLS: nil
+            serverTLS: nil,
+            clientTLS: nil
         )
         try roundTrip(withoutSNI)
 
@@ -101,7 +103,8 @@ final class CodableRoundTripTests: XCTestCase {
             tlsStatus: .plaintext,
             sni: nil,
             resolvedName: ResolvedFlowName(name: "api.example.com", otherNames: ["cdn.example.net"]),
-            serverTLS: nil
+            serverTLS: nil,
+            clientTLS: nil
         )
         try roundTrip(named)
 
@@ -113,6 +116,23 @@ final class CodableRoundTripTests: XCTestCase {
         try roundTrip(answered)
         answered.serverTLS = .refused(alert: 70)
         try roundTrip(answered)
+
+        // Y lo que el cliente ofreció, en las dos formas de decir sus versiones.
+        var offering = withSNI
+        offering.clientTLS = ClientTLSOffer(
+            versions: .listed([.tls13, .tls12]),
+            applicationProtocols: ["h2", "http/1.1"],
+            omittedApplicationProtocols: 1,
+            hasEncryptedClientHello: true
+        )
+        try roundTrip(offering)
+        offering.clientTLS = ClientTLSOffer(
+            versions: .upTo(.tls12),
+            applicationProtocols: [],
+            omittedApplicationProtocols: 0,
+            hasEncryptedClientHello: false
+        )
+        try roundTrip(offering)
     }
 
     func testPacketMetaEquatableAndHashable() {

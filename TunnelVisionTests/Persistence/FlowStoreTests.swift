@@ -504,6 +504,222 @@ final class FlowStoreTests: XCTestCase {
         XCTAssertEqual(stored?.tlsStatus, .notInspectable)
     }
 
+    // MARK: - Oferta TLS del cliente
+
+    private static let listedOffer = ClientTLSOffer(
+        versions: .listed([.tls13, .tls12]),
+        applicationProtocols: ["h2", "http/1.1"],
+        omittedApplicationProtocols: 2,
+        hasEncryptedClientHello: true
+    )
+
+    private static let ceilingOffer = ClientTLSOffer(
+        versions: .upTo(.tls12),
+        applicationProtocols: [],
+        omittedApplicationProtocols: 0,
+        hasEncryptedClientHello: false
+    )
+
+    private func storeAndReadBack(offer: ClientTLSOffer?) async throws -> StoredFlow {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(
+                remote: ModelFixtures.v4(93, 184, 216, 34), firstSeen: 1, lastSeen: 2, clientTLS: offer
+            )
+        )
+        let stored = try await store.flow(id: id)
+        return try XCTUnwrap(stored)
+    }
+
+    func testAListedOfferRoundTrips() async throws {
+        let flow = try await storeAndReadBack(offer: Self.listedOffer)
+
+        XCTAssertEqual(flow.clientTLS, Self.listedOffer)
+    }
+
+    /// Un techo no vuelve convertido en una lista de una versión: son afirmaciones distintas.
+    func testACeilingOfferRoundTripsAsACeiling() async throws {
+        let flow = try await storeAndReadBack(offer: Self.ceilingOffer)
+
+        XCTAssertEqual(flow.clientTLS, Self.ceilingOffer)
+    }
+
+    /// Una lista vacía —la extensión estaba y solo traía relleno— no vuelve como «sin oferta».
+    func testAnEmptyListedOfferIsStillAnOffer() async throws {
+        let empty = ClientTLSOffer(
+            versions: .listed([]), applicationProtocols: ["h2"], omittedApplicationProtocols: 0,
+            hasEncryptedClientHello: false
+        )
+
+        let flow = try await storeAndReadBack(offer: empty)
+
+        XCTAssertEqual(flow.clientTLS, empty)
+    }
+
+    /// Una versión que no existe se guarda por su valor, como la del servidor.
+    func testAnUnpublishedOfferedVersionRoundTrips() async throws {
+        let draft = ClientTLSOffer(
+            versions: .listed([TLSProtocolVersion(rawValue: 0x7F1C), .tls13]),
+            applicationProtocols: [], omittedApplicationProtocols: 0, hasEncryptedClientHello: false
+        )
+
+        let flow = try await storeAndReadBack(offer: draft)
+
+        XCTAssertEqual(flow.clientTLS, draft)
+    }
+
+    func testAFlowWithoutAnOfferReadsBackWithoutOne() async throws {
+        let flow = try await storeAndReadBack(offer: nil)
+
+        XCTAssertNil(flow.clientTLS)
+    }
+
+    func testEveryFlowQueryReturnsTheClientOffer() async throws {
+        let store = try makeStore()
+        let record = PersistenceFixtures.flow(
+            remote: ModelFixtures.v4(93, 184, 216, 34), firstSeen: 1, lastSeen: 2, clientTLS: Self.listedOffer
+        )
+
+        let id = try await store.upsertFlow(record)
+
+        let byID = try await store.flow(id: id)
+        let byKey = try await store.flow(matching: record.key)
+        let recent = try await store.recentFlows(limit: 10)
+        XCTAssertEqual(byID?.clientTLS, Self.listedOffer)
+        XCTAssertEqual(byKey?.clientTLS, Self.listedOffer)
+        XCTAssertEqual(recent.map(\.clientTLS), [Self.listedOffer])
+    }
+
+    /// El ClientHello se lee una vez. Un flujo que la tabla en memoria vuelve a crear llega sin
+    /// oferta, y eso no puede borrar la que la fila ya tenía.
+    func testARecordWithoutAnOfferDoesNotEraseTheOneTheRowHas() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 2, clientTLS: Self.listedOffer)
+        )
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 9, clientTLS: nil)
+        )
+
+        let stored = try await store.flow(id: id)
+        let flow = try XCTUnwrap(stored)
+        XCTAssertEqual(flow.clientTLS, Self.listedOffer)
+        XCTAssertEqual(flow.lastSeen, PersistenceFixtures.date(9), "lo demás sí se actualiza")
+    }
+
+    /// Y una oferta nueva sustituye a la anterior **entera**: no queda la lista de una bajo el
+    /// techo de otra —que sería una fila corrupta—, ni el ALPN de la primera.
+    func testANewOfferReplacesThePreviousOneWhole() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 2, clientTLS: Self.listedOffer)
+        )
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 5, clientTLS: Self.ceilingOffer)
+        )
+        let ceiling = try await store.flow(id: id)
+        XCTAssertEqual(ceiling?.clientTLS, Self.ceilingOffer)
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 9, clientTLS: Self.listedOffer)
+        )
+        let listed = try await store.flow(id: id)
+        XCTAssertEqual(listed?.clientTLS, Self.listedOffer)
+    }
+
+    /// La oferta y la respuesta del servidor son independientes: una no pisa a la otra.
+    func testTheOfferAndTheServerAnswerDoNotOverwriteEachOther() async throws {
+        let store = try makeStore()
+        let remote = ModelFixtures.v4(93, 184, 216, 34)
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 2, clientTLS: Self.listedOffer)
+        )
+
+        _ = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: remote, firstSeen: 1, lastSeen: 5, serverTLS: Self.tls13)
+        )
+
+        let stored = try await store.flow(id: id)
+        XCTAssertEqual(stored?.clientTLS, Self.listedOffer)
+        XCTAssertEqual(stored?.serverTLS, Self.tls13)
+    }
+
+    /// Una lista y un techo a la vez no los escribe este store: es una fila corrupta, y se dice
+    /// en vez de elegir entre los dos.
+    func testAnOfferWithBothAListAndACeilingIsACorruptRow() async throws {
+        try await assertCorruptOffer(
+            "UPDATE flows SET tls_offered_versions = '772', tls_offered_legacy = 771, tls_offered_alpn_omitted = 0 WHERE id = ?"
+        )
+    }
+
+    func testAnOfferedVersionThatIsNotANumberIsACorruptRow() async throws {
+        try await assertCorruptOffer(
+            "UPDATE flows SET tls_offered_versions = '772 tls', tls_offered_alpn_omitted = 0 WHERE id = ?"
+        )
+    }
+
+    func testAnOfferedCeilingOutOfTheWireRangeIsACorruptRow() async throws {
+        try await assertCorruptOffer(
+            "UPDATE flows SET tls_offered_legacy = 70000, tls_offered_alpn_omitted = 0 WHERE id = ?"
+        )
+    }
+
+    func testAnOfferWithoutItsOmittedCountIsACorruptRow() async throws {
+        try await assertCorruptOffer("UPDATE flows SET tls_offered_legacy = 771 WHERE id = ?")
+    }
+
+    private func assertCorruptOffer(_ sql: String, file: StaticString = #filePath, line: UInt = #line) async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(
+            PersistenceFixtures.flow(remote: ModelFixtures.v4(93, 184, 216, 34), firstSeen: 1, lastSeen: 2)
+        )
+        let raw = try DatabaseQueue(path: dbURL.path)
+        try await raw.write { db in
+            try db.execute(sql: sql, arguments: [id])
+        }
+        try raw.close()
+
+        do {
+            _ = try await store.flow(id: id)
+            XCTFail("una fila con la oferta corrupta no puede leerse como buena", file: file, line: line)
+        } catch FlowStore.StoreError.corruptRow {
+            // Lo esperado.
+        }
+    }
+
+    /// La v11 no toca filas: un flujo de antes se lee sin oferta, y con todo lo que ya tenía.
+    func testMigrationV11LeavesEarlierFlowsWithoutAnOffer() async throws {
+        let legacy = try DatabaseQueue(path: dbURL.path)
+        try Schema.migrator().migrate(legacy, upTo: "v10")
+        try await legacy.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO flows
+                    (session, proto, addr_a, port_a, addr_b, port_b,
+                     first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, sni,
+                     tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream)
+                VALUES (0, 6, ?, 51000, ?, 443, 100, 200, 0, 0, 1, 1, 'example.com', 772, 4865, 0, 0)
+                """,
+                arguments: [
+                    Data(PersistenceFixtures.deviceIP.bytes),
+                    Data(ModelFixtures.v4(1, 1, 1, 1).bytes),
+                ]
+            )
+        }
+        try legacy.close()
+
+        let store = try makeStore()
+        let flows = try await store.recentFlows(limit: 10)
+        let flow = try XCTUnwrap(flows.first)
+        XCTAssertNil(flow.clientTLS)
+        XCTAssertEqual(flow.sni, "example.com")
+        XCTAssertEqual(flow.serverTLS, Self.tls13)
+    }
+
     // MARK: - Respuesta TLS del servidor
 
     private static let tls13 = ServerTLSAnswer.negotiated(

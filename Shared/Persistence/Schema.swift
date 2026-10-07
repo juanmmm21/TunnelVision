@@ -305,6 +305,32 @@ public enum Schema {
             }
         }
 
+        // v11 — lo que el **cliente** ofreció en su ClientHello: versiones de TLS y ALPN.
+        //
+        // Por qué dos columnas para las versiones: el ClientHello las dice de dos formas que no
+        // significan lo mismo. `tls_offered_versions` es la lista de `supported_versions` (exacta);
+        // `tls_offered_legacy` es el `legacy_version` de un ClientHello sin esa extensión, que es
+        // un techo y no dice qué acepta por debajo. Una fila con oferta tiene **exactamente una**
+        // de las dos, y esa pareja es lo que dice si hay oferta: las otras tres columnas no valen
+        // para saberlo (un cliente sin ALPN las deja como una fila sin lectura).
+        //
+        // Las listas son texto separado por espacios: las versiones, por su valor del cable en
+        // decimal; los protocolos, tal cual, que el escáner solo deja pasar ASCII imprimible sin
+        // espacios. Una lista de versiones vacía es `''`, no `NULL`: la extensión estaba y no
+        // ofrecía nada.
+        migrator.registerMigration("v11") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "tls_offered_versions", .text)
+                t.add(column: "tls_offered_legacy", .integer)
+                t.add(column: "tls_offered_alpn", .text)
+                // Cuántos identificadores de ALPN mandó el cliente que no están en la columna
+                // anterior. `NULL` sin oferta.
+                t.add(column: "tls_offered_alpn_omitted", .integer)
+                // 1 si el ClientHello llevaba `encrypted_client_hello`: lo leído es el exterior.
+                t.add(column: "tls_offered_ech", .integer)
+            }
+        }
+
         return migrator
     }
 }

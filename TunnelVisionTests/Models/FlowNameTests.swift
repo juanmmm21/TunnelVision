@@ -56,12 +56,12 @@ final class FlowNameTests: XCTestCase {
         )
         let record = FlowRecord(
             id: 0, key: key, firstSeen: 1, lastSeen: 2, bytesOut: 0, bytesIn: 0, packetCount: 1,
-            tlsStatus: .plaintext, sni: nil, resolvedName: resolved, serverTLS: nil
+            tlsStatus: .plaintext, sni: nil, resolvedName: resolved, serverTLS: nil, clientTLS: nil
         )
         let stored = StoredFlow(
             id: 1, key: key, firstSeen: Date(timeIntervalSince1970: 1), lastSeen: Date(timeIntervalSince1970: 2),
             bytesOut: 0, bytesIn: 0, packetCount: 1,
-            tlsStatus: .plaintext, sni: nil, resolvedName: resolved, serverTLS: nil
+            tlsStatus: .plaintext, sni: nil, resolvedName: resolved, serverTLS: nil, clientTLS: nil
         )
 
         XCTAssertEqual(record.name?.origin, .dns)

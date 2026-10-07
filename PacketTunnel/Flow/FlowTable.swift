@@ -110,6 +110,14 @@ public actor FlowTable {
         nodes[key]?.sni = sni
     }
 
+    /// Anota lo que el cliente ofreció en el ClientHello del flujo —versiones de TLS y ALPN—, que
+    /// el relay lee del mismo mensaje que el nombre. No-op si el flujo ya no está en la tabla.
+    ///
+    /// Tampoco toca el estado de inspección, por lo mismo que `setSNI`.
+    public func setClientTLS(_ offer: ClientTLSOffer, for key: FlowKey) {
+        nodes[key]?.clientTLS = offer
+    }
+
     /// Anota lo que el servidor contestó al ClientHello del flujo —la versión y la suite que eligió,
     /// o la alerta con la que se negó—, que el relay lee del stream entrante
     /// (`Relay.readServerHello`). No-op si el flujo ya no está en la tabla.
@@ -262,6 +270,7 @@ public actor FlowTable {
         var sni: String?
         let resolvedName: ResolvedFlowName?
         var serverTLS: ServerTLSAnswer?
+        var clientTLS: ClientTLSOffer?
         var reassembler: TCPReassembler?
         var finOutbound: Bool
         var finInbound: Bool
@@ -289,6 +298,7 @@ public actor FlowTable {
             self.sni = nil
             self.resolvedName = resolvedName
             self.serverTLS = nil
+            self.clientTLS = nil
             self.reassembler = nil
             self.finOutbound = false
             self.finInbound = false
@@ -309,7 +319,8 @@ public actor FlowTable {
                 tlsStatus: tlsStatus,
                 sni: sni,
                 resolvedName: resolvedName,
-                serverTLS: serverTLS
+                serverTLS: serverTLS,
+                clientTLS: clientTLS
             )
         }
     }

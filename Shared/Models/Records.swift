@@ -53,6 +53,11 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
     /// no se dejó leer, o la respuesta aún no ha llegado.
     public var serverTLS: ServerTLSAnswer?
 
+    /// Lo que el cliente ofreció en su ClientHello —versiones de TLS y ALPN—. `nil` si no hubo
+    /// lectura: el flujo no era TLS sobre TCP/443, o su ClientHello no se dejó recorrer entero.
+    /// Es de la app también en un flujo inspeccionado, al revés que `serverTLS`.
+    public var clientTLS: ClientTLSOffer?
+
     public init(
         id: Int64,
         key: FlowKey,
@@ -64,7 +69,8 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
         tlsStatus: TLSInspectionStatus,
         sni: String?,
         resolvedName: ResolvedFlowName?,
-        serverTLS: ServerTLSAnswer?
+        serverTLS: ServerTLSAnswer?,
+        clientTLS: ClientTLSOffer?
     ) {
         self.id = id
         self.key = key
@@ -77,6 +83,7 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
         self.sni = sni
         self.resolvedName = resolvedName
         self.serverTLS = serverTLS
+        self.clientTLS = clientTLS
     }
 
     /// El nombre del flujo con su origen: el SNI si lo anunció, y si no el que se dedujo del DNS.
