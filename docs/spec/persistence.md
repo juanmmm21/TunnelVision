@@ -156,6 +156,14 @@ public enum Schema {
                 t.add(column: "base_packet_count", .integer).notNull().defaults(to: 0)
             }
         }
+
+        // v10 — de dónde salió la versión y la suite: 1 = de la conexión que el túnel abrió contra
+        // el servidor real para inspeccionar el flujo. NULL = sin versión, o leída del ServerHello.
+        m.registerMigration("v10") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "tls_upstream", .integer)
+            }
+        }
         return m
     }
 }
@@ -238,7 +246,7 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
     public let tlsStatus: TLSInspectionStatus
     public let sni: String?
     public let resolvedName: ResolvedFlowName?   // `dns_name` / `dns_other_names`
-    public let serverTLS: ServerTLSAnswer?       // `tls_version` / `tls_cipher_suite` / `tls_hello_retry` / `tls_alert`
+    public let serverTLS: ServerTLSAnswer?       // `tls_version` / `tls_cipher_suite` / `tls_hello_retry` / `tls_upstream` / `tls_alert`
     public var name: FlowName? { get }           // el nombre con su origen (`data-model.md`)
     public var duration: TimeInterval { get }
     public var totalBytes: UInt64 { get }
@@ -324,9 +332,14 @@ introducirá un reloj monotónico cuando lo necesite el código productor (parse
   ServerHello is read once, at the start of the stream; a flow the in-memory table creates a second
   time will not see it go by again, so it arrives without an answer and the row must keep its own.
   If it does arrive with one there was a new handshake on the same 5-tuple, and the latest is the one
-  that holds. The four columns move together — a version never ends up beside another answer's alert.
-- **The answer is four integer columns, not one encoded value**, so a report can filter on the
-  version in SQL. `tls_alert` set means *refused* and the other three are `NULL`; otherwise
+  that holds. The five columns move together — a version never ends up beside another answer's alert,
+  nor under another reading's source.
+- **Where the reading came from is a column of its own** (`tls_upstream`, `v10`), because it is not
+  derivable from `tls_status` and it changes what the version means
+  ([`relay-and-tls.md`](relay-and-tls.md) § *What an inspected flow's server chose*). `NULL` reads as
+  the ServerHello: before `v10` nothing else wrote a version, so earlier rows need no backfill.
+- **The answer is integer columns, not one encoded value**, so a report can filter on the
+  version in SQL. `tls_alert` set means *refused* and the other four are `NULL`; otherwise
   `tls_version` and `tls_cipher_suite` are both set or both `NULL`. A row that has one without the
   other, or a value that does not fit the two bytes it came from, is a `corruptRow`, not a guess.
   Alert `0` is a valid code: the test is `NULL`, never zero.
@@ -382,6 +395,9 @@ underneath. Never share a raw `Database` handle across actors — go through the
   returns it; a record without one does not erase the row's; a new one replaces the previous whole in
   both directions; a half-written or out-of-range answer is a `corruptRow`; and a database stopped at
   `v7` migrates keeping its flows, without an answer.
+- Its source (`v10`): an upstream reading round-trips as one; a new answer replaces the source with
+  the rest, in both directions; a refusal leaves no source behind; and a version written before
+  `v10` reads back as coming from the ServerHello.
 - A flow created again (`v9`): its totals are added to what the row had, later writes of the second
   life are not added twice, a third life builds on both, the SNI survives a life that brings none
   and is replaced by a new one, an inspection outcome is not undone by a starting state and is

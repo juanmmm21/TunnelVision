@@ -217,10 +217,14 @@ report. Its rules:
 
 `serverTLS` and `tlsStatus` are independent. `tlsStatus` says what TunnelVision did with the flow
 (left it encrypted, inspected it, found it not inspectable); `serverTLS` says what the **server**
-chose, read from a ServerHello that travels in the clear. A flow is `encrypted` with a negotiated
-TLS 1.3, and setting one never changes the other. `nil` means there was no reading — the flow was not
-TLS over TCP/443, the stream could not be read, the flow is inspected, or the answer has not arrived
-— and is never to be read as "no TLS".
+chose: read from a ServerHello that travels in the clear, or — for a flow the tunnel terminated —
+reported by the connection the tunnel opened to the real server. `NegotiatedTLS.source` says which,
+and it is **not** implied by `tlsStatus`: a `notInspectable` flow can carry an upstream reading, taken
+before its client rejected the local CA. The two are answers to different ClientHellos (the app's and
+the tunnel's), so a reader that cites a version cites its source with it. A flow is `encrypted` with a
+negotiated TLS 1.3, and setting one never changes the other. `nil` means there was no reading — the
+flow was not TLS over TCP/443, the stream could not be read, the upstream connection never completed
+its handshake, or the answer has not arrived — and is never to be read as "no TLS".
 
 ## Tests to write (M1)
 

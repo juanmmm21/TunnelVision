@@ -544,6 +544,7 @@ public protocol TLSTerminationEngine: Sendable {                    // PacketTun
         host: String,
         to endpoint: IPEndpoint,
         plaintext: (@Sendable (Data, Direction) -> Void)?,
+        onUpstreamTLS: (@Sendable (NegotiatedTLS) -> Void)?,   // see "What an inspected flow's server chose"
         onOutcome: @escaping @Sendable (TLSTerminationOutcome) -> Void
     ) async throws -> any RelayConnection
 }
@@ -555,6 +556,7 @@ public actor TLSInterceptor {
         to endpoint: IPEndpoint,
         clientHelloSNI: String?,
         plaintext: (@Sendable (Data, Direction) -> Void)?,
+        onUpstreamTLS: (@Sendable (NegotiatedTLS) -> Void)?,
         onResolve: @escaping @Sendable (TLSInterceptionPolicy.Decision) -> Void
     ) async throws -> any RelayConnection
 }
@@ -617,6 +619,7 @@ public protocol FlowInspecting: Sendable {                    // PacketTunnel/Re
         to endpoint: IPEndpoint,
         clientHelloSNI: String?,
         plaintext: (@Sendable (Data, Direction) -> Void)?,
+        onUpstreamTLS: (@Sendable (NegotiatedTLS) -> Void)?,
         onResolve: @escaping @Sendable (TLSInterceptionPolicy.Decision) -> Void
     ) async throws -> any RelayConnection
 }
@@ -838,10 +841,14 @@ public struct TLSProtocolVersion: RawRepresentable, Sendable, Hashable {   // Sh
 public struct TLSCipherSuite: RawRepresentable, Sendable, Hashable {       // Shared/Models
     public let rawValue: UInt16
 }
+public enum TLSAnswerSource: String, Sendable, Hashable {                  // Shared/Models
+    case serverHello, upstreamConnection
+}
 public struct NegotiatedTLS: Sendable, Hashable {                          // Shared/Models
     public let version: TLSProtocolVersion
     public let cipherSuite: TLSCipherSuite
     public let fromHelloRetryRequest: Bool
+    public let source: TLSAnswerSource
 }
 
 public struct ServerHelloScanner: Sendable {                               // PacketTunnel/TLS
@@ -917,7 +924,7 @@ flow's next record — or its closing one — carries it to the store as `FlowRe
   termination receives the whole ClientHello and answers with a ServerHello of its own. A candidate
   that falls back to passthrough before anything is installed keeps the scanner it was born with.
   The figure for an inspected flow is the one the upstream connection negotiates; it does not come
-  from a stream and is not part of this hookup.
+  from a stream (§ *What an inspected flow's server chose*, below).
 - **A flow carries an answer, not an outcome.** `negotiated` and `refused(alert:)` say something
   about the server's TLS and are stored. The other four reasons a scanner gives up — not TLS, not a
   ServerHello, malformed, too large — say nothing about it: the flow is left with no answer and the
@@ -927,6 +934,62 @@ flow's next record — or its closing one — carries it to the store as `FlowRe
 - **Three counters in `RelayStats`**, next to the SNI pair: `serverHelloObserved`,
   `serverHelloRefused` and `serverHelloUnavailable`. A flow that closes before the server says
   anything is in none of them. No screen reads them yet.
+
+### What an inspected flow's server chose ✅
+
+An inspected flow has two TLS connections, and the ServerHello the device receives belongs to the
+wrong one. The real server answers on the **upstream leg** — the `NWConnection` the termination
+opens — which Network.framework encrypts, so there is no stream to read. There is its result:
+
+```swift
+enum UpstreamTLSReading {                                                  // PacketTunnel/TLS
+    static func negotiated(version: tls_protocol_version_t, cipherSuite: tls_ciphersuite_t) -> NegotiatedTLS?
+    static func negotiated(by connection: NWConnection) -> NegotiatedTLS?
+}
+```
+
+`NetworkRelayConnection` takes an optional `onTLSNegotiated` and calls it when the connection
+becomes ready, **before** `onReady`. `NetworkTLSTerminationEngine` builds the upstream leg with it,
+and the reading travels up the same way the outcome does — `makeTermination(onUpstreamTLS:)`,
+`TLSInterceptor.open(onUpstreamTLS:)`, `FlowInspecting` — to the relay, which hands it to the
+**same** `ServerTLSObserving` seam as `ServerTLSAnswer.negotiated`. Nothing downstream of the seam
+changed shape. This asks our own connection what it negotiated, which any TLS client may do of its
+own; ADR 0003 is not involved. What had to be decided:
+
+- **A second callback, not a wider `onResolve`.** The upstream leg negotiates when it opens; the
+  decision arrives when the flow ends. And one can exist without the other: a client that rejects
+  our leaf ends as `notInspectable` after the upstream leg has already completed its handshake.
+- **No conversion table.** `tls_protocol_version_t` and `tls_ciphersuite_t` are `uint16_t` whose
+  values are the wire's (`0x0304`, the IANA codes) — checked in `SecProtocolTypes.h` and held by a
+  test, so that an SDK that changed them would fail a test rather than store something else. A
+  version of `0` is no reading.
+- **The source is stored, because it cannot be derived and because it changes what the figure
+  means** (`TLSAnswerSource`, column `tls_upstream`, schema `v10`). It cannot be derived from
+  `tlsStatus`: a flow whose client pins ends `notInspectable`, and one whose termination fails
+  midway stays `encrypted`, and either may carry an upstream reading. And the two sources answer
+  **different ClientHellos**: a ServerHello read off the stream answers the app's, so it is what
+  that connection really negotiated; the upstream figure answers the tunnel's, which offers what
+  the system offers. It says what the server accepts, not what the app offered — a server that
+  negotiates 1.3 with us may be talking 1.2 to an app that offers nothing newer. A report has to
+  be able to say which of the two it is citing.
+- **`fromHelloRetryRequest` is `false` for an upstream reading.** The system reports a finished
+  handshake: the figure is the final one whether or not a retry happened, and it does not say.
+- **The upstream leg offers the system's defaults**, with no minimum or maximum version and no
+  suite list of our own. That is part of what the reading means.
+- **A reading is taken only while the flow's connection is still that termination.** It reaches the
+  relay through a task, so it can arrive late — after the flow is gone, or after
+  `rollbackTermination` returned it to passthrough. In the second case nothing is lost: the plain
+  connection that takes over receives the device's ClientHello and its ServerHello is read off the
+  stream. Recording the late one could overwrite that reading, which is the better of the two.
+- **Requested only when someone is listening**, like the plaintext sink: without a
+  `ServerTLSObserving` the termination is opened with no callback.
+- **One counter**, `RelayStats.upstreamTLSObserved`. Against `terminationsOpened` it says how many
+  terminations completed their upstream TLS; it is not `flowsInspected`, for the pinning reason
+  above.
+
+**Unproven until a device runs it:** that the system trust evaluation the production upstream leg
+uses (no verify block, by design) leaves the metadata readable at `.ready` exactly as the test
+anchor does. Nothing suggests otherwise; the tests exercise the same `NetworkRelayConnection`.
 
 **Tests (34):** hand-written vectors, as for the ClientHello — the version from the extension and
 from `legacy_version`, with and without an extensions block, an unpublished version kept raw; the
@@ -940,6 +1003,17 @@ HelloRetryRequest marked, reported once per flow, an alert as a refusal, a non-T
 not reported, flows outside 443 and a relay without an observer never scanned — and the three that
 only the relay can answer: the ServerHello of our own termination is never read, a candidate that
 falls back to passthrough is, and after a rollback the real server is read from the start.
+
+**Tests of the upstream reading (16):** `UpstreamTLSReadingTests` — the system's versions and
+suites against their wire values, a value the SDK does not name kept as given, no version is no
+reading; and, against a **real TLS server on loopback** through the production
+`NetworkRelayConnection`: a TLS 1.3 server read as 1.3 with one of its three suites, a server
+capped at 1.2 read as 1.2, the reading delivered before `onReady`, and a plain TCP connection
+reporting nothing. `RelayServerHelloTests` — an inspected flow carries the upstream reading and no
+stream is scanned for it, a pinned flow keeps it, no observer means no callback, and a reading that
+arrives after a rollback or after the flow is gone is dropped. `TLSInterceptorTests` and
+`NetworkTLSTerminationEngineTests` — the callback reaches the caller untouched and the upstream leg
+is built with it.
 
 ## Tests
 
