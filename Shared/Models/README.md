@@ -13,6 +13,11 @@ picks the value and whatever it sent is kept as sent. `ServerTLSAnswer` is what 
 a negotiation, or the alert the server refused with. Spec:
 [`../../docs/spec/relay-and-tls.md`](../../docs/spec/relay-and-tls.md) § *What the server chose*.
 
+`ClientTLSOffer.swift` is the other half: what the **client** offered in its ClientHello — the TLS
+versions it accepts and its ALPN. `OfferedTLSVersions` is an enum because a list from
+`supported_versions` is exact and a bare `legacy_version` is only a ceiling, and a report must not
+confuse the two. Spec: same file, § *What the client offered*.
+
 `TunnelAddressing` also lives here (it moved out of the extension in M9): the tunnel's own IPs are
 knowledge of *both* processes — the extension announces them to NetworkExtension and compares against
 them to resolve direction, and the app needs them to tell which endpoint of a canonical `FlowKey` is

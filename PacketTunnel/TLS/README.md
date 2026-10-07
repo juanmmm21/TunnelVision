@@ -54,7 +54,10 @@ Network.framework. The seam is what would make that swap cheap if it is ever nee
 **Implemented — reading the two hellos, which travel in the clear (no CA, no decryption):**
 
 - `ClientHelloScanner.swift` — the host a client announces (SNI), read incrementally from the
-  outbound stream. It is what names a flow.
+  outbound stream. It is what names a flow. From the same message it reads what the client
+  **offered** (`offer`): the TLS versions it accepts — an exact list from `supported_versions`, or
+  only a ceiling from `legacy_version` — and its ALPN, with GREASE dropped and Encrypted Client
+  Hello marked.
 - `ServerHelloScanner.swift` — the TLS version and cipher suite a server chose, read incrementally
   from the inbound stream: the version from `supported_versions` when present (that is how TLS 1.3
   announces itself), an alert reported as the server refusing, a HelloRetryRequest read and marked.

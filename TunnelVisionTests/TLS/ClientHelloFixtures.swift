@@ -25,6 +25,28 @@ enum ClientHelloFixtures {
         /// `supported_versions` con TLS 1.3, la que de verdad va delante del SNI en muchos clientes.
         static let supportedVersions = Extension(type: 43, payload: [0x02, 0x03, 0x04])
 
+        /// `supported_versions` con la lista que pida el test, en su forma de ClientHello: un
+        /// vector con un byte de longitud delante.
+        static func supportedVersions(_ versions: [UInt16]) -> Extension {
+            let list = versions.flatMap(ClientHelloFixtures.uint16)
+            return Extension(type: 43, payload: [UInt8(list.count)] + list)
+        }
+
+        /// ALPN (RFC 7301) con los identificadores como texto.
+        static func applicationProtocols(_ names: [String]) -> Extension {
+            applicationProtocols(rawNames: names.map { [UInt8]($0.utf8) })
+        }
+
+        /// ALPN con los bytes de cada identificador puestos a mano: para los GREASE y para los que
+        /// el escáner no debe guardar.
+        static func applicationProtocols(rawNames: [[UInt8]]) -> Extension {
+            let list = rawNames.flatMap { [UInt8($0.count)] + $0 }
+            return Extension(type: 16, payload: ClientHelloFixtures.uint16(UInt16(list.count)) + list)
+        }
+
+        /// `encrypted_client_hello` (RFC 9849). El payload es relleno: el escáner solo mira que esté.
+        static let encryptedClientHello = Extension(type: 65037, payload: [UInt8](repeating: 0x5A, count: 24))
+
         /// `padding` (RFC 7685) del tamaño que pida el test: es la forma honesta de inflar un
         /// ClientHello hasta el tamaño que hoy le dan los key shares post-cuánticos.
         static func padding(_ count: Int) -> Extension {
@@ -58,8 +80,8 @@ enum ClientHelloFixtures {
 
     /// Cuerpo de un ClientHello con las extensiones que se le pasen. `extensions: nil` produce un
     /// ClientHello **sin bloque de extensiones**, que es lo que manda un cliente TLS 1.0–1.2.
-    static func clientHelloBody(extensions: [Extension]?) -> [UInt8] {
-        var body: [UInt8] = [0x03, 0x03]                            // legacy_version = TLS 1.2
+    static func clientHelloBody(extensions: [Extension]?, legacyVersion: UInt16 = 0x0303) -> [UInt8] {
+        var body: [UInt8] = uint16(legacyVersion)                   // legacy_version, TLS 1.2 si no se dice
         body += [UInt8](repeating: 0xAB, count: 32)                 // random
         body += [32] + [UInt8](repeating: 0xCD, count: 32)          // legacy_session_id
         body += uint16(4) + [0x13, 0x01, 0x13, 0x02]                // cipher_suites
@@ -85,6 +107,12 @@ enum ClientHelloFixtures {
     static func clientHello(host: String, extraExtensions: [Extension] = []) -> Data {
         let extensions = [Extension.supportedVersions, .serverName(host)] + extraExtensions
         return Data(record(payload: handshakeMessage(body: clientHelloBody(extensions: extensions))))
+    }
+
+    /// Un ClientHello con exactamente las extensiones que se le pasen —sin las dos que
+    /// `clientHello(host:)` pone por su cuenta—, en un solo record. `nil` = sin bloque de extensiones.
+    static func clientHello(extensions: [Extension]?, legacyVersion: UInt16 = 0x0303) -> Data {
+        Data(record(payload: handshakeMessage(body: clientHelloBody(extensions: extensions, legacyVersion: legacyVersion))))
     }
 
     /// Un ClientHello inflado por encima de la MTU del túnel: el tamaño que tienen hoy de verdad
