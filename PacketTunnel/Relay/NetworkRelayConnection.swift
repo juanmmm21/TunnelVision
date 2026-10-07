@@ -22,11 +22,21 @@ public final class NetworkRelayConnection: RelayConnection, @unchecked Sendable 
     private let connection: NWConnection
     private let queue: DispatchQueue
     private let mode: Mode
+    /// A quién contarle lo que negoció el TLS de esta conexión, si lo lleva. Solo lo usa la pata
+    /// saliente de una terminación: una conexión de passthrough es TCP llano y el TLS que lleva
+    /// dentro es el del dispositivo, que se lee del stream.
+    private let onTLSNegotiated: (@Sendable (NegotiatedTLS) -> Void)?
 
-    public init(connection: NWConnection, queue: DispatchQueue, mode: Mode) {
+    public init(
+        connection: NWConnection,
+        queue: DispatchQueue,
+        mode: Mode,
+        onTLSNegotiated: (@Sendable (NegotiatedTLS) -> Void)? = nil
+    ) {
         self.connection = connection
         self.queue = queue
         self.mode = mode
+        self.onTLSNegotiated = onTLSNegotiated
     }
 
     public func start(
@@ -34,9 +44,16 @@ public final class NetworkRelayConnection: RelayConnection, @unchecked Sendable 
         onReceive: @escaping @Sendable (Data) -> Void,
         onClose: @escaping @Sendable (RelayConnectionError?) -> Void
     ) {
-        connection.stateUpdateHandler = { state in
+        // `weak` porque la conexión retiene su propio handler: capturarla fuerte sería un ciclo.
+        connection.stateUpdateHandler = { [weak connection, onTLSNegotiated] state in
             switch state {
             case .ready:
+                // Antes que `onReady`: es metadato del mismo instante, y quien lo recibe lo quiere
+                // apuntado antes de que el flujo empiece a moverse. Una conexión sin TLS no da nada.
+                if let onTLSNegotiated, let connection,
+                   let negotiated = UpstreamTLSReading.negotiated(by: connection) {
+                    onTLSNegotiated(negotiated)
+                }
                 onReady()
             case .failed(let error):
                 onClose(RelayConnectionError(String(describing: error)))
