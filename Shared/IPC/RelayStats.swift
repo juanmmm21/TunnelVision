@@ -56,6 +56,11 @@ public struct RelayStats: Sendable, Equatable, Codable {
     /// handshake TLS). Va al lado del anterior porque la pareja es lo que dice si la Timeline está
     /// enseñando nombres o direcciones.
     public var sniUnavailable: UInt64 = 0
+    /// Flujos a cuyo ClientHello se le leyó **la oferta**: las versiones de TLS y el ALPN. No es
+    /// `sniObserved`: un ClientHello sin nombre también la trae, y uno con nombre cuyo bloque de
+    /// extensiones no se pudo recorrer entero no. Contra la suma de los dos anteriores dice cuántos
+    /// flujos hacia el 443 tienen oferta apuntada.
+    public var clientOfferObserved: UInt64 = 0
 
     /// Flujos TLS a los que se les leyó la respuesta del servidor: la versión y la suite de su
     /// ServerHello. Solo los que **no** se inspeccionan: en uno inspeccionado lo que el dispositivo

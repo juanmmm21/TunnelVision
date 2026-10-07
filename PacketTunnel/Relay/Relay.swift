@@ -25,7 +25,8 @@ import Shared
 /// De paso —y solo porque los bytes ya pasan por aquí en orden— el relay **le lee el nombre** a los
 /// flujos TLS: el SNI del ClientHello, que viaja en claro, sale por `SNIObserving` hacia quien lleva
 /// la tabla de flujos. Es lo que hace que la app diga con *quién* habló el dispositivo en vez de con
-/// qué dirección, y no descifra nada (`readHandshake`). Y por lo mismo, en el otro sentido, **le lee
+/// qué dirección, y no descifra nada (`readHandshake`). Del mismo mensaje sale **lo que el cliente
+/// ofreció** —versiones de TLS y ALPN—, por `ClientTLSObserving`. Y por lo mismo, en el otro sentido, **le lee
 /// la respuesta del servidor**: la versión de TLS y la suite de su ServerHello, que también viajan
 /// en claro y salen por `ServerTLSObserving` (`readServerHello`). En un flujo inspeccionado ese
 /// ServerHello es el nuestro, así que la cifra la da la terminación (`observeUpstreamTLS`).
@@ -64,6 +65,9 @@ public actor Relay {
     /// nada: guardar bytes de handshake de un flujo que nadie va a nombrar sería memoria de la
     /// extensión gastada a cambio de nada.
     private let sniObserver: (any SNIObserving)?
+    /// Quien recoge lo que el cliente ofreció en ese mismo ClientHello. Basta con que exista uno de
+    /// los dos para que el handshake se escanee.
+    private let clientTLSObserver: (any ClientTLSObserving)?
     /// Quien recoge lo que el servidor contestó al ClientHello. Sin observador tampoco se escanea
     /// el stream entrante, por la misma cuenta de memoria.
     private let serverTLSObserver: (any ServerTLSObserving)?
@@ -172,6 +176,7 @@ public actor Relay {
         reinject: @escaping @Sendable ([Data], [NSNumber]) -> Void,
         connectionFactory: RelayConnectionFactory = NetworkConnectionFactory(),
         sniObserver: (any SNIObserving)? = nil,
+        clientTLSObserver: (any ClientTLSObserving)? = nil,
         serverTLSObserver: (any ServerTLSObserving)? = nil,
         inspector: (any FlowInspecting)? = nil,
         statusObserver: (any TLSStatusObserving)? = nil,
@@ -183,6 +188,7 @@ public actor Relay {
         self.reinject = reinject
         self.factory = connectionFactory
         self.sniObserver = sniObserver
+        self.clientTLSObserver = clientTLSObserver
         self.serverTLSObserver = serverTLSObserver
         self.inspector = inspector
         self.statusObserver = statusObserver
@@ -328,9 +334,10 @@ public actor Relay {
             let isTLSPort = packet.destination.port == Self.tlsPort
             // El lector del handshake solo se crea para lo que puede ser TLS —TCP contra el 443, la
             // misma regla con la que `FlowTable.initialTLSStatus` marca un flujo `encrypted`— y solo
-            // si el nombre le sirve a alguien: para nombrar el flujo, para inspeccionarlo, o ambas.
+            // si lo leído le sirve a alguien: para nombrar el flujo, para apuntar lo que ofreció,
+            // para inspeccionarlo, o varias.
             let inspects = candidate && inspector != nil && isTLSPort
-            let readsHandshake = isTLSPort && (sniObserver != nil || inspects)
+            let readsHandshake = isTLSPort && (sniObserver != nil || clientTLSObserver != nil || inspects)
             tcpFlows[key] = TCPFlowState(
                 flow: TCPRelayFlow(config: tcpConfig, serverISN: serverISNProvider()),
                 connection: nil,
@@ -572,6 +579,15 @@ public actor Relay {
         guard var state = tcpFlows[key], var scanner = state.handshake else { return }
 
         let outcome = scanner.scan(data)
+        if outcome != .needMoreBytes, let offer = scanner.offer {
+            // La oferta sale antes de mirar el desenlace y con cualquiera de ellos: un ClientHello
+            // sin nombre también dijo qué versiones acepta. Va por su tarea, como el nombre: es un
+            // dato sobre el flujo y no se adelanta a sus bytes.
+            counters.clientOfferObserved &+= 1
+            if let clientTLSObserver {
+                Task { await clientTLSObserver.observe(clientTLS: offer, for: key) }
+            }
+        }
         switch outcome {
         case .needMoreBytes:
             state.handshake = scanner

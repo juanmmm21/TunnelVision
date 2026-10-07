@@ -455,6 +455,15 @@ public actor PacketPipeline {
         await flowTable.setSNI(sni, for: key)
     }
 
+    // MARK: - Oferta TLS del cliente de un flujo
+
+    /// Anota lo que el cliente ofreció en el ClientHello de un flujo: las versiones de TLS que
+    /// acepta y su ALPN. Lo lee el relay del mismo mensaje que el nombre y llega aquí por la misma
+    /// razón; tampoco hay que escribir nada al store.
+    public func observe(clientTLS: ClientTLSOffer, for key: FlowKey) async {
+        await flowTable.setClientTLS(clientTLS, for: key)
+    }
+
     // MARK: - Respuesta TLS del servidor de un flujo
 
     /// Anota lo que el servidor contestó al ClientHello de un flujo: la versión y la suite que
@@ -658,6 +667,8 @@ extension PacketPipeline: SNIObserving {}
 
 /// Y lo que el servidor contestó, que es la otra mitad en claro del mismo handshake.
 extension PacketPipeline: ServerTLSObserving {}
+
+extension PacketPipeline: ClientTLSObserving {}
 
 /// Y por lo mismo recoge el desenlace de las terminaciones TLS. Son dos costuras y no una porque son
 /// dos hechos distintos: tener nombre no es haber sido inspeccionado.

@@ -546,6 +546,50 @@ final class PacketPipelineTests: XCTestCase {
         XCTAssertEqual(record?.sni, "www.example.com")
     }
 
+    // MARK: - Oferta TLS del cliente de un flujo
+
+    /// Lo que el relay lee del ClientHello acaba en el historial, también en un flujo sin nombre,
+    /// y sin ascenderlo a inspeccionado.
+    func testObservedClientTLSReachesTheStore() async {
+        let h = makeHarness(batchSize: 1_000, flushInterval: .max)
+        let key = PipelineFixtures.tcpV4Key()
+        let offer = ClientTLSOffer(
+            versions: .listed([.tls13, .tls12]),
+            applicationProtocols: ["h2", "http/1.1"],
+            omittedApplicationProtocols: 0,
+            hasEncryptedClientHello: false
+        )
+
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(), protocolFamily: Int32(AF_INET))
+        await h.pipeline.observe(clientTLS: offer, for: key)
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(payloadBytes: 8), protocolFamily: Int32(AF_INET))
+        await h.pipeline.flush()
+
+        let record = await h.store.flows[key]
+        XCTAssertEqual(record?.clientTLS, offer)
+        XCTAssertNil(record?.sni)
+        XCTAssertNil(record?.serverTLS)
+        XCTAssertEqual(record?.tlsStatus, .encrypted)
+    }
+
+    /// Un flujo que muere justo después de su ClientHello se lleva la oferta en el record de cierre.
+    func testAnOfferReachesTheStoreEvenIfTheFlowClosesRightAfter() async {
+        let h = makeHarness(batchSize: 1_000, flushInterval: .max)
+        let key = PipelineFixtures.tcpV4Key()
+        let offer = ClientTLSOffer(
+            versions: .upTo(.tls12), applicationProtocols: [], omittedApplicationProtocols: 0,
+            hasEncryptedClientHello: false
+        )
+
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(), protocolFamily: Int32(AF_INET))
+        await h.pipeline.observe(clientTLS: offer, for: key)
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(flagsByte: 0x04), protocolFamily: Int32(AF_INET))  // RST
+        await h.pipeline.flush()
+
+        let record = await h.store.flows[key]
+        XCTAssertEqual(record?.clientTLS, offer)
+    }
+
     // MARK: - Respuesta TLS del servidor de un flujo
 
     /// Lo que el relay lee del ServerHello acaba en el historial, sin llevarse por delante el
