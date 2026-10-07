@@ -773,6 +773,7 @@ talked to instead of listing addresses.
 
 ```swift
 public struct ClientHelloScanner: Sendable {          // PacketTunnel/TLS
+    public private(set) var offer: ClientTLSOffer?    // § What the client offered, below
     public enum Outcome: Sendable, Equatable {
         case needMoreBytes
         case found(String)
@@ -804,7 +805,8 @@ Three decisions worth keeping:
   the pipeline would have needed a second reassembler in the hot path. The price is one narrow seam
   (`SNIObserving`, injected like the pipeline's own sinks), and `PacketPipeline` is the conformer
   because it owns the flow table. Scanning is only armed for TCP against 443 — the same rule that
-  makes `FlowTable.initialTLSStatus` mark a flow `encrypted` — and only when an observer exists.
+  makes `FlowTable.initialTLSStatus` mark a flow `encrypted` — and only when an observer exists
+  (this one, or `ClientTLSObserving`).
 - **A name is not an inspection.** `FlowTable.setSNI` deliberately does *not* touch `tlsStatus`: a
   named flow stays `encrypted` until termination says otherwise. Host bytes are validated before
   they reach the UI and SQLite (RFC 6066 ASCII, no trailing dot, ≤ 253 chars, lowercased so the same
@@ -825,6 +827,101 @@ a ServerHello, lying vectors, the size ceiling, host validation and sticky outco
 wiring (single segment, split across two segments, **segments arriving out of order**, reported once
 per flow, non-443 flows never scanned, forwarded stream untouched) and the pipeline half (the name
 reaches the store, on the closing record too, without changing `tlsStatus`).
+
+## What the client offered, without decryption ✅
+
+The same ClientHello that names a flow also says what the client was **willing to negotiate**: the
+TLS versions it accepts and its application protocols (ALPN). It is read by the same scanner, in the
+same pass, and needs no CA either.
+
+```swift
+public enum OfferedTLSVersions: Sendable, Hashable, Codable {              // Shared/Models
+    case listed([TLSProtocolVersion])
+    case upTo(TLSProtocolVersion)
+}
+public struct ClientTLSOffer: Sendable, Hashable, Codable {                // Shared/Models
+    public let versions: OfferedTLSVersions
+    public let applicationProtocols: [String]
+    public let omittedApplicationProtocols: Int
+    public let hasEncryptedClientHello: Bool
+}
+
+public struct ClientHelloScanner: Sendable {                               // PacketTunnel/TLS
+    public private(set) var offer: ClientTLSOffer?
+}
+
+public protocol ClientTLSObserving: Sendable {                             // PacketTunnel/Relay
+    func observe(clientTLS: ClientTLSOffer, for key: FlowKey) async
+}
+```
+
+Why it matters more than it looks: on an inspected flow the server's answer is an answer to the
+**tunnel's** ClientHello (§ *What an inspected flow's server chose*), so what the app offered is the
+only thing that says whether the app itself would have accepted less. What had to be decided:
+
+- **The versions are two cases, because the ClientHello states them in two ways that do not mean
+  the same.** With `supported_versions` (the **list** shape of the extension, RFC 8446 § 4.2.1) the
+  client enumerates every version it accepts: `.listed`, exact, in the client's order of preference.
+  Without it there is only `legacy_version`, which is a **ceiling**: `.upTo`. From the first a report
+  can state that the client would not have accepted TLS 1.0; from the second it cannot, and a list of
+  one version would have let it.
+- **GREASE values are not kept** (RFC 8701: `0x0A0A`, `0x1A1A` … `0xFAFA`). They are not versions —
+  they are filler a client adds so servers do not ossify — and keeping them would break any "lowest
+  version offered", since `0x0A0A` sorts below SSL 3.0. A list of nothing but GREASE is `.listed([])`,
+  not a fall back to the ceiling: the extension was sent. Anything else the client sent — a draft, a
+  number that does not exist — is kept raw, as for the server.
+- **ALPN is bounded and validated, and what is dropped is counted.** The identifiers are opaque bytes
+  on the wire and they end up in a column and in a report, so only printable ASCII without spaces is
+  kept (every registered identifier is), at most 16 of them, each at most 64 bytes. The rest are
+  counted in `omittedApplicationProtocols` so that a trimmed list is not read as the whole list.
+  ALPN GREASE (two-byte identifiers of the same pattern) is neither kept nor counted. Unlike a host
+  name, an identifier is **not** lowercased: it is compared byte for byte.
+- **Encrypted Client Hello is said, and it cannot be said precisely.** A ClientHello carrying the
+  `encrypted_client_hello` extension (RFC 9849) is the **outer** one: the real offer, and the real
+  name, may be encrypted inside it. `hasEncryptedClientHello` marks that. It cannot say more, because
+  a client with no ECH configuration for that server sends the extension anyway, filled with random
+  bytes, and it is indistinguishable from a real one by design. A reader citing a marked offer has to
+  say that it may not be the one the server answered.
+- **The offer does not live in `Outcome`, and neither reading costs the other.** `Outcome` is about
+  the name. A ClientHello with no SNI — a connection to a bare IP — ends `unavailable(.noServerName)`
+  and has still offered its versions; that is the flow a report has nothing else to cite for. And the
+  other way round: the scanner used to stop at the server name, and it now walks the whole
+  extensions block, so a block that breaks **after** the name still yields the name it yielded
+  before. It yields no offer.
+- **An offer read halfway is no offer.** If the extensions block cannot be walked to its end, or the
+  version list or the protocol list declares more than it holds (or a version list has an odd
+  length), `offer` is `nil` — not `.upTo(legacy_version)`, which would assert that the extension was
+  not there, and not the half that did parse.
+- **Only the first of each extension counts.** A ClientHello may not repeat one; if it does, the
+  second does not get to choose what is recorded.
+- **Its own seam, not a wider `SNIObserving`**, for the same reason as above: one exists without the
+  other. `PacketPipeline` is the conformer (`FlowTable.setClientTLS`), and the flow carries it to the
+  store as `FlowRecord.clientTLS` (schema `v11`, [`persistence.md`](persistence.md)). The scanner is
+  armed when either observer exists (or the flow is an inspection candidate); the offer leaves once
+  per flow, on its own task like the name, before the outcome is acted on.
+- **It is the app's offer on every flow, inspected or not.** The relay reads the ClientHello the
+  device sent before deciding anything about termination.
+- **One counter**, `RelayStats.clientOfferObserved`. Against `sniObserved + sniUnavailable` it says
+  how many 443 flows left with an offer. No screen reads it yet.
+
+The four extension codes (`server_name` 0, ALPN 16, `supported_versions` 43,
+`encrypted_client_hello` 65037) were checked against the IANA TLS ExtensionType registry.
+
+**Not read:** the cipher suites the client offered (the list is long and nothing planned needs it),
+and QUIC, whose ClientHello travels inside the Initial packet.
+
+**Tests (58):** `ClientHelloOfferTests` (31) — the list in order, the ceiling, the extension winning
+over `legacy_version`, GREASE dropped and all sixteen values recognised, a GREASE-only list, a draft
+kept raw, a hello without extensions, a repeated extension; ALPN in order, absent, GREASE, unprintable,
+overlong, beyond the cap, empty, not lowercased; ECH flagged and not; an offer without a name,
+extensions after the name, four ways a malformed list costs the offer and not the name, a block that
+breaks after and before the name; no offer while bytes are missing or for a non-TLS stream, the same
+offer at every chunk boundary, sticky once read. `RelayClientOfferTests` (11) — the offer leaves with
+the name, **and without one**, from a hello split across two segments, once per flow; none for a
+non-TLS stream, an unreadable offer does not cost the name, flows outside 443 never scanned; the
+offer observer alone arms the scanner, without it the offer is still counted, with neither nothing is
+scanned; the forwarded stream is untouched. Plus the pipeline (2), the store (14) and the
+`FlowRecord` round-trip.
 
 ## What the server chose, without decryption
 
