@@ -1,8 +1,9 @@
 # Spec — Audit model (`Shared/Audit`, schema `v6`)
 
 The data model of the TR-03161 network evidence workflow: what is audited, each recording of it, and
-the instants marked inside a recording, and the classifier that turns a recording's flows into
-findings (§ *Findings*). Scope and attribution method:
+the instants marked inside a recording, the classifier that turns a recording's flows into
+findings (§ *Findings*), and the comparison of two recordings of the same project (§ *Release
+diff*). Scope and attribution method:
 [`../decisions/0008-tr03161-audit-workflow-scope.md`](../decisions/0008-tr03161-audit-workflow-scope.md).
 
 The value types live in `Shared/Audit`; their storage is the audit half of `FlowStore`
@@ -621,8 +622,195 @@ there is one — and says `beforeConsent`, `afterConsent`, `notAssessed` with a 
 - **Whose flow it was is not stated.** A connection of the system opened before the marker is a
   finding like any other; telling it from the app's is what the baseline is for (ADR 0008).
 
+## Release diff
+
+`ReleaseDiff` (`Shared/Audit`) compares two audit sessions of the same project: the domains the
+later one contacted that the earlier one did not, the ones it stopped contacting, and what changed
+in the TLS of those that remain. Like the classifier it is pure and decides no verdict. It is built
+on `SessionDomains`, the inventory of **one** session, which compares nothing.
+
+```swift
+public struct DomainObservation: Sendable, Hashable {      // one domain in one session
+    public let host: String                                // normalised, as a finding cites it
+    public let flowIDs: [Int64]                            // flows that went to it
+    public let candidateFlowIDs: [Int64]                   // flows that went to it or to another name
+    public let tlsSightings: [TLSVersionSighting]          // versions read in flowIDs, with their source
+    public let flowIDsWithoutTLSReading: [Int64]
+    public var isSeen: Bool { get }                        // flowIDs is not empty
+}
+
+public struct SessionDomains: Sendable, Hashable {
+    public let domains: [DomainObservation]                // order of first appearance
+    public let unnamedFlowIDs: [Int64]
+    public init(flows: [StoredFlow])
+}
+
+public enum AllowlistStanding: Sendable, Hashable {
+    case listed(AllowlistEntry)                            // the first entry that covers it
+    case unlisted
+    case allowlistEmpty
+}
+
+public enum TLSNegotiator: Sendable, Hashable, CaseIterable { case app, tunnel }
+public enum TLSFloorShift: Sendable, Hashable { case lowered, raised, held, notOrdered }
+public enum TLSComparisonGap: Sendable, Hashable {
+    case notReadInEarlierSession, notReadInLaterSession, notReadInEitherSession
+}
+public enum TLSVersionComparison: Sendable, Hashable {     // one domain, one negotiator
+    case same([TLSProtocolVersion])
+    case different(earlier: [TLSProtocolVersion], later: [TLSProtocolVersion], floor: TLSFloorShift)
+    case notCompared(TLSComparisonGap)
+}
+
+public enum DomainPresence: Sendable, Hashable { case absent, candidateOnly, seen }
+public enum DomainStatus: Sendable, Hashable {
+    case new
+    case gone
+    case inBoth(app: TLSVersionComparison, tunnel: TLSVersionComparison)
+    case undetermined(earlier: DomainPresence, later: DomainPresence)
+}
+
+public struct DomainComparison: Sendable, Hashable {
+    public let host: String
+    public let standing: AllowlistStanding
+    public let earlier: DomainObservation?                 // nil: not in that session
+    public let later: DomainObservation?
+    public var status: DomainStatus { get }                // derived from the two observations
+    public var hasTLSChange: Bool { get }
+}
+
+public struct ReleaseDiff: Sendable, Hashable {
+    public enum Refusal: Error, Sendable, Hashable {
+        case sameSession, differentProjects, notTheSessionsProject
+        case baseline(sessionID: Int64)
+        case stillOpen(sessionID: Int64)
+    }
+    public let earlier: AuditSession
+    public let later: AuditSession
+    public let domains: [DomainComparison]
+    public let earlierUnnamedFlowIDs: [Int64]
+    public let laterUnnamedFlowIDs: [Int64]
+    public init(
+        between first: AuditSession, flows firstFlows: [StoredFlow],
+        and second: AuditSession, flows secondFlows: [StoredFlow],
+        project: AuditProject
+    ) throws
+    public var newDomains: [DomainComparison] { get }
+    public var goneDomains: [DomainComparison] { get }
+    public var domainsInBoth: [DomainComparison] { get }
+    public var undeterminedDomains: [DomainComparison] { get }
+    public var unexpectedNewDomains: [DomainComparison] { get }   // new and unlisted: the headline
+    public var domainsWithTLSChange: [DomainComparison] { get }
+}
+```
+
+### Which two sessions
+
+| The two sessions | Result |
+|---|---|
+| The same session twice | `sameSession` |
+| Of different projects | `differentProjects` |
+| Of a project that is not the one given | `notTheSessionsProject` |
+| Either is a `baseline` | `baseline(sessionID:)` |
+| Either is still open | `stillOpen(sessionID:)` |
+| Anything else | a diff |
+
+The reason given is the first that fails, in that order.
+
+- **The later session is the one that started later** (`startedAt`; the greater `id` if they
+  coincide). The two are given in either order and the result is the same. Version and build are
+  free text and nothing orders `2.4.0 (118)` against `2.4.0-rc1 (2024.3)`; which of two sessions was
+  recorded first is known. So an older release recorded afterwards is the *later* side — both
+  releases are on the result for the report to print.
+- **Two sessions of the same build are compared like any other.** What the diff says then is what
+  varied between two runs of one binary.
+- **A baseline is refused, not subtracted.** Reading an audit session against its baseline (ADR
+  0008) asks whose traffic it was, not what changed between releases, and words its answer
+  differently. It is not this type under another name; `SessionDomains` is the part it would share.
+- **An open session is refused.** It is still recording, so everything it has not contacted yet
+  would come out as *gone*.
+- **The flows have to be all of the session's.** A `StoredFlow` does not say which session it
+  belongs to and `flows(inAuditSession:limit:)` takes a limit: a truncated list gives domains as
+  *gone* or misses new ones, and nothing here can tell.
+
+### What the domain of a flow is
+
+The flow's `FlowName`, never the `sni` column, normalised with `DomainPattern.normalised(host:)` —
+the same text a `hostNotInAllowlist` finding cites, so the two can be matched.
+
+| What the flow carries | Where it lands |
+|---|---|
+| An announced name (SNI) | `flowIDs` of that domain; the resolved names are not consulted |
+| A name from DNS with no other candidate | `flowIDs` of that domain |
+| A name from DNS whose address had other names | `candidateFlowIDs` of **every** one of them, the attributed one included |
+| No name | `unnamedFlowIDs` |
+
+- **A winner does not speak for the other candidates**, as in § *Where a flow went*. A flow to an
+  address shared by several names went to one of them and it is not known which, so it proves
+  none of them was contacted. The origin of a name — SNI or DNS — is read from each flow.
+- **A candidate that only differs in how it is written is not an alternative.**
+
+### What is stated about a domain
+
+| Earlier session | Later session | Status |
+|---|---|---|
+| absent | seen | `new` |
+| seen | absent | `gone` |
+| seen | seen | `inBoth`, with its two TLS comparisons |
+| candidate only, on either side | anything | `undetermined`, with how it stands on each side |
+
+- **A domain that is only a candidate on one side is not classified.** It may or may not have been
+  contacted there, so it is neither new, gone nor kept. The report lists it as such; it does not
+  drop it.
+- **The headline is new *and* unlisted** (`unexpectedNewDomains`). With an empty allowlist there is
+  none — nobody has said what is expected (§ *Where a flow went*) — and an undetermined domain is
+  never in it.
+- **These are statements about observed names.** `gone` means no flow of the later session carried
+  that name; an unnamed flow of that session may have gone exactly there, and a `new` domain may
+  have been reached without a name before. That is why the unnamed flows of each side travel with
+  the diff: the report prints their count beside the lists.
+- **The allowlist is the project's as it is now**, the one both sessions share.
+- **Order.** The later session's domains first, in the order they appeared in it; then the ones
+  only the earlier session has, in its order.
+
+### TLS changes per domain
+
+Only for a domain seen in both sessions, and only from the flows that went to it: a candidate
+flow's version belongs to a connection whose domain is not known. The version of a flow is
+`TLSVersionObservation(of:)`, the same reading `TLSVersionAssessment` judges, without a minimum.
+
+- **A version is compared only with those answering the same ClientHello.** A ServerHello read off
+  the stream and QUIC (TLS 1.3 by definition) are the **app's** connection; an upstream reading is
+  the **tunnel's** ([`relay-and-tls.md`](relay-and-tls.md) § *What an inspected flow's server
+  chose*). Each has its own comparison. A session recorded with inspection against one recorded
+  without it gives two readings with no counterpart — `notCompared` on both — not a TLS change.
+- **What is compared is the set of versions**, not how many connections carried each. The lists
+  are in ascending wire value, which among published versions is weakest first.
+- **The direction is that of the weakest version** (`TLSFloorShift`), since that is what a
+  minimum-version requirement looks at: one weaker connection in the later session is `lowered`.
+  When the sets differ and the weakest is the same it is `held`; with any unpublished value on
+  either side it is `notOrdered` (§ *The TLS version of a flow*).
+- **A flow with no reading is not a version.** A side with none is `notCompared` with which side;
+  the flows are in `flowIDsWithoutTLSReading`. A domain that went from TLS to cleartext HTTP is
+  therefore *not compared* here — it is the later session's `cleartextTraffic` finding.
+- **No threshold enters.** Whether the later floor is acceptable is the classifier's question,
+  asked of the later session.
+
 ## Tests
 
+- `SessionDomainsTests`: every row of the domain table; the host is normalised and a name from DNS
+  with no competition is the same domain as an announced one; a domain can be seen by one flow and
+  a candidate of another; unnamed flows are kept apart, an empty SNI included; first-appearance
+  order; flows with the same reading are one sighting and another source is another; a candidate
+  flow lends its version to no domain.
+- `ReleaseDiffTests`: every refusal and the first that fails; the later session is the one that
+  started later whatever the order given or the release, by id on a tie; new, gone and in both,
+  each with the observations of both sides; the order of the result; the standing against the
+  allowlist, the headline, and none without an allowlist; every way a candidate keeps a domain
+  from being classified; unnamed flows on each side; the floor lowered, raised, held and not
+  ordered; the same set in another order or count is no change; QUIC counts as the app's TLS 1.3;
+  an upstream reading is never compared with the app's own and is compared with another upstream
+  one; a side with no reading; a new or gone domain has no TLS change.
 - `PinningAssessmentTests`: every row of the pinning table; the host is cited normalised; an
   outcome whose flow has only a resolved name, or an empty SNI, is not assessed; the reason of a
   session without inspection or without a trusted CA is the first that fails, and reaches the
@@ -643,7 +831,8 @@ there is one — and says `beforeConsent`, `afterConsent`, `notAssessed` with a 
   one alone is not encrypted.
 - `TLSVersionAssessmentTests`: every row of the table above; the threshold is the one given, for the
   version and for the offer; a listed weaker version outweighs an unrecognised one beside it; which
-  versions are published.
+  versions are published; the reading without a threshold is the one judged, an unpublished
+  version included, and a server's answer outweighs a QUIC reading.
 - `FindingsClassifierTests`: flows that prove the same thing are one finding and a different version
   or source is another; flows seen in the clear are one finding; first-appearance order; each check
   places every flow exactly once; a session where nothing could be read — or recorded before the
