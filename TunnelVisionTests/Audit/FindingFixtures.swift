@@ -2,7 +2,8 @@ import Foundation
 import Shared
 
 /// Flujos guardados a medida para los tests del clasificador: cada test dice solo lo que le
-/// importa del flujo, y lo demás es un TCP contra el 443 sin ninguna lectura.
+/// importa del flujo, y lo demás es un TCP contra el 443 sin ninguna lectura, con un nombre
+/// anunciado para que los tests que no van de nombres no levanten `unnamedFlow`.
 enum FindingFixtures {
 
     static let start = Date(timeIntervalSince1970: 1_790_000_000)
@@ -12,6 +13,8 @@ enum FindingFixtures {
         proto: IPProtocolNumber = .tcp,
         remotePort: UInt16 = 443,
         tlsStatus: TLSInspectionStatus = .encrypted,
+        sni: String? = "api.example.com",
+        resolvedName: ResolvedFlowName? = nil,
         serverTLS: ServerTLSAnswer? = nil,
         clientTLS: ClientTLSOffer? = nil,
         quic: QUICVersionReading? = nil,
@@ -29,8 +32,8 @@ enum FindingFixtures {
             bytesIn: 4_200,
             packetCount: 12,
             tlsStatus: tlsStatus,
-            sni: nil,
-            resolvedName: nil,
+            sni: sni,
+            resolvedName: resolvedName,
             serverTLS: serverTLS,
             serverCertificates: nil,
             clientTLS: clientTLS,
@@ -50,6 +53,18 @@ enum FindingFixtures {
             fromHelloRetryRequest: fromHelloRetryRequest,
             source: source
         ))
+    }
+
+    /// Un proyecto con la allowlist que se le escriba, en ese orden.
+    static func project(allowlist patterns: [String] = []) throws -> AuditProject {
+        AuditProject(
+            id: 1,
+            name: "Example",
+            bundleIdentifier: nil,
+            catalogueVersion: nil,
+            allowlist: try patterns.map { AllowlistEntry(pattern: try DomainPattern(parsing: $0), note: nil) },
+            createdAt: start
+        )
     }
 
     static func offer(_ versions: OfferedTLSVersions, encryptedClientHello: Bool = false) -> ClientTLSOffer {

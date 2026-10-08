@@ -159,6 +159,12 @@ final class DomainPatternTests: XCTestCase {
 
     // MARK: - Condiciones de inspección
 
+    /// La forma en que se compara un nombre observado es también la forma en que se cita.
+    func testAnObservedHostIsNormalisedLikeAPattern() {
+        XCTAssertEqual(DomainPattern.normalised(host: "API.Example.COM."), "api.example.com")
+        XCTAssertEqual(DomainPattern.normalised(host: "api.example.com"), "api.example.com")
+    }
+
     func testPinningCanOnlyBeReadWithInspectionOnAndTheCATrusted() {
         XCTAssertTrue(InspectionConditions(inspectionEnabled: true, caTrusted: true).supportsPinningEvidence)
         XCTAssertFalse(InspectionConditions(inspectionEnabled: true, caTrusted: false).supportsPinningEvidence)

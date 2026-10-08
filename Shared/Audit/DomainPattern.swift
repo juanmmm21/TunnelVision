@@ -85,14 +85,22 @@ public struct DomainPattern: Sendable, Hashable {
     /// certificado, y la contraria haría que autorizar los subdominios de un tercero autorizase sin
     /// decirlo también su dominio raíz. Quien quiera los dos escribe las dos entradas.
     public func matches(_ host: String) -> Bool {
-        var candidate = host.lowercased()
-        if candidate.hasSuffix(".") { candidate.removeLast() }
+        let candidate = Self.normalised(host: host)
         switch scope {
         case .exact:
             return candidate == name
         case .subdomains:
             return candidate.hasSuffix(".\(name)") && candidate.count > name.count + 1
         }
+    }
+
+    /// Un nombre observado tal como se compara: en minúsculas y sin el punto final de un FQDN. Es
+    /// también la forma en la que un hallazgo cita un host, para que `Example.com.` y `example.com`
+    /// no sean dos.
+    public static func normalised(host: String) -> String {
+        var candidate = host.lowercased()
+        if candidate.hasSuffix(".") { candidate.removeLast() }
+        return candidate
     }
 }
 
