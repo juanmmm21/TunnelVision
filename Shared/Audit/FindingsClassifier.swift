@@ -20,7 +20,8 @@ public struct FindingsPolicy: Sendable, Hashable {
 public struct SessionFindings: Sendable, Hashable {
 
     /// En el orden en que cada uno apareció por primera vez al recorrer los flujos; si un flujo
-    /// prueba varios, van el de tráfico sin cifrar, el de la versión de TLS y el de su destino.
+    /// prueba varios, van el de tráfico sin cifrar, el de la versión de TLS, el de su destino, el
+    /// de pinning y el de actividad antes del consentimiento.
     public let findings: [Finding]
 
     /// Lo que la comprobación de la versión de TLS pudo y no pudo mirar.
@@ -34,16 +35,29 @@ public struct SessionFindings: Sendable, Hashable {
     /// siempre vacío: aplica a todos los flujos.
     public let host: CheckCoverage<HostGap>
 
+    /// Lo que la comprobación de pinning pudo y no pudo mirar. `satisfiedFlowIDs` está siempre
+    /// vacío: aquí el desenlace favorable también es un hallazgo (`pinningObserved`), porque el
+    /// informe tiene que nombrar los hosts en los que se vio.
+    public let pinning: CheckCoverage<PinningGap>
+
+    /// Lo que la comprobación de actividad antes del consentimiento pudo y no pudo mirar. En una
+    /// sesión `baseline` todos los flujos van en `notApplicableFlowIDs`.
+    public let consent: CheckCoverage<ConsentGap>
+
     public init(
         findings: [Finding],
         tlsVersion: CheckCoverage<TLSVersionGap>,
         encryption: CheckCoverage<EncryptionGap>,
-        host: CheckCoverage<HostGap>
+        host: CheckCoverage<HostGap>,
+        pinning: CheckCoverage<PinningGap>,
+        consent: CheckCoverage<ConsentGap>
     ) {
         self.findings = findings
         self.tlsVersion = tlsVersion
         self.encryption = encryption
         self.host = host
+        self.pinning = pinning
+        self.consent = consent
     }
 }
 
@@ -57,11 +71,18 @@ public enum FindingsClassifier {
     /// - Parameter flows: los flujos de una sesión de auditoría, en el orden del historial
     ///   (`FlowStore.flows(inAuditSession:limit:)`: como ocurrieron).
     /// - Parameter project: el proyecto de la sesión. De él solo se lee la allowlist.
+    /// - Parameter session: la sesión cuyos flujos se clasifican. De ella se leen su clase (una
+    ///   `baseline` no tiene consentimiento que mirar) y en qué condiciones de inspección se grabó.
+    /// - Parameter markers: los marcadores de la sesión. Solo se leen los `consentGiven`, y los
+    ///   de otra sesión se ignoran.
     public static func classify(
         flows: [StoredFlow],
         project: AuditProject,
+        session: AuditSession,
+        markers: [SessionMarker],
         policy: FindingsPolicy
     ) -> SessionFindings {
+        let consent = ConsentInterval(markers: markers, of: session)
         var findings = Grouping<FindingEvidence>()
         var tlsGaps = Grouping<TLSVersionGap>()
         var tlsSatisfied: [Int64] = []
@@ -71,6 +92,11 @@ public enum FindingsClassifier {
         var encryptionNotApplicable: [Int64] = []
         var hostGaps = Grouping<HostGap>()
         var hostSatisfied: [Int64] = []
+        var pinningGaps = Grouping<PinningGap>()
+        var pinningNotApplicable: [Int64] = []
+        var consentGaps = Grouping<ConsentGap>()
+        var consentSatisfied: [Int64] = []
+        var consentNotApplicable: [Int64] = []
 
         for flow in flows {
             switch EncryptionAssessment(of: flow) {
@@ -105,6 +131,28 @@ public enum FindingsClassifier {
             case .notAssessed(let gap):
                 hostGaps.add(flow.id, to: gap)
             }
+
+            switch PinningAssessment(of: flow, conditions: session.inspection) {
+            case .absent(let host):
+                findings.add(flow.id, to: .pinningAbsent(host: host))
+            case .observed(let host):
+                findings.add(flow.id, to: .pinningObserved(host: host))
+            case .notAssessed(let gap):
+                pinningGaps.add(flow.id, to: gap)
+            case .notApplicable:
+                pinningNotApplicable.append(flow.id)
+            }
+
+            switch ConsentAssessment(of: flow, sessionKind: session.kind, consent: consent) {
+            case .beforeConsent:
+                findings.add(flow.id, to: .activityBeforeConsent)
+            case .afterConsent:
+                consentSatisfied.append(flow.id)
+            case .notAssessed(let gap):
+                consentGaps.add(flow.id, to: gap)
+            case .notApplicable:
+                consentNotApplicable.append(flow.id)
+            }
         }
 
         return SessionFindings(
@@ -123,6 +171,16 @@ public enum FindingsClassifier {
                 satisfiedFlowIDs: hostSatisfied,
                 unassessed: hostGaps.groups.map { UnassessedFlows(gap: $0.key, flowIDs: $0.flowIDs) },
                 notApplicableFlowIDs: []
+            ),
+            pinning: CheckCoverage(
+                satisfiedFlowIDs: [],
+                unassessed: pinningGaps.groups.map { UnassessedFlows(gap: $0.key, flowIDs: $0.flowIDs) },
+                notApplicableFlowIDs: pinningNotApplicable
+            ),
+            consent: CheckCoverage(
+                satisfiedFlowIDs: consentSatisfied,
+                unassessed: consentGaps.groups.map { UnassessedFlows(gap: $0.key, flowIDs: $0.flowIDs) },
+                notApplicableFlowIDs: consentNotApplicable
             )
         )
     }

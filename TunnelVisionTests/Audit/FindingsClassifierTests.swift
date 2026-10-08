@@ -12,14 +12,23 @@ final class FindingsClassifierTests: XCTestCase {
         try XCTUnwrap(FindingsPolicy(minimumTLSVersion: minimum))
     }
 
+    private static let inspecting = InspectionConditions(inspectionEnabled: true, caTrusted: true)
+    private static let notInspecting = InspectionConditions(inspectionEnabled: false, caTrusted: false)
+
+    /// Por defecto la sesión no inspecciona ni tiene marcadores, para que los tests que no van de
+    /// pinning ni de consentimiento no levanten sus hallazgos.
     private func classify(
         _ flows: [StoredFlow],
         allowlist: [String] = [],
+        session: AuditSession = Fixtures.session(inspection: notInspecting),
+        markers: [SessionMarker] = [],
         minimum: TLSProtocolVersion = .tls12
     ) throws -> SessionFindings {
         FindingsClassifier.classify(
             flows: flows,
             project: try Fixtures.project(allowlist: allowlist),
+            session: session,
+            markers: markers,
             policy: try policy(minimum)
         )
     }
@@ -47,6 +56,14 @@ final class FindingsClassifierTests: XCTestCase {
         )
         XCTAssertEqual(
             result.host,
+            CheckCoverage(satisfiedFlowIDs: [], unassessed: [], notApplicableFlowIDs: [])
+        )
+        XCTAssertEqual(
+            result.pinning,
+            CheckCoverage(satisfiedFlowIDs: [], unassessed: [], notApplicableFlowIDs: [])
+        )
+        XCTAssertEqual(
+            result.consent,
             CheckCoverage(satisfiedFlowIDs: [], unassessed: [], notApplicableFlowIDs: [])
         )
     }
@@ -273,7 +290,171 @@ final class FindingsClassifierTests: XCTestCase {
         XCTAssertEqual(result.host.unassessed, [UnassessedFlows(gap: .allowlistEmpty, flowIDs: [1, 2])])
     }
 
-    /// Un flujo que prueba tres cosas las da en un orden fijo: sin cifrar, versión, destino.
+    // MARK: - Pinning
+
+    /// El pinning se observa por host: las conexiones a un mismo host que acabaron igual son un
+    /// hallazgo, y un host con los dos desenlaces da los dos, sin que uno tape al otro.
+    func testPinningIsOneFindingPerHostAndOutcome() throws {
+        let flows = [
+            Fixtures.flow(id: 1, tlsStatus: .inspected, sni: "api.example.com"),
+            Fixtures.flow(id: 2, tlsStatus: .notInspectable, sni: "pay.example.com"),
+            Fixtures.flow(id: 3, tlsStatus: .inspected, sni: "API.example.com."),
+            Fixtures.flow(id: 4, tlsStatus: .notInspectable, sni: "api.example.com"),
+            Fixtures.flow(id: 5, tlsStatus: .notInspectable, sni: "pay.example.com"),
+        ]
+        let result = try classify(
+            flows,
+            allowlist: ["*.example.com"],
+            session: Fixtures.session(inspection: Self.inspecting)
+        )
+        XCTAssertEqual(result.findings, [
+            Finding(evidence: .pinningAbsent(host: "api.example.com"), flowIDs: [1, 3]),
+            Finding(evidence: .pinningObserved(host: "pay.example.com"), flowIDs: [2, 5]),
+            Finding(evidence: .pinningObserved(host: "api.example.com"), flowIDs: [4]),
+        ])
+        XCTAssertEqual(result.findings.map(\.kind), [.pinningAbsent, .pinningObserved, .pinningObserved])
+    }
+
+    /// Los mismos flujos en una sesión que no dejaba leer el pinning: ningún hallazgo, y todos
+    /// en «no evaluado» con el motivo de la sesión.
+    func testWithoutATrustedCANoPinningIsReported() throws {
+        let flows = [
+            Fixtures.flow(id: 1, tlsStatus: .inspected),
+            Fixtures.flow(id: 2, tlsStatus: .notInspectable),
+        ]
+        let untrusted = Fixtures.session(
+            inspection: InspectionConditions(inspectionEnabled: true, caTrusted: false)
+        )
+        let result = try classify(flows, allowlist: ["api.example.com"], session: untrusted)
+        XCTAssertEqual(result.findings, [])
+        XCTAssertEqual(result.pinning.unassessed, [UnassessedFlows(gap: .caNotTrusted, flowIDs: [1, 2])])
+
+        let off = try classify(flows, allowlist: ["api.example.com"])
+        XCTAssertEqual(off.findings, [])
+        XCTAssertEqual(off.pinning.unassessed, [UnassessedFlows(gap: .inspectionOff, flowIDs: [1, 2])])
+    }
+
+    /// Cada flujo cae en un solo sitio, y ninguno en «sin incidencias»: el desenlace favorable
+    /// del pinning es un hallazgo, no una ausencia de hallazgo.
+    func testThePinningCheckPlacesEveryFlowAndNoneAsSatisfied() throws {
+        let flows = [
+            Fixtures.flow(id: 1, tlsStatus: .inspected),
+            Fixtures.flow(id: 2, tlsStatus: .notInspectable),
+            Fixtures.flow(id: 3),
+            Fixtures.flow(id: 4, proto: .udp, quic: QUICVersionReading(version: .v1, source: .server)),
+            Fixtures.flow(id: 5, remotePort: 80, tlsStatus: .plaintext, streamOpening: .httpRequest),
+            Fixtures.flow(id: 6, proto: .udp, remotePort: 53, tlsStatus: .plaintext),
+            Fixtures.flow(id: 7, remotePort: 5223, streamOpening: .tlsHandshake),
+        ]
+        let result = try classify(
+            flows,
+            allowlist: ["api.example.com"],
+            session: Fixtures.session(inspection: Self.inspecting)
+        )
+        let pinningFindings = result.findings.filter { $0.kind == .pinningAbsent || $0.kind == .pinningObserved }
+        XCTAssertEqual(pinningFindings.map(\.flowIDs), [[1], [2]])
+        XCTAssertEqual(result.pinning.satisfiedFlowIDs, [])
+        XCTAssertEqual(result.pinning.unassessed, [
+            UnassessedFlows(gap: .noInspectionOutcome, flowIDs: [3, 7]),
+            UnassessedFlows(gap: .quicNotInspected, flowIDs: [4]),
+        ])
+        XCTAssertEqual(result.pinning.notApplicableFlowIDs, [5, 6])
+
+        let placed = pinningFindings.flatMap(\.flowIDs)
+            + result.pinning.unassessed.flatMap(\.flowIDs)
+            + result.pinning.notApplicableFlowIDs
+        XCTAssertEqual(placed.sorted(), flows.map(\.id))
+    }
+
+    // MARK: - Consentimiento
+
+    /// Todos los flujos de antes del consentimiento son **un** hallazgo: la evidencia no lleva
+    /// instante, que es de cada flujo. El del mismo instante del marcador no es de antes.
+    func testFlowsOpenedBeforeConsentAreOneFinding() throws {
+        let flows = [
+            Fixtures.flow(id: 1, firstSeen: Fixtures.start.addingTimeInterval(10)),
+            Fixtures.flow(id: 2, firstSeen: Fixtures.start.addingTimeInterval(59)),
+            Fixtures.flow(id: 3, firstSeen: Fixtures.start.addingTimeInterval(60)),
+            Fixtures.flow(id: 4, firstSeen: Fixtures.start.addingTimeInterval(90)),
+        ]
+        let result = try classify(
+            flows,
+            allowlist: ["api.example.com"],
+            markers: [Fixtures.marker(id: 1, .loggedIn, at: 5), Fixtures.marker(id: 2, at: 60)]
+        )
+        XCTAssertEqual(result.findings, [Finding(evidence: .activityBeforeConsent, flowIDs: [1, 2])])
+        XCTAssertEqual(result.findings.first?.kind, .activityBeforeConsent)
+        XCTAssertEqual(
+            result.consent,
+            CheckCoverage(satisfiedFlowIDs: [3, 4], unassessed: [], notApplicableFlowIDs: [])
+        )
+    }
+
+    /// Sin marcador no hay «antes»: ni hallazgos ni flujos sin incidencias. Es lo que impide que
+    /// una sesión en la que nadie marcó el consentimiento salga limpia.
+    func testWithoutAConsentMarkerNothingIsBeforeAndNothingIsAfter() throws {
+        let flows = [Fixtures.flow(id: 1), Fixtures.flow(id: 2)]
+        let result = try classify(
+            flows,
+            allowlist: ["api.example.com"],
+            markers: [Fixtures.marker(id: 1, .loggedIn, at: 1), Fixtures.marker(id: 2, at: 1, sessionID: 99)]
+        )
+        XCTAssertEqual(result.findings, [])
+        XCTAssertEqual(
+            result.consent,
+            CheckCoverage(
+                satisfiedFlowIDs: [],
+                unassessed: [UnassessedFlows(gap: .noConsentMarker, flowIDs: [1, 2])],
+                notApplicableFlowIDs: []
+            )
+        )
+    }
+
+    /// Con varios marcadores de consentimiento solo se afirma lo que todos dicen: antes del
+    /// primero, después del último. Lo de en medio no se evalúa.
+    func testBetweenTwoConsentMarkersNothingIsStated() throws {
+        let flows = [
+            Fixtures.flow(id: 1, firstSeen: Fixtures.start.addingTimeInterval(10)),
+            Fixtures.flow(id: 2, firstSeen: Fixtures.start.addingTimeInterval(40)),
+            Fixtures.flow(id: 3, firstSeen: Fixtures.start.addingTimeInterval(80)),
+        ]
+        let result = try classify(
+            flows,
+            allowlist: ["api.example.com"],
+            markers: [Fixtures.marker(id: 1, at: 60), Fixtures.marker(id: 2, at: 30)]
+        )
+        XCTAssertEqual(result.findings, [Finding(evidence: .activityBeforeConsent, flowIDs: [1])])
+        XCTAssertEqual(
+            result.consent,
+            CheckCoverage(
+                satisfiedFlowIDs: [3],
+                unassessed: [UnassessedFlows(gap: .betweenConsentMarkers, flowIDs: [2])],
+                notApplicableFlowIDs: []
+            )
+        )
+    }
+
+    /// Una baseline se graba sin la app auditada: no hay consentimiento al que adelantarse, lleve
+    /// los marcadores que lleve.
+    func testABaselineHasNoConsentToPrecede() throws {
+        let flows = [Fixtures.flow(id: 1), Fixtures.flow(id: 2)]
+        let result = try classify(
+            flows,
+            allowlist: ["api.example.com"],
+            session: Fixtures.session(kind: .baseline, inspection: Self.notInspecting),
+            markers: [Fixtures.marker(id: 1, at: 3_000)]
+        )
+        XCTAssertEqual(result.findings, [])
+        XCTAssertEqual(
+            result.consent,
+            CheckCoverage(satisfiedFlowIDs: [], unassessed: [], notApplicableFlowIDs: [1, 2])
+        )
+    }
+
+    // MARK: - Orden e identificadores
+
+    /// Un flujo que prueba varias cosas las da en un orden fijo: sin cifrar, versión, destino,
+    /// pinning, consentimiento.
     func testAFlowThatProvesSeveralThingsGivesThemInAFixedOrder() throws {
         let flows = [
             Fixtures.flow(
@@ -285,13 +466,35 @@ final class FindingsClassifierTests: XCTestCase {
         ]
         let result = try classify(flows, allowlist: ["api.example.com"])
         XCTAssertEqual(result.findings.map(\.kind), [.cleartextTraffic, .weakTLSVersion, .hostNotInAllowlist])
+
+        let inspected = [
+            Fixtures.flow(
+                id: 1,
+                tlsStatus: .inspected,
+                sni: "tracker.example.net",
+                serverTLS: Fixtures.negotiated(.tls10, source: .upstreamConnection)
+            ),
+        ]
+        let all = try classify(
+            inspected,
+            allowlist: ["api.example.com"],
+            session: Fixtures.session(inspection: Self.inspecting),
+            markers: [Fixtures.marker(id: 1, at: 600)]
+        )
+        XCTAssertEqual(
+            all.findings.map(\.kind),
+            [.weakTLSVersion, .hostNotInAllowlist, .pinningAbsent, .activityBeforeConsent]
+        )
     }
 
     /// El `rawValue` es lo que escribirá un catálogo de requisitos: no puede moverse solo.
     func testTheKindIdentifiersAreStable() {
         XCTAssertEqual(
             FindingKind.allCases.map(\.rawValue),
-            ["weakTLSVersion", "cleartextTraffic", "hostNotInAllowlist", "unnamedFlow"]
+            [
+                "weakTLSVersion", "cleartextTraffic", "hostNotInAllowlist", "unnamedFlow",
+                "pinningAbsent", "pinningObserved", "activityBeforeConsent",
+            ]
         )
     }
 }

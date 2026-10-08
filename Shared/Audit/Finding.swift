@@ -14,6 +14,13 @@ public enum FindingKind: String, Sendable, Hashable, Codable, CaseIterable {
     case hostNotInAllowlist
     /// Una conexión no tiene nombre, así que no se pudo comparar con la allowlist.
     case unnamedFlow
+    /// Una conexión aceptó un certificado de la CA local: la app confía en una raíz instalada por
+    /// el usuario para ese host.
+    case pinningAbsent
+    /// Una conexión rechazó el certificado de la CA local para ese host.
+    case pinningObserved
+    /// Una conexión se abrió antes de que se marcara el consentimiento.
+    case activityBeforeConsent
 }
 
 /// Lo que un hallazgo **afirma**, con lo observado que lo sostiene.
@@ -21,13 +28,18 @@ public enum FindingKind: String, Sendable, Hashable, Codable, CaseIterable {
 /// Es un valor comparable a propósito: dos flujos que prueban exactamente lo mismo son un hallazgo
 /// con dos flujos, no dos hallazgos. Por eso aquí no va nada que sea del flujo —su instante, su
 /// dirección—: eso se lee de los flujos que el hallazgo señala. El host solo va en
-/// `hostNotInAllowlist`, donde es justo lo que se afirma: todas las conexiones a un mismo host de
-/// fuera son un hallazgo. De dónde salió el nombre (SNI o DNS) sí es del flujo, y se lee de él.
+/// `hostNotInAllowlist` y en los dos de pinning, donde es justo lo que se afirma: todas las
+/// conexiones a un mismo host de fuera son un hallazgo, y el pinning se observa por host. De dónde
+/// salió el nombre (SNI o DNS) sí es del flujo, y se lee de él. `activityBeforeConsent` no lleva
+/// nada: el instante es de cada flujo, así que todos los de antes son un solo hallazgo.
 public enum FindingEvidence: Sendable, Hashable {
     case weakTLSVersion(TLSVersionObservation)
     case cleartextTraffic(CleartextProtocol)
     case hostNotInAllowlist(host: String)
     case unnamedFlow(UnnamedFlowReason)
+    case pinningAbsent(host: String)
+    case pinningObserved(host: String)
+    case activityBeforeConsent
 
     public var kind: FindingKind {
         switch self {
@@ -35,6 +47,9 @@ public enum FindingEvidence: Sendable, Hashable {
         case .cleartextTraffic: return .cleartextTraffic
         case .hostNotInAllowlist: return .hostNotInAllowlist
         case .unnamedFlow: return .unnamedFlow
+        case .pinningAbsent: return .pinningAbsent
+        case .pinningObserved: return .pinningObserved
+        case .activityBeforeConsent: return .activityBeforeConsent
         }
     }
 }
