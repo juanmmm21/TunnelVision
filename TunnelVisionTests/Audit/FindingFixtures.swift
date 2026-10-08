@@ -18,11 +18,12 @@ enum FindingFixtures {
         serverTLS: ServerTLSAnswer? = nil,
         clientTLS: ClientTLSOffer? = nil,
         quic: QUICVersionReading? = nil,
-        streamOpening: StreamOpening? = nil
+        streamOpening: StreamOpening? = nil,
+        firstSeen: Date? = nil
     ) -> StoredFlow {
         let local = IPEndpoint(address: IPAddress(version: .v4, bytes: [10, 7, 0, 2]), port: 50_000)
         let remote = IPEndpoint(address: IPAddress(version: .v4, bytes: [203, 0, 113, 9]), port: remotePort)
-        let firstSeen = start.addingTimeInterval(TimeInterval(id))
+        let firstSeen = firstSeen ?? start.addingTimeInterval(TimeInterval(id))
         return StoredFlow(
             id: id,
             key: FlowKey(proto: proto, source: local, destination: remote),
@@ -65,6 +66,35 @@ enum FindingFixtures {
             allowlist: try patterns.map { AllowlistEntry(pattern: try DomainPattern(parsing: $0), note: nil) },
             createdAt: start
         )
+    }
+
+    static let sessionID: Int64 = 7
+
+    /// Una sesión ya cerrada del proyecto de `project(allowlist:)`.
+    static func session(
+        kind: AuditSessionKind = .audit(AppRelease(version: "2.4.0", build: "118")),
+        inspection: InspectionConditions
+    ) -> AuditSession {
+        AuditSession(
+            id: sessionID,
+            projectID: 1,
+            kind: kind,
+            environment: AuditEnvironment(deviceModel: "iPhone18,3", osVersion: "26.0", toolVersion: "1.0 (1)"),
+            inspection: inspection,
+            startedAt: start,
+            endedAt: start.addingTimeInterval(3_600),
+            notes: ""
+        )
+    }
+
+    /// Un marcador a `offset` segundos del arranque de la sesión.
+    static func marker(
+        id: Int64,
+        _ kind: SessionMarkerKind = .consentGiven,
+        at offset: TimeInterval,
+        sessionID: Int64 = sessionID
+    ) -> SessionMarker {
+        SessionMarker(id: id, sessionID: sessionID, date: start.addingTimeInterval(offset), kind: kind)
     }
 
     static func offer(_ versions: OfferedTLSVersions, encryptedClientHello: Bool = false) -> ClientTLSOffer {
