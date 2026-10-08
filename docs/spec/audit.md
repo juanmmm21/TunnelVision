@@ -356,6 +356,9 @@ public enum FindingKind: String, Sendable, Hashable, Codable, CaseIterable {
     case cleartextTraffic
     case hostNotInAllowlist
     case unnamedFlow
+    case pinningAbsent
+    case pinningObserved
+    case activityBeforeConsent
 }
 
 public enum FindingEvidence: Sendable, Hashable {
@@ -363,6 +366,9 @@ public enum FindingEvidence: Sendable, Hashable {
     case cleartextTraffic(CleartextProtocol)
     case hostNotInAllowlist(host: String)     // normalised
     case unnamedFlow(UnnamedFlowReason)
+    case pinningAbsent(host: String)          // normalised
+    case pinningObserved(host: String)        // normalised
+    case activityBeforeConsent                // nothing: the instant belongs to each flow
     public var kind: FindingKind { get }
 }
 
@@ -387,11 +393,15 @@ public struct SessionFindings: Sendable, Hashable {
     public let tlsVersion: CheckCoverage<TLSVersionGap>
     public let encryption: CheckCoverage<EncryptionGap>
     public let host: CheckCoverage<HostGap>
+    public let pinning: CheckCoverage<PinningGap>     // satisfied is always empty
+    public let consent: CheckCoverage<ConsentGap>
 }
 
 public enum FindingsClassifier {
     public static func classify(
-        flows: [StoredFlow], project: AuditProject, policy: FindingsPolicy
+        flows: [StoredFlow], project: AuditProject,
+        session: AuditSession, markers: [SessionMarker],
+        policy: FindingsPolicy
     ) -> SessionFindings
 }
 ```
@@ -399,17 +409,21 @@ public enum FindingsClassifier {
 - **A finding is a statement, and the flows are its proof.** Flows that prove exactly the same thing
   are one finding with several flows. Nothing that belongs to a flow — its instant, its address — is
   in the evidence: it is read from the flows the finding points at. The one exception is the host of
-  `hostNotInAllowlist`, which is the statement itself. Packets are reached through the flow, and
-  from there to the file and offset of their bytes.
+  `hostNotInAllowlist` and of the two pinning kinds, which is the statement itself. Packets are
+  reached through the flow, and from there to the file and offset of their bytes.
 - **Order is the order things happened.** Findings and reasons appear in the order of their first
   flow; the report's order never depends on a hash. A flow that proves several things gives them as
-  cleartext, TLS version, destination.
-- **The project enters for its allowlist and nothing else.** Markers and the session's inspection
-  conditions join the signature when a check reads them.
+  cleartext, TLS version, destination, pinning, consent.
+- **The project enters for its allowlist and nothing else.** The session enters for its kind and
+  its inspection conditions, and of the markers only `consentGiven` is read; a marker of another
+  session is ignored.
 - **No findings is not the same as nothing wrong.** Each check also returns its coverage, and in
   each check every flow lands in exactly one place: a finding, *satisfied*, *unassessed* with a reason, or *not
   applicable*. A requirement can only be reported as observed without incident when its check has
-  satisfied flows; otherwise it is *not assessed by this tool*.
+  satisfied flows; otherwise it is *not assessed by this tool*. **Pinning is the exception in
+  shape, not in rule**: its favourable outcome is a finding of its own kind (`pinningObserved`),
+  because the report has to name the hosts it was seen on, so that check never has satisfied
+  flows and a requirement about pinning reads the two kinds.
 - **Thresholds are configuration.** The classifier is given a `FindingsPolicy` and carries no
   threshold of its own. A minimum that is not a published version is refused when the policy is
   built, so a miswritten catalogue is found on loading it.
@@ -527,8 +541,99 @@ every flow went somewhere, so an unnamed flow is not set aside from the check �
 - **The remote address is not read.** Nothing here needs to know which end of the flow is the
   device, so local-network traffic (mDNS, a router) is unnamed like anything else.
 
+### Whether the app pins
+
+`PinningAssessment(of:conditions:)` is the rule behind `pinningAbsent` and `pinningObserved`. It
+bypasses nothing ([ADR 0003](../decisions/0003-no-third-party-pinning-bypass.md)): it **reads** the
+outcome the relay already recorded for an inspection attempt
+([`relay-and-tls.md`](relay-and-tls.md) § *TLS inspection*). It says one of four things:
+`absent(host:)`, `observed(host:)`, `notAssessed` with a `PinningGap`, or `notApplicable`.
+
+| What the flow carries | Result |
+|---|---|
+| No inspection outcome and no sign of TLS or QUIC — or an HTTP request seen in the clear, whatever the port's status | `notApplicable` |
+| Anything else, in a session recorded with inspection off | `notAssessed(.inspectionOff)` |
+| Anything else, with inspection on and the CA not trusted | `notAssessed(.caNotTrusted)` |
+| `inspected`, with an announced name | `absent`, under that name |
+| `notInspectable`, with an announced name | `observed`, under that name |
+| `inspected` or `notInspectable` with no announced name | `notAssessed(.outcomeWithoutAnnouncedName)` |
+| A QUIC reading and no outcome | `notAssessed(.quicNotInspected)` |
+| TLS over TCP and no outcome | `notAssessed(.noInspectionOutcome)` |
+
+- **What each kind states.** `pinningAbsent`: a connection completed its handshake against a
+  certificate issued by the local CA, so for that host the app trusts a root the user installed.
+  `pinningObserved`: a connection to that host refused that certificate. Neither says *why* —
+  an app that refuses may pin, or may simply not accept user-installed roots.
+- **The session's conditions gate everything**, in `InspectionConditions.supportsPinningEvidence`
+  and nowhere else. With the CA untrusted *every* app refuses, so a refusal is not reported; and
+  an `inspected` flow in a session declared without inspection is not reported either — the
+  conditions the session was recorded under are then not the ones it declares, and the report
+  does not pick which to believe. The reason given is the first that fails, so a QUIC flow in a
+  session without inspection says `inspectionOff`.
+- **`encrypted` alone is not acceptance.** A flow with no outcome was not a candidate (off 443,
+  no announced name), failed for a reason that was not the app, or never closed cleanly. It is
+  unassessed, never counted for either kind.
+- **`pinningObserved` is a statement about the host, not about each connection.** After the first
+  refusal the relay does not try that host again for as long as the tunnel runs
+  (`PinnedHostMemory`) and marks the following flows `notInspectable` without testing them. So
+  the finding says a connection to the host refused — at least once since the tunnel started,
+  which may be before the audit session opened — and it cannot show a second client of the same
+  host that would have accepted.
+- **A host can have both findings**, when a connection accepted before another refused. Both are
+  reported; nothing here reconciles them, because the tunnel does not know which app sent which.
+- **The host is the announced one**, normalised like `hostNotInAllowlist`'s. The certificate the
+  app accepted or refused was issued for the SNI, so a name deduced from DNS does not stand in
+  for it.
+- **This check has no satisfied flows.** Both outcomes are findings.
+- **A baseline is classified like any session.** Whoever calls decides what its pinning findings
+  mean; they are still true of the connections.
+
+### Activity before consent
+
+`ConsentAssessment(of:sessionKind:consent:)` is the rule behind `activityBeforeConsent`. It
+compares the flow's **first packet** (`firstSeen`) with the session's `consentGiven` markers,
+which arrive as a `ConsentInterval` — the earliest and the latest of them, the same instant when
+there is one — and says `beforeConsent`, `afterConsent`, `notAssessed` with a `ConsentGap`, or
+`notApplicable`.
+
+| The session and the flow | Result |
+|---|---|
+| A `baseline` session, with or without markers | `notApplicable` |
+| No `consentGiven` marker | `notAssessed(.noConsentMarker)` |
+| First packet before the earliest marker | `beforeConsent` |
+| First packet at the latest marker or after it | `afterConsent` |
+| First packet from the earliest marker on and before the latest | `notAssessed(.betweenConsentMarkers)` |
+
+- **Without a marker there is no "before".** A session nobody marked has neither findings nor
+  satisfied flows: that the marker is missing does not mean nothing preceded consent.
+- **Several markers only state what all of them say.** Two `consentGiven` markers do not tell
+  which one counts — a second tap, a second consent dialog, consent withdrawn and given again —
+  and choosing would be deciding it for the assessor. Before all of them is a finding, after all
+  of them is satisfied, and in between nothing is stated.
+- **What counts is when the connection opened.** A flow that began before consent and kept
+  carrying traffic after it is a finding; how long it lasted is on the flow (`lastSeen`). So is
+  a flow older than the session itself that carried traffic during it (§ *Which session a flow
+  belongs to*).
+- **One finding.** The evidence carries nothing — the instant belongs to each flow — so every
+  flow opened before consent is the same finding.
+- **A baseline has no consent to precede.** It is recorded without the audited app, so all its
+  flows are *not applicable*, whatever markers it carries.
+- **Whose flow it was is not stated.** A connection of the system opened before the marker is a
+  finding like any other; telling it from the app's is what the baseline is for (ADR 0008).
+
 ## Tests
 
+- `PinningAssessmentTests`: every row of the pinning table; the host is cited normalised; an
+  outcome whose flow has only a resolved name, or an empty SNI, is not assessed; the reason of a
+  session without inspection or without a trusted CA is the first that fails, and reaches the
+  flows with an outcome too; TLS with no outcome is never acceptance, on any port; QUIC from
+  either end and of any version; *not applicable* does not depend on the conditions; the gap
+  identifiers are stable.
+- `ConsentAssessmentTests`: every row of the consent table; the interval is the earliest and the
+  latest instant whatever the order of the markers, ignores other kinds — a custom marker named
+  like consent included — and other sessions' markers; the first packet decides, for a flow that
+  outlived consent and for one older than the session; the instant of the marker itself is
+  after; the gap identifiers are stable.
 - `HostAssessmentTests`: every row of the table above; a wildcard's own apex is outside; the host
   is cited normalised; an SNI decides alone; an allowed winner does not clear an unlisted candidate
   and an unlisted winner with an allowed candidate is not a finding; an empty SNI is no name; ECH
@@ -545,8 +650,12 @@ every flow went somewhere, so an unnamed flow is not set aside from the check �
   openings were — has neither findings nor satisfied flows; a policy needs a published
   minimum; connections to the same unlisted host are one finding and unnamed flows one per reason;
   the host check places every flow and none as not applicable; without an allowlist nothing is
-  unexpected and nothing is expected; the order of a flow's several findings; the kind identifiers
-  are stable.
+  unexpected and nothing is expected; pinning is one finding per host and outcome, and a host
+  with both gives both; without a trusted CA no pinning is reported; the pinning check places
+  every flow and none as satisfied; the flows opened before consent are one finding; without a
+  consent marker nothing is before and nothing is after; between two markers nothing is stated; a
+  baseline has no consent to precede; the order of a flow's several findings; the kind
+  identifiers are stable.
 - `DomainPatternTests`: normalisation, the canonical text round-trips, every rejection, and the edges
   of a wildcard (own suffix, any depth, same trailing letters, a name that continues past the suffix).
 - `AuditStoreTests`: a project and a session read back as written; the allowlist keeps its order; a

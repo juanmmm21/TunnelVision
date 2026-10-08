@@ -20,7 +20,12 @@ is never mistaken for "nothing wrong". Thresholds arrive in a `FindingsPolicy`; 
 the one behind `cleartextTraffic` — which only ever comes from an HTTP request that was seen, never
 from a port number. `HostAssessment` is the one behind `hostNotInAllowlist` and `unnamedFlow`: it
 judges a flow's name against the project's allowlist, and a name deduced from DNS only counts when
-every name that shared its address falls on the same side.
+every name that shared its address falls on the same side. `PinningAssessment` is the one behind
+`pinningAbsent` and `pinningObserved`: it reads the outcome the relay recorded for an inspection
+attempt — it bypasses nothing — and only in a session recorded with inspection on and the CA
+trusted. `ConsentAssessment` is the one behind `activityBeforeConsent`: a flow's first packet
+against the session's `consentGiven` markers (`ConsentInterval`), with no marker meaning *not
+assessed* rather than nothing found.
 
 An *audit* session is not the *capture* session of `FlowStore`: the latter is the instant the store was
 opened and only keeps a recycled 5-tuple from merging two connections.
