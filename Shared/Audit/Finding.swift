@@ -10,21 +10,31 @@ public enum FindingKind: String, Sendable, Hashable, Codable, CaseIterable {
     case weakTLSVersion
     /// Una conexión mandó contenido sin cifrar, y se vio.
     case cleartextTraffic
+    /// Una conexión fue a un host que la allowlist del proyecto no cubre.
+    case hostNotInAllowlist
+    /// Una conexión no tiene nombre, así que no se pudo comparar con la allowlist.
+    case unnamedFlow
 }
 
 /// Lo que un hallazgo **afirma**, con lo observado que lo sostiene.
 ///
 /// Es un valor comparable a propósito: dos flujos que prueban exactamente lo mismo son un hallazgo
-/// con dos flujos, no dos hallazgos. Por eso aquí no va nada que sea del flujo —su host, su
-/// instante—: eso se lee de los flujos que el hallazgo señala.
+/// con dos flujos, no dos hallazgos. Por eso aquí no va nada que sea del flujo —su instante, su
+/// dirección—: eso se lee de los flujos que el hallazgo señala. El host solo va en
+/// `hostNotInAllowlist`, donde es justo lo que se afirma: todas las conexiones a un mismo host de
+/// fuera son un hallazgo. De dónde salió el nombre (SNI o DNS) sí es del flujo, y se lee de él.
 public enum FindingEvidence: Sendable, Hashable {
     case weakTLSVersion(TLSVersionObservation)
     case cleartextTraffic(CleartextProtocol)
+    case hostNotInAllowlist(host: String)
+    case unnamedFlow(UnnamedFlowReason)
 
     public var kind: FindingKind {
         switch self {
         case .weakTLSVersion: return .weakTLSVersion
         case .cleartextTraffic: return .cleartextTraffic
+        case .hostNotInAllowlist: return .hostNotInAllowlist
+        case .unnamedFlow: return .unnamedFlow
         }
     }
 }

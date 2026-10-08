@@ -20,7 +20,7 @@ public struct FindingsPolicy: Sendable, Hashable {
 public struct SessionFindings: Sendable, Hashable {
 
     /// En el orden en que cada uno apareció por primera vez al recorrer los flujos; si un flujo
-    /// prueba dos, el de tráfico sin cifrar va antes que el de la versión de TLS.
+    /// prueba varios, van el de tráfico sin cifrar, el de la versión de TLS y el de su destino.
     public let findings: [Finding]
 
     /// Lo que la comprobación de la versión de TLS pudo y no pudo mirar.
@@ -29,14 +29,21 @@ public struct SessionFindings: Sendable, Hashable {
     /// Lo que la comprobación de tráfico sin cifrar pudo y no pudo mirar.
     public let encryption: CheckCoverage<EncryptionGap>
 
+    /// Lo que la comprobación del destino contra la allowlist pudo y no pudo mirar. Sus hallazgos
+    /// son de dos clases, `hostNotInAllowlist` y `unnamedFlow`, y `notApplicableFlowIDs` está
+    /// siempre vacío: aplica a todos los flujos.
+    public let host: CheckCoverage<HostGap>
+
     public init(
         findings: [Finding],
         tlsVersion: CheckCoverage<TLSVersionGap>,
-        encryption: CheckCoverage<EncryptionGap>
+        encryption: CheckCoverage<EncryptionGap>,
+        host: CheckCoverage<HostGap>
     ) {
         self.findings = findings
         self.tlsVersion = tlsVersion
         self.encryption = encryption
+        self.host = host
     }
 }
 
@@ -49,7 +56,12 @@ public enum FindingsClassifier {
 
     /// - Parameter flows: los flujos de una sesión de auditoría, en el orden del historial
     ///   (`FlowStore.flows(inAuditSession:limit:)`: como ocurrieron).
-    public static func classify(flows: [StoredFlow], policy: FindingsPolicy) -> SessionFindings {
+    /// - Parameter project: el proyecto de la sesión. De él solo se lee la allowlist.
+    public static func classify(
+        flows: [StoredFlow],
+        project: AuditProject,
+        policy: FindingsPolicy
+    ) -> SessionFindings {
         var findings = Grouping<FindingEvidence>()
         var tlsGaps = Grouping<TLSVersionGap>()
         var tlsSatisfied: [Int64] = []
@@ -57,6 +69,8 @@ public enum FindingsClassifier {
         var encryptionGaps = Grouping<EncryptionGap>()
         var encryptionSatisfied: [Int64] = []
         var encryptionNotApplicable: [Int64] = []
+        var hostGaps = Grouping<HostGap>()
+        var hostSatisfied: [Int64] = []
 
         for flow in flows {
             switch EncryptionAssessment(of: flow) {
@@ -80,6 +94,17 @@ public enum FindingsClassifier {
             case .notApplicable:
                 tlsNotApplicable.append(flow.id)
             }
+
+            switch HostAssessment(of: flow, project: project) {
+            case .notInAllowlist(let host):
+                findings.add(flow.id, to: .hostNotInAllowlist(host: host))
+            case .unnamed(let reason):
+                findings.add(flow.id, to: .unnamedFlow(reason))
+            case .allowed:
+                hostSatisfied.append(flow.id)
+            case .notAssessed(let gap):
+                hostGaps.add(flow.id, to: gap)
+            }
         }
 
         return SessionFindings(
@@ -93,6 +118,11 @@ public enum FindingsClassifier {
                 satisfiedFlowIDs: encryptionSatisfied,
                 unassessed: encryptionGaps.groups.map { UnassessedFlows(gap: $0.key, flowIDs: $0.flowIDs) },
                 notApplicableFlowIDs: encryptionNotApplicable
+            ),
+            host: CheckCoverage(
+                satisfiedFlowIDs: hostSatisfied,
+                unassessed: hostGaps.groups.map { UnassessedFlows(gap: $0.key, flowIDs: $0.flowIDs) },
+                notApplicableFlowIDs: []
             )
         )
     }
