@@ -61,7 +61,13 @@ Network.framework. The seam is what would make that swap cheap if it is ever nee
 - `ServerHelloScanner.swift` — the TLS version and cipher suite a server chose, read incrementally
   from the inbound stream: the version from `supported_versions` when present (that is how TLS 1.3
   announces itself), an alert reported as the server refusing, a HelloRetryRequest read and marked.
-- `TLSByteReader.swift` — the bounds-checked cursor both share.
+- `ServerCertificateScanner.swift` — the certificate chain a TLS ≤ 1.2 server presents, which
+  travels in the clear right behind its ServerHello. It takes over the stream where
+  `ServerHelloScanner` left it (`remainder`), tells a chain from a resumed session and from a
+  handshake without a certificate, and keeps a bounded prefix of the chain, saying when it is not
+  all of it. Never created for TLS 1.3, where the certificate is encrypted.
+- `TLSByteReader.swift` — the bounds-checked cursor the three share.
+- `TLSRecordHeader.swift` — the record header the two inbound scanners both cut the stream by.
 
 **Still pending here:** the relay hookup that routes an `.inspect` flow into a termination instead of
 straight through. **Device-only unknown:** whether a network extension may bind a loopback listener

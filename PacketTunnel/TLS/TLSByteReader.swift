@@ -5,14 +5,16 @@ import Foundation
 /// TLS codifica casi todo como vectores con su longitud delante, así que sus parsers son
 /// literalmente "salta un vector, lee el siguiente". Tenerlo en un tipo evita repetir el mismo
 /// control de límites en cada campo, que es justo donde viven los desbordamientos de un parser
-/// de red. Lo comparten los dos escáneres de handshake (`ClientHelloScanner` y
-/// `ServerHelloScanner`): dos copias del mismo control de límites serían dos sitios donde
+/// de red. Lo comparten los escáneres de handshake (`ClientHelloScanner`,
+/// `ServerHelloScanner` y `ServerCertificateScanner`): dos copias del mismo control de límites serían dos sitios donde
 /// equivocarse igual.
 struct TLSByteReader {
     /// Anchura del prefijo de longitud de un vector TLS.
     enum LengthPrefix {
         case oneByte
         case twoBytes
+        /// El de la lista de certificados de un mensaje `Certificate` y el de cada uno de ellos.
+        case threeBytes
     }
 
     private let bytes: ArraySlice<UInt8>
@@ -38,6 +40,11 @@ struct TLSByteReader {
         return UInt16(high) << 8 | UInt16(low)
     }
 
+    mutating func uint24() -> Int? {
+        guard let high = uint8(), let low = uint16() else { return nil }
+        return Int(high) << 16 | Int(low)
+    }
+
     /// Lee `count` bytes tal cual, para los campos de tamaño fijo (el `random` de un hello).
     mutating func take(_ count: Int) -> ArraySlice<UInt8>? {
         guard count >= 0, remaining >= count else { return nil }
@@ -59,6 +66,9 @@ struct TLSByteReader {
         case .twoBytes:
             guard let value = uint16() else { return nil }
             length = Int(value)
+        case .threeBytes:
+            guard let value = uint24() else { return nil }
+            length = value
         }
         return take(length)
     }

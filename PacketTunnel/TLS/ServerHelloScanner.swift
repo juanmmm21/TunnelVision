@@ -16,6 +16,8 @@ import Shared
 ///
 /// **Termina y se queda quieto.** En cuanto devuelve algo que no es `.needMoreBytes`, suelta sus
 /// buffers y todas las llamadas siguientes devuelven ese mismo desenlace sin mirar un byte más.
+/// Lo único que conserva, si encontró un ServerHello, es lo que ya había llegado **detrás** de él
+/// (`remainder`): es por donde sigue `ServerCertificateScanner`.
 public struct ServerHelloScanner: Sendable {
 
     public struct Config: Sendable {
@@ -59,14 +61,22 @@ public struct ServerHelloScanner: Sendable {
         case tooLarge
     }
 
-    private static let alertContentType: UInt8 = 21
-    private static let handshakeContentType: UInt8 = 22
+    /// Lo que el escáner tenía ya en las manos **detrás** del ServerHello cuando lo encontró.
+    ///
+    /// En TLS 1.2 el servidor suele meter el `Certificate` en el mismo record que el ServerHello,
+    /// así que cuando éste se lee una parte de aquél ya ha pasado por aquí. Quien quiera seguir
+    /// leyendo el handshake tiene que empezar por estos bytes y no por los siguientes que lleguen.
+    public struct Remainder: Sendable, Equatable {
+        /// Bytes de handshake ya sacados de sus records, a continuación del ServerHello.
+        public let handshake: [UInt8]
+        /// Bytes del stream aún sin trocear en records.
+        public let stream: [UInt8]
+    }
+
     private static let serverHelloMessageType: UInt8 = 2
     private static let supportedVersionsExtension: UInt16 = 43
-    /// `legacy_version` de un record: el byte mayor es 3 en todo lo que existe.
-    private static let recordVersionMajor: UInt8 = 3
-    /// Una alerta son exactamente dos bytes: nivel y descripción.
-    private static let alertLength = 2
+    /// Cabecera de un mensaje de handshake: tipo (1) + longitud (3).
+    private static let messageHeaderLength = 4
     private static let randomLength = 32
     /// El `random` que convierte un ServerHello en un HelloRetryRequest: SHA-256 de la cadena
     /// "HelloRetryRequest", fijado por RFC 8446 § 4.1.3.
@@ -83,6 +93,9 @@ public struct ServerHelloScanner: Sendable {
     /// Desenlace definitivo, si ya se alcanzó.
     private var settled: Outcome?
 
+    /// Lo que quedó detrás del ServerHello. Solo existe tras un `.found`.
+    public private(set) var remainder: Remainder?
+
     public init(config: Config = Config()) {
         self.config = config
         self.stream = []
@@ -98,6 +111,14 @@ public struct ServerHelloScanner: Sendable {
         let outcome = advance()
         guard outcome != .needMoreBytes else { return outcome }
 
+        if case .found = outcome {
+            // `.found` solo sale de un mensaje completo, así que su longitud está y cabe.
+            let length = Int(handshake[1]) << 16 | Int(handshake[2]) << 8 | Int(handshake[3])
+            remainder = Remainder(
+                handshake: Array(handshake[(Self.messageHeaderLength + length)...]),
+                stream: stream
+            )
+        }
         stream = []
         handshake = []
         settled = outcome
@@ -109,24 +130,24 @@ public struct ServerHelloScanner: Sendable {
     /// Trocea el stream en records y va completando el primer mensaje de handshake.
     private mutating func advance() -> Outcome {
         while true {
-            // Lo primero que manda un servidor TLS es un handshake o una alerta. Cualquier otra
-            // cosa se delata en el primer byte, sin esperar a la cabecera entera.
-            if let contentType = stream.first,
-               contentType != Self.handshakeContentType, contentType != Self.alertContentType {
+            // Lo primero que manda un servidor TLS es un handshake o una alerta.
+            let isAlert: Bool
+            let length: Int
+            switch TLSRecordHeader.read(
+                stream, accepting: [TLSRecordHeader.ContentType.handshake, TLSRecordHeader.ContentType.alert]
+            ) {
+            case .needMoreBytes:
+                return .needMoreBytes
+            case .notTLS:
                 return .unavailable(.notTLSHandshake)
+            case .record(let contentType, let declared):
+                isAlert = contentType == TLSRecordHeader.ContentType.alert
+                length = declared
             }
-            if stream.count >= 2, stream[1] != Self.recordVersionMajor {
-                return .unavailable(.notTLSHandshake)
-            }
-            // Cabecera de record: tipo (1) + versión (2) + longitud (2).
-            guard stream.count >= 5 else { return .needMoreBytes }
-
-            let isAlert = stream[0] == Self.alertContentType
-            let length = Int(stream[3]) << 8 | Int(stream[4])
             // Se juzga la longitud **declarada**, antes de esperar a que llegue: si no, un record
             // que dice medir 64 KiB obligaría a guardarlos enteros para acabar descartándolos.
             if isAlert {
-                guard length == Self.alertLength else { return .unavailable(.malformed) }
+                guard length == TLSRecordHeader.alertLength else { return .unavailable(.malformed) }
             } else {
                 guard length <= config.maxHandshakeBytes else { return .unavailable(.tooLarge) }
             }
@@ -157,7 +178,8 @@ public struct ServerHelloScanner: Sendable {
         guard length <= config.maxHandshakeBytes else { return .unavailable(.tooLarge) }
         guard handshake.count >= 4 + length else { return nil }
 
-        // Lo que venga detrás en el mismo record (en TLS 1.2, el certificado) no se mira.
+        // Lo que venga detrás en el mismo record (en TLS 1.2, el certificado) no se mira aquí:
+        // se le deja a quien releve a este escáner (`remainder`).
         return parseServerHello(handshake[4..<(4 + length)])
     }
 
