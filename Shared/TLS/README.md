@@ -14,6 +14,12 @@ entitlements, so both look at the very same items and there is no published copy
   certificates on iOS, so the TBS is built by hand and signed). Internal to the framework.
 - `X509Certificate.swift` — builds + signs an X.509 v3 certificate given a signing closure
   (ECDSA-SHA256, EC P-256, minimal extension set incl. SAN with `dNSName`/`iPAddress`). Internal.
+- `DERReader.swift` — the reading counterpart of `DERWriter`: single-byte tags and definite
+  lengths, every length checked against the bytes that are there. Internal.
+- `ServerCertificateReader.swift` — the subject, issuer and expiry of a certificate **someone else**
+  issued: what a TLS ≤ 1.2 server presents in the clear. It walks the start of the TBSCertificate
+  and validates nothing; names come out as RFC 4514 text, escaped and bounded, because the server
+  chooses them. `Security` on iOS exposes neither the issuer nor the validity.
 - `CertificateAuthority.swift` — the pure, Simulator-testable core: a P-256 root + self-signed root
   cert, minting ephemeral leaves (`MintedCertificate` = cert DER + PKCS#8 key) cached per host.
   Verified end-to-end against `Security`'s `SecTrustEvaluateWithError`.

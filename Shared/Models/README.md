@@ -13,6 +13,12 @@ picks the value and whatever it sent is kept as sent. `ServerTLSAnswer` is what 
 a negotiation, or the alert the server refused with. Spec:
 [`../../docs/spec/relay-and-tls.md`](../../docs/spec/relay-and-tls.md) § *What the server chose*.
 
+`ServerCertificate.swift` is what a TLS ≤ 1.2 server presented behind that answer: a
+`ServerCertificateChain` of subject, issuer and expiry (a prefix of what was sent, with `isComplete`),
+or the reason the handshake carried none. `ServerCertificateVisibility` is what a report reads — it
+adds the reason when there is nothing to show, so that "TLS 1.3 encrypts it" is said instead of left
+blank. Spec: same file, § *The certificate chain of TLS ≤ 1.2*.
+
 `ClientTLSOffer.swift` is the other half: what the **client** offered in its ClientHello — the TLS
 versions it accepts and its ALPN. `OfferedTLSVersions` is an enum because a list from
 `supported_versions` is exact and a bare `legacy_version` is only a ceiling, and a report must not
