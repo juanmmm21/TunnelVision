@@ -205,6 +205,57 @@ final class TLSVersionAssessmentTests: XCTestCase {
         XCTAssertEqual(assess(Fixtures.flow(id: 2, proto: .udp, tlsStatus: .plaintext)), .notApplicable)
     }
 
+    // MARK: - La lectura sin umbral
+
+    /// Lo que lee el diff entre releases: la misma cifra que aquí se juzga, sin mínimo.
+    func testTheObservationOfAFlowIsTheReadingItIsJudgedBy() {
+        XCTAssertEqual(
+            TLSVersionObservation(of: Fixtures.flow(id: 1, serverTLS: Fixtures.negotiated(.tls11))),
+            serverHello(.tls11)
+        )
+        XCTAssertEqual(
+            TLSVersionObservation(
+                of: Fixtures.flow(id: 2, serverTLS: Fixtures.negotiated(.tls13, source: .upstreamConnection))
+            ),
+            upstream(.tls13)
+        )
+        let quic = Fixtures.flow(id: 3, proto: .udp, quic: QUICVersionReading(version: .v1, source: .server))
+        XCTAssertEqual(
+            TLSVersionObservation(of: quic),
+            TLSVersionObservation(version: .tls13, basis: .quic(.v1))
+        )
+    }
+
+    /// Una versión sin publicar se lee igual: no compararla es cosa de quien compara.
+    func testAnUnpublishedVersionIsStillAnObservation() {
+        let draft = TLSProtocolVersion(rawValue: 0x7F1C)
+        XCTAssertEqual(
+            TLSVersionObservation(of: Fixtures.flow(id: 1, serverTLS: Fixtures.negotiated(draft))),
+            serverHello(draft)
+        )
+    }
+
+    func testAFlowWithNoVersionToReadHasNoObservation() {
+        XCTAssertNil(TLSVersionObservation(of: Fixtures.flow(id: 1)))
+        XCTAssertNil(TLSVersionObservation(of: Fixtures.flow(id: 2, serverTLS: .refused(alert: 70))))
+        XCTAssertNil(TLSVersionObservation(
+            of: Fixtures.flow(id: 3, proto: .udp, quic: QUICVersionReading(version: .v1, source: .client))
+        ))
+        XCTAssertNil(TLSVersionObservation(of: Fixtures.flow(
+            id: 4, proto: .udp, quic: QUICVersionReading(version: QUICVersion(rawValue: 0xFF00_001D), source: .server)
+        )))
+    }
+
+    /// La respuesta del servidor manda sobre QUIC, como en la evaluación.
+    func testAServerAnswerOutweighsAQUICReading() {
+        let flow = Fixtures.flow(
+            id: 1,
+            serverTLS: Fixtures.negotiated(.tls12),
+            quic: QUICVersionReading(version: .v1, source: .server)
+        )
+        XCTAssertEqual(TLSVersionObservation(of: flow), serverHello(.tls12))
+    }
+
     // MARK: - Versiones publicadas
 
     func testOnlyTheFivePublishedVersionsArePublished() {

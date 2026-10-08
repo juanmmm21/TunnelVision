@@ -22,6 +22,41 @@ public struct TLSVersionObservation: Sendable, Hashable {
         self.version = version
         self.basis = basis
     }
+
+    /// La versión que un flujo deja leer, **sin compararla con nada**, o `nil` si no deja leer
+    /// ninguna. Es la misma lectura que juzga `TLSVersionAssessment`, y por eso vive aquí: quien
+    /// necesita la cifra sin un mínimo (el diff entre releases) no puede decidir por su cuenta
+    /// cuál cuenta. La respuesta del servidor manda sobre QUIC, y una alerta no negoció nada.
+    public init?(of flow: StoredFlow) {
+        switch flow.serverTLS {
+        case .negotiated(let negotiated):
+            self.init(negotiated)
+        case .refused:
+            return nil
+        case nil:
+            guard let quic = flow.quic else { return nil }
+            self.init(quic)
+        }
+    }
+
+    /// La versión de una respuesta del servidor, publicada o no, con la conexión de la que salió.
+    init(_ negotiated: NegotiatedTLS) {
+        let basis: TLSVersionBasis
+        switch negotiated.source {
+        case .serverHello:
+            basis = .serverHello(fromHelloRetryRequest: negotiated.fromHelloRetryRequest)
+        case .upstreamConnection:
+            basis = .upstreamConnection
+        }
+        self.init(version: negotiated.version, basis: basis)
+    }
+
+    /// TLS 1.3, si la versión de QUIC es de las que se sabe que lo llevan y la dijo el servidor:
+    /// la del cliente es solo la que propuso.
+    init?(_ quic: QUICVersionReading) {
+        guard quic.version.hasKnownPacketProtection, quic.source == .server else { return nil }
+        self.init(version: .tls13, basis: .quic(quic.version))
+    }
 }
 
 /// Por qué la oferta del cliente no basta para afirmar que la app no habría negociado menos que el
@@ -107,14 +142,7 @@ public enum TLSVersionAssessment: Sendable, Hashable {
         offer: ClientTLSOffer?,
         minimum: TLSProtocolVersion
     ) -> TLSVersionAssessment {
-        let basis: TLSVersionBasis
-        switch negotiated.source {
-        case .serverHello:
-            basis = .serverHello(fromHelloRetryRequest: negotiated.fromHelloRetryRequest)
-        case .upstreamConnection:
-            basis = .upstreamConnection
-        }
-        let observation = TLSVersionObservation(version: negotiated.version, basis: basis)
+        let observation = TLSVersionObservation(negotiated)
         guard negotiated.version.isPublished else {
             return .notAssessed(.unrecognisedVersion(observation))
         }
@@ -137,14 +165,13 @@ public enum TLSVersionAssessment: Sendable, Hashable {
     }
 
     private static func assess(_ quic: QUICVersionReading, minimum: TLSProtocolVersion) -> TLSVersionAssessment {
+        if let observation = TLSVersionObservation(quic) {
+            return observation.version.rawValue >= minimum.rawValue ? .acceptable(observation) : .weak(observation)
+        }
         guard quic.version.hasKnownPacketProtection else {
             return .notAssessed(.unrecognisedQUICVersion(quic.version))
         }
-        guard quic.source == .server else {
-            return .notAssessed(.quicVersionOnlyProposed(quic.version))
-        }
-        let observation = TLSVersionObservation(version: .tls13, basis: .quic(quic.version))
-        return TLSProtocolVersion.tls13.rawValue >= minimum.rawValue ? .acceptable(observation) : .weak(observation)
+        return .notAssessed(.quicVersionOnlyProposed(quic.version))
     }
 
     /// `nil` si la oferta descarta que la app aceptase menos que el mínimo.
