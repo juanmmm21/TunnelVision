@@ -354,11 +354,15 @@ what could not be looked at comes back with its reason instead of being left out
 public enum FindingKind: String, Sendable, Hashable, Codable, CaseIterable {
     case weakTLSVersion                       // the raw value is what a catalogue refers to
     case cleartextTraffic
+    case hostNotInAllowlist
+    case unnamedFlow
 }
 
 public enum FindingEvidence: Sendable, Hashable {
     case weakTLSVersion(TLSVersionObservation)
     case cleartextTraffic(CleartextProtocol)
+    case hostNotInAllowlist(host: String)     // normalised
+    case unnamedFlow(UnnamedFlowReason)
     public var kind: FindingKind { get }
 }
 
@@ -382,19 +386,26 @@ public struct SessionFindings: Sendable, Hashable {
     public let findings: [Finding]
     public let tlsVersion: CheckCoverage<TLSVersionGap>
     public let encryption: CheckCoverage<EncryptionGap>
+    public let host: CheckCoverage<HostGap>
 }
 
 public enum FindingsClassifier {
-    public static func classify(flows: [StoredFlow], policy: FindingsPolicy) -> SessionFindings
+    public static func classify(
+        flows: [StoredFlow], project: AuditProject, policy: FindingsPolicy
+    ) -> SessionFindings
 }
 ```
 
 - **A finding is a statement, and the flows are its proof.** Flows that prove exactly the same thing
-  are one finding with several flows. Nothing that belongs to a flow — its host, its instant — is in
-  the evidence: it is read from the flows the finding points at. Packets are reached through the
-  flow, and from there to the file and offset of their bytes.
+  are one finding with several flows. Nothing that belongs to a flow — its instant, its address — is
+  in the evidence: it is read from the flows the finding points at. The one exception is the host of
+  `hostNotInAllowlist`, which is the statement itself. Packets are reached through the flow, and
+  from there to the file and offset of their bytes.
 - **Order is the order things happened.** Findings and reasons appear in the order of their first
-  flow; the report's order never depends on a hash.
+  flow; the report's order never depends on a hash. A flow that proves several things gives them as
+  cleartext, TLS version, destination.
+- **The project enters for its allowlist and nothing else.** Markers and the session's inspection
+  conditions join the signature when a check reads them.
 - **No findings is not the same as nothing wrong.** Each check also returns its coverage, and in
   each check every flow lands in exactly one place: a finding, *satisfied*, *unassessed* with a reason, or *not
   applicable*. A requirement can only be reported as observed without incident when its check has
@@ -472,8 +483,56 @@ never "encrypted".
 - **Only HTTP is recognised as cleartext.** Another unencrypted protocol is `unrecognisedOpening`:
   the report can list those flows, and cannot call them clear.
 
+### Where a flow went
+
+`HostAssessment(of:project:)` is the rule behind `hostNotInAllowlist` and `unnamedFlow`. It reads
+the flow's `FlowName` ([`data-model.md`](data-model.md) § *A flow has two names*), never the `sni`
+column, and says one of four things: `notInAllowlist(host:)`, `unnamed` with an
+`UnnamedFlowReason`, `allowed`, or `notAssessed` with a `HostGap`. **There is no *not applicable***:
+every flow went somewhere, so an unnamed flow is not set aside from the check — it is a finding.
+
+| What the flow carries | Result |
+|---|---|
+| No name, and no ClientHello was read | `unnamed(.noClientHelloRead)` |
+| No name, a ClientHello that announced none | `unnamed(.serverNameNotAnnounced)` |
+| No name, a ClientHello that announced none and carried Encrypted Client Hello | `unnamed(.encryptedClientHello)` |
+| A name, and the project's allowlist is empty | `notAssessed(.allowlistEmpty)` |
+| An announced name (SNI) the allowlist covers | `allowed` |
+| An announced name it does not cover | `notInAllowlist` |
+| A name from DNS, and it and **every** other candidate of the address are covered | `allowed` |
+| A name from DNS, and neither it nor any other candidate is covered | `notInAllowlist`, under the attributed name |
+| A name from DNS whose candidates fall on both sides | `notAssessed(.candidatesDisagree(attributedNameAllowed:))` |
+
+- **An allowed winner does not clear the address.** A name from DNS is the most recently resolved
+  of the names the address had alive, and the flow may have been to any of them
+  ([`packet-parsing.md`](packet-parsing.md) § *Names from DNS*). So while the candidates do not all
+  say the same, nothing is stated about the flow: it is neither a finding nor a satisfied flow, and
+  the gap says on which side the attributed name falls. When every candidate is outside, the flow
+  went outside whichever it was, and the finding is filed under the attributed name; the others are
+  on the flow.
+- **An SNI is not second-guessed.** When the connection announced a name, the resolved one is not
+  consulted, to clear it or to doubt it.
+- **One finding per host.** The evidence carries the host, normalised
+  (`DomainPattern.normalised(host:)`: lower case, no trailing dot), so every connection to the same
+  unlisted host is one finding however the name was written and wherever it came from. The origin
+  of the name — SNI or DNS — is read from each flow.
+- **An empty allowlist is not an allowlist that allows nothing.** A project whose assessor has
+  written none has not said what is expected; calling every connection unexpected would state a
+  decision nobody took. Named flows are then *unassessed*. Unnamed flows are still reported.
+- **The reason of an unnamed flow is what the flow itself shows**, and all three also mean that no
+  DNS reply seen by the tunnel had named its address. *There was no DNS to read* (encrypted DNS) is
+  **not** one of them: it is a fact of the session, told by tunnel counters that are not stored
+  with it, so the report cannot derive it from the flows. An IP literal is not asserted either —
+  `serverNameNotAnnounced` is what such a connection looks like, not proof of one.
+- **The remote address is not read.** Nothing here needs to know which end of the flow is the
+  device, so local-network traffic (mDNS, a router) is unnamed like anything else.
+
 ## Tests
 
+- `HostAssessmentTests`: every row of the table above; a wildcard's own apex is outside; the host
+  is cited normalised; an SNI decides alone; an allowed winner does not clear an unlisted candidate
+  and an unlisted winner with an allowed candidate is not a finding; an empty SNI is no name; ECH
+  with an announced name is judged by that name; the reason identifiers are stable.
 - `EncryptionAssessmentTests`: every row of the table above; an HTTP request is cleartext on any
   port and whatever the status says; a `plaintext` status alone is not cleartext and an `encrypted`
   one alone is not encrypted.
@@ -484,7 +543,10 @@ never "encrypted".
   or source is another; flows seen in the clear are one finding; first-appearance order; each check
   places every flow exactly once; a session where nothing could be read — or recorded before the
   openings were — has neither findings nor satisfied flows; a policy needs a published
-  minimum; the kind identifiers are stable.
+  minimum; connections to the same unlisted host are one finding and unnamed flows one per reason;
+  the host check places every flow and none as not applicable; without an allowlist nothing is
+  unexpected and nothing is expected; the order of a flow's several findings; the kind identifiers
+  are stable.
 - `DomainPatternTests`: normalisation, the canonical text round-trips, every rejection, and the edges
   of a wildcard (own suffix, any depth, same trailing letters, a name that continues past the suffix).
 - `AuditStoreTests`: a project and a session read back as written; the allowlist keeps its order; a

@@ -18,7 +18,9 @@ statement (`FindingEvidence`) with the flows behind it, and each check also retu
 is never mistaken for "nothing wrong". Thresholds arrive in a `FindingsPolicy`; none is written here.
 `TLSVersionAssessment` is the per-flow rule behind `weakTLSVersion`, and `EncryptionAssessment`
 the one behind `cleartextTraffic` — which only ever comes from an HTTP request that was seen, never
-from a port number.
+from a port number. `HostAssessment` is the one behind `hostNotInAllowlist` and `unnamedFlow`: it
+judges a flow's name against the project's allowlist, and a name deduced from DNS only counts when
+every name that shared its address falls on the same side.
 
 An *audit* session is not the *capture* session of `FlowStore`: the latter is the instant the store was
 opened and only keeps a recycled 5-tuple from merging two connections.
