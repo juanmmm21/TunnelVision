@@ -80,6 +80,9 @@ public actor FlowStore {
         .map { String($0.rawValue) }
         .joined(separator: ", ")
 
+    /// El estado con el que nace un flujo UDP, como literal de SQL.
+    private static let plaintextStatus = String(TLSInspectionStatus.plaintext.rawValue)
+
     /// La condición de SQL con la que el upsert reconoce un record que no trae oferta del cliente:
     /// una oferta tiene siempre una de las dos columnas de versiones (`Schema`, `v11`).
     private static let recordHasNoOffer =
@@ -121,6 +124,13 @@ public actor FlowStore {
     /// también se lee una vez—: un record sin oferta conserva la de la fila, y uno con oferta la
     /// sustituye **entera**, sus cinco columnas juntas.
     ///
+    /// La **versión de QUIC** sigue la misma regla que la oferta —la cabecera larga solo va en el
+    /// arranque de la conexión, así que un flujo que la tabla vuelve a crear ya no la ve pasar— y
+    /// arrastra una segunda: una fila que tiene versión de QUIC **no vuelve a `plaintext`** porque
+    /// llegue un record que nace así. Ese record es la segunda vida de un flujo UDP, que no sabe
+    /// que es QUIC; sin esto, el flujo más largo de una sesión —un vídeo— acabaría rotulado «sin
+    /// cifrar» en cuanto la tabla lo desalojara una vez.
+    ///
     /// Si hay una **sesión de auditoría abierta**, el flujo queda etiquetado con ella. La sesión se
     /// lee de la propia BD en la misma sentencia, así que la extensión no necesita que nadie le avise
     /// de que la app abrió una: la BD compartida ya es ese aviso. Un flujo que venía de antes y sigue
@@ -135,6 +145,7 @@ public actor FlowStore {
         let lastSeen = anchor.nanosecondsSince1970(forUptime: record.lastSeen)
         let tls = Serialization.serverTLSColumns(record.serverTLS)
         let offer = Serialization.clientTLSColumns(record.clientTLS)
+        let quic = Serialization.quicColumns(record.quic)
         return try dbPool.write { db in
             try db.execute(
                 sql: """
@@ -145,8 +156,9 @@ public actor FlowStore {
                      tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
                      tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
                      tls_offered_alpn_omitted, tls_offered_ech,
+                     quic_version, quic_from_server,
                      audit_session_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         (SELECT id FROM audit_sessions WHERE ended_at IS NULL))
                 ON CONFLICT (session, proto, addr_a, port_a, addr_b, port_b) DO UPDATE SET
                     last_seen = excluded.last_seen,
@@ -162,8 +174,10 @@ public actor FlowStore {
                         THEN flows.bytes_in ELSE flows.base_bytes_in END,
                     packet_count = excluded.packet_count + CASE WHEN excluded.first_seen > flows.last_seen
                         THEN flows.packet_count ELSE flows.base_packet_count END,
-                    tls_status = CASE WHEN flows.tls_status IN (\(Self.outcomeStatuses))
-                            AND excluded.tls_status NOT IN (\(Self.outcomeStatuses))
+                    tls_status = CASE WHEN (flows.tls_status IN (\(Self.outcomeStatuses))
+                                AND excluded.tls_status NOT IN (\(Self.outcomeStatuses)))
+                            OR (excluded.tls_status = \(Self.plaintextStatus)
+                                AND flows.quic_version IS NOT NULL)
                         THEN flows.tls_status ELSE excluded.tls_status END,
                     sni = COALESCE(excluded.sni, flows.sni),
                     dns_name = COALESCE(flows.dns_name, excluded.dns_name),
@@ -189,6 +203,9 @@ public actor FlowStore {
                         THEN flows.tls_offered_alpn_omitted ELSE excluded.tls_offered_alpn_omitted END,
                     tls_offered_ech = CASE WHEN \(Self.recordHasNoOffer)
                         THEN flows.tls_offered_ech ELSE excluded.tls_offered_ech END,
+                    quic_version = COALESCE(excluded.quic_version, flows.quic_version),
+                    quic_from_server = CASE WHEN excluded.quic_version IS NULL
+                        THEN flows.quic_from_server ELSE excluded.quic_from_server END,
                     first_seen = min(flows.first_seen, excluded.first_seen),
                     audit_session_id = COALESCE(flows.audit_session_id, excluded.audit_session_id)
                 """,
@@ -206,6 +223,7 @@ public actor FlowStore {
                     tls.version, tls.cipherSuite, tls.helloRetry, tls.upstream, tls.alert,
                     offer.versions, offer.legacyVersion, offer.applicationProtocols,
                     offer.omittedApplicationProtocols, offer.encryptedClientHello,
+                    quic.version, quic.fromServer,
                 ]
             )
             // El UPSERT pudo ser INSERT o UPDATE; `lastInsertedRowID` solo vale para INSERT, así
@@ -304,7 +322,8 @@ public actor FlowStore {
                    dns_name, dns_other_names,
                    tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
                    tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
-                   tls_offered_alpn_omitted, tls_offered_ech
+                   tls_offered_alpn_omitted, tls_offered_ech,
+                   quic_version, quic_from_server
             FROM flows
             """
             var arguments: [DatabaseValueConvertible] = []
@@ -357,7 +376,8 @@ public actor FlowStore {
                        dns_name, dns_other_names,
                        tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
                        tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
-                       tls_offered_alpn_omitted, tls_offered_ech
+                       tls_offered_alpn_omitted, tls_offered_ech,
+                       quic_version, quic_from_server
                 FROM flows
                 WHERE proto = ? AND addr_a = ? AND port_a = ? AND addr_b = ? AND port_b = ?
                 ORDER BY last_seen DESC, id DESC
@@ -389,7 +409,8 @@ public actor FlowStore {
                        dns_name, dns_other_names,
                        tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
                        tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
-                       tls_offered_alpn_omitted, tls_offered_ech
+                       tls_offered_alpn_omitted, tls_offered_ech,
+                       quic_version, quic_from_server
                 FROM flows
                 WHERE id = ?
                 """,
@@ -414,7 +435,8 @@ public actor FlowStore {
                        dns_name, dns_other_names,
                        tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
                        tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
-                       tls_offered_alpn_omitted, tls_offered_ech
+                       tls_offered_alpn_omitted, tls_offered_ech,
+                       quic_version, quic_from_server
                 FROM flows
                 WHERE audit_session_id = ?
                 ORDER BY first_seen ASC, id ASC
@@ -882,8 +904,33 @@ private enum Serialization {
                 applicationProtocols: row["tls_offered_alpn"],
                 omittedApplicationProtocols: row["tls_offered_alpn_omitted"],
                 encryptedClientHello: row["tls_offered_ech"]
-            )
+            ),
+            quic: try quic(version: row["quic_version"], fromServer: row["quic_from_server"])
         )
+    }
+
+    /// Las dos columnas de la versión de QUIC, tal y como van a la fila.
+    struct QUICColumns {
+        let version: Int64?
+        let fromServer: Bool?
+    }
+
+    static func quicColumns(_ reading: QUICVersionReading?) -> QUICColumns {
+        guard let reading else { return QUICColumns(version: nil, fromServer: nil) }
+        return QUICColumns(version: Int64(reading.version.rawValue), fromServer: reading.source == .server)
+    }
+
+    /// Una versión sin su extremo no la escribe este store: es una fila corrupta, y se dice en vez
+    /// de suponer de quién era. El extremo sin versión no significa nada y se ignora.
+    static func quic(version: Int64?, fromServer: Bool?) throws -> QUICVersionReading? {
+        guard let version else { return nil }
+        guard let raw = UInt32(exactly: version), raw != 0 else {
+            throw FlowStore.StoreError.corruptRow("versión de QUIC fuera de rango: \(version)")
+        }
+        guard let fromServer else {
+            throw FlowStore.StoreError.corruptRow("versión de QUIC sin el extremo que la mandó")
+        }
+        return QUICVersionReading(version: QUICVersion(rawValue: raw), source: fromServer ? .server : .client)
     }
 
     /// Las cinco columnas de la respuesta TLS del servidor, tal y como van a la fila.

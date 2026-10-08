@@ -171,6 +171,10 @@ public struct FixtureFlow: Sendable, Equatable {
 
     public let tlsStatus: TLSInspectionStatus
 
+    /// La versión de QUIC leída de su arranque, o `nil`. Es lo que hace que un flujo UDP contra el
+    /// 443 esté `encrypted`: sin ella la extensión lo deja como nace, `plaintext`.
+    public let quic: QUICVersionReading?
+
     /// En orden temporal ascendente.
     public let packets: [FixturePacket]
 
@@ -184,6 +188,7 @@ public struct FixtureFlow: Sendable, Equatable {
         sni: String?,
         resolvedName: ResolvedFlowName?,
         tlsStatus: TLSInspectionStatus,
+        quic: QUICVersionReading?,
         packets: [FixturePacket],
         plaintext: [FixturePlaintextChunk] = []
     ) {
@@ -208,6 +213,7 @@ public struct FixtureFlow: Sendable, Equatable {
         self.sni = sni
         self.resolvedName = resolvedName
         self.tlsStatus = tlsStatus
+        self.quic = quic
         self.packets = packets
         self.plaintext = plaintext
     }
@@ -235,7 +241,8 @@ public struct FixtureFlow: Sendable, Equatable {
             sni: sni,
             resolvedName: resolvedName,
             serverTLS: nil,
-            clientTLS: nil
+            clientTLS: nil,
+            quic: quic
         )
     }
 }
@@ -406,6 +413,12 @@ private struct FlowScript {
     /// (`DNSPresentation`) y no una vista de bytes. Vacío en todos los demás, que se rellenan de
     /// ruido reproducible porque nadie mira dentro.
     var payloads: [Data] = []
+
+    /// Lo que la extensión habría leído de su arranque: todo lo que el catálogo manda por UDP
+    /// contra el 443 es QUIC, y lleva la versión que contesta el servidor.
+    var quic: QUICVersionReading? {
+        proto == .udp && remotePort == 443 ? QUICVersionReading(version: .v1, source: .server) : nil
+    }
 }
 
 /// Las conversaciones descifradas que el catálogo sabe escribir.
@@ -589,6 +602,7 @@ private struct FixtureBuilder {
             sni: script.sni,
             resolvedName: script.resolvedName,
             tlsStatus: script.tlsStatus,
+            quic: script.quic,
             packets: packets,
             plaintext: Self.conversation(
                 script.conversation, host: script.sni ?? "example.com", within: timestamps
@@ -983,7 +997,8 @@ extension FixtureBuilder {
             proto: isUDP ? .udp : .tcp,
             version: isV6 ? .v6 : .v4,
             remotePort: isUDP ? 443 : (index % 13 == 0 ? 80 : 443),
-            tlsStatus: statuses[index % statuses.count],
+            // Y QUIC va cifrado siempre, y nunca inspeccionado (ADR 0006): no entra en el reparto.
+            tlsStatus: isUDP ? .encrypted : statuses[index % statuses.count],
             packetCount: Int.random(in: 4...24, using: &random)
         )
     }

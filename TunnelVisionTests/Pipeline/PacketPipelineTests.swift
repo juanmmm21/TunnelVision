@@ -628,6 +628,140 @@ final class PacketPipelineTests: XCTestCase {
         XCTAssertEqual(record?.serverTLS, .refused(alert: 70))
     }
 
+    // MARK: - Versión de QUIC de un flujo
+
+    private static let quicKey = PipelineFixtures.udpV4Key(remotePort: 443)
+
+    private func quicDatagram(
+        outbound: Bool,
+        version: UInt32 = 1,
+        remotePort: UInt16 = 443
+    ) -> Data {
+        PipelineFixtures.udpV4(
+            outbound: outbound, remotePort: remotePort, payload: QUICFixtures.longHeader(version: version)
+        )
+    }
+
+    /// El arranque de una conexión QUIC deja el flujo cifrado y con su versión en el historial,
+    /// sin que nadie más que el pipeline haya mirado el datagrama.
+    func testAQUICInitialMarksTheFlowEncryptedAndRecordsItsVersion() async {
+        let h = makeHarness(batchSize: 1_000, flushInterval: .max)
+
+        await h.pipeline.handle(packet: quicDatagram(outbound: true), protocolFamily: Int32(AF_INET))
+        await h.pipeline.flush()
+
+        let record = await h.store.flows[Self.quicKey]
+        XCTAssertEqual(record?.tlsStatus, .encrypted)
+        XCTAssertEqual(record?.quic, QUICVersionReading(version: .v1, source: .client))
+        let stats = await h.pipeline.stats
+        XCTAssertEqual(stats.quicVersionsObserved, 1)
+    }
+
+    /// La respuesta del servidor llega reinyectada, por el otro camino, y es la que se queda.
+    func testTheServerVersionArrivesThroughTheReinjectedPath() async {
+        let h = makeHarness(batchSize: 1_000, flushInterval: .max)
+
+        await h.pipeline.handle(packet: quicDatagram(outbound: true), protocolFamily: Int32(AF_INET))
+        await h.pipeline.record(
+            reinjected: quicDatagram(outbound: false, version: 0x6b33_43cf), protocolFamily: Int32(AF_INET)
+        )
+        await h.pipeline.flush()
+
+        let record = await h.store.flows[Self.quicKey]
+        XCTAssertEqual(record?.quic, QUICVersionReading(version: .v2, source: .server))
+        let stats = await h.pipeline.stats
+        XCTAssertEqual(stats.quicVersionsObserved, 2)
+    }
+
+    /// Los paquetes de cabecera corta —casi todos los de una conexión— no cambian nada.
+    func testShortHeaderPacketsLeaveTheReadingAlone() async {
+        let h = makeHarness(batchSize: 1_000, flushInterval: .max)
+
+        await h.pipeline.handle(packet: quicDatagram(outbound: true), protocolFamily: Int32(AF_INET))
+        for _ in 0..<5 {
+            await h.pipeline.handle(
+                packet: PipelineFixtures.udpV4(outbound: true, payload: QUICFixtures.shortHeader()),
+                protocolFamily: Int32(AF_INET)
+            )
+        }
+        await h.pipeline.flush()
+
+        let record = await h.store.flows[Self.quicKey]
+        XCTAssertEqual(record?.tlsStatus, .encrypted)
+        XCTAssertEqual(record?.quic?.version, .v1)
+        let stats = await h.pipeline.stats
+        XCTAssertEqual(stats.quicVersionsObserved, 1)
+    }
+
+    /// UDP contra el 443 que no es QUIC existe: sin cabecera reconocida, el flujo se queda como
+    /// nació y no se cuenta nada.
+    func testUDPOnPort443ThatIsNotQUICStaysPlaintext() async {
+        let h = makeHarness(batchSize: 1_000, flushInterval: .max)
+
+        await h.pipeline.handle(
+            packet: PipelineFixtures.udpV4(outbound: true, payload: [0x16, 0xFE, 0xFD, 0x00, 0x00, 0x00, 0x00, 0x00]),
+            protocolFamily: Int32(AF_INET)
+        )
+        await h.pipeline.flush()
+
+        let record = await h.store.flows[Self.quicKey]
+        XCTAssertEqual(record?.tlsStatus, .plaintext)
+        XCTAssertNil(record?.quic)
+        let stats = await h.pipeline.stats
+        XCTAssertEqual(stats.quicVersionsObserved, 0)
+    }
+
+    /// Una versión que no se conoce se guarda y se cuenta, y no afirma que el flujo vaya cifrado.
+    func testAnUnknownQUICVersionIsRecordedWithoutMarkingTheFlowEncrypted() async {
+        let h = makeHarness(batchSize: 1_000, flushInterval: .max)
+
+        await h.pipeline.handle(packet: quicDatagram(outbound: true, version: 0xff00_001d), protocolFamily: Int32(AF_INET))
+        await h.pipeline.flush()
+
+        let record = await h.store.flows[Self.quicKey]
+        XCTAssertEqual(record?.tlsStatus, .plaintext)
+        XCTAssertEqual(record?.quic?.version.rawValue, 0xff00_001d)
+        let stats = await h.pipeline.stats
+        XCTAssertEqual(stats.quicVersionsObserved, 1)
+    }
+
+    /// Fuera del 443 remoto no se mira: los mismos bytes hacia otro puerto no son una lectura.
+    func testALongHeaderShapeOnAnotherPortIsNotRead() async {
+        let h = makeHarness(batchSize: 1_000, flushInterval: .max)
+
+        await h.pipeline.handle(packet: quicDatagram(outbound: true, remotePort: 53), protocolFamily: Int32(AF_INET))
+        await h.pipeline.flush()
+
+        let record = await h.store.flows[PipelineFixtures.udpV4Key(remotePort: 53)]
+        XCTAssertEqual(record?.tlsStatus, .plaintext)
+        XCTAssertNil(record?.quic)
+    }
+
+    /// El 443 tiene que ser el del **otro** extremo: un datagrama que sale del 443 del dispositivo
+    /// lo tendría a él de servidor, y de eso no se lee nada.
+    func testTheLocalPortBeing443DoesNotCount() async {
+        let h = makeHarness(batchSize: 1_000, flushInterval: .max)
+        let packet = PipelineFixtures.udpV4(
+            outbound: true, localPort: 443, remotePort: 50_000, payload: QUICFixtures.longHeader(version: 1)
+        )
+
+        await h.pipeline.handle(packet: packet, protocolFamily: Int32(AF_INET))
+        await h.pipeline.flush()
+
+        let record = await h.store.flows[PipelineFixtures.udpV4Key(localPort: 443, remotePort: 50_000)]
+        XCTAssertNotNil(record)
+        XCTAssertNil(record?.quic)
+    }
+
+    /// QUIC no se inspecciona nunca (ADR 0006): reconocerlo no lo manda a la terminación.
+    func testARecognisedQUICFlowIsStillPassthroughWithInspectionOn() async {
+        let h = makeHarness(tlsInspectionEnabled: true)
+
+        let disposition = await h.pipeline.handle(packet: quicDatagram(outbound: true), protocolFamily: Int32(AF_INET))
+
+        XCTAssertPassthrough(disposition)
+    }
+
     // MARK: - Desenlace de la inspección de un flujo
 
     /// La otra mitad del enganche: lo que el relay decide sobre una terminación acaba en el historial,

@@ -38,6 +38,10 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
     /// lectura.
     public let clientTLS: ClientTLSOffer?
 
+    /// La versión de QUIC del flujo y el extremo del que se leyó (columnas `quic_version` y
+    /// `quic_from_server`), o `nil` si no hubo lectura.
+    public let quic: QUICVersionReading?
+
     public init(
         id: Int64,
         key: FlowKey,
@@ -50,7 +54,8 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
         sni: String?,
         resolvedName: ResolvedFlowName?,
         serverTLS: ServerTLSAnswer?,
-        clientTLS: ClientTLSOffer?
+        clientTLS: ClientTLSOffer?,
+        quic: QUICVersionReading?
     ) {
         self.id = id
         self.key = key
@@ -64,6 +69,7 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
         self.resolvedName = resolvedName
         self.serverTLS = serverTLS
         self.clientTLS = clientTLS
+        self.quic = quic
     }
 
     /// El nombre del flujo con su origen: el SNI si lo anunció, y si no el que se dedujo del DNS.

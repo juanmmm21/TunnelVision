@@ -331,6 +331,23 @@ public enum Schema {
             }
         }
 
+        // v12 — la versión de QUIC de un flujo, leída de la cabecera larga de sus primeros
+        // paquetes, y de qué extremo salió.
+        //
+        // `quic_version` es el valor del cable, cuatro bytes sin interpretar: cabe de sobra en un
+        // entero de SQLite. `quic_from_server` es 1 si la cabecera la mandó el servidor —la
+        // versión en uso— y 0 si solo se vio la que propuso el cliente. Las dos son `NULL` sin
+        // lectura, y van siempre juntas.
+        //
+        // No hay columna para «es QUIC y va cifrado»: eso ya lo dice `tls_status`, que la tabla de
+        // flujos sube a `encrypted` cuando la versión es una de las que se sabe que cifran.
+        migrator.registerMigration("v12") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "quic_version", .integer)
+                t.add(column: "quic_from_server", .integer)
+            }
+        }
+
         return migrator
     }
 }

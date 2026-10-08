@@ -53,12 +53,17 @@ public actor FlowTable {
     /// nombre aunque después pase otra respuesta, igual que no cambia de sesión de auditoría. Se
     /// pasa en cada paquete porque quien llama no sabe si el flujo existe, y saberlo antes costaría
     /// un salto de actor por paquete.
+    ///
+    /// `quic` es la versión que este mismo paquete llevaba en su cabecera larga, si llevaba una.
+    /// Viaja con el paquete y no por una llamada aparte por lo mismo que el nombre —ahorrarse el
+    /// salto de actor—, y además porque así la foto que se devuelve ya la trae puesta.
     @discardableResult
     public func observe(
         _ packet: ParsedPacket,
         direction: Direction,
         length: UInt32,
-        resolvedName: ResolvedFlowName?
+        resolvedName: ResolvedFlowName?,
+        quic: QUICVersionReading?
     ) -> LiveFlow {
         let now = clock.now()
         let key = packet.flowKey
@@ -82,6 +87,9 @@ public actor FlowTable {
             )
             nodes[key] = node
             insertFront(node)
+        }
+        if let quic {
+            note(quic, on: node)
         }
 
         // Se toma la foto antes de un posible cierre inmediato (un RST o el FIN de cierre): el
@@ -181,8 +189,25 @@ public actor FlowTable {
         node.lastSeen = now
     }
 
+    /// Apunta la versión de QUIC que acaba de pasar por el flujo y, si es una de las que se sabe
+    /// que cifran, lo saca de `plaintext`.
+    ///
+    /// Es el único camino por el que un flujo UDP deja de nacer «sin cifrar»: el puerto no basta
+    /// —por el 443 de UDP viaja también lo que no es QUIC—, así que hace falta haber visto la
+    /// cabecera. Solo sube desde `plaintext`: no hay desenlace de inspección que pisar en UDP, y
+    /// si un día lo hubiera no sería esto quien lo deshiciera.
+    private func note(_ reading: QUICVersionReading, on node: Node) {
+        if reading.replaces(node.quic) {
+            node.quic = reading
+        }
+        if reading.version.hasKnownPacketProtection, node.tlsStatus == .plaintext {
+            node.tlsStatus = .encrypted
+        }
+    }
+
     /// Estado TLS inicial: TCP hacia el 443 se marca `encrypted` (candidato a inspección opt-in);
-    /// el resto del TCP como `plaintext`. UDP y no-TCP no tienen semántica TLS: `plaintext`.
+    /// el resto del TCP como `plaintext`. UDP nace `plaintext` también contra el 443: que sea QUIC
+    /// lo dice su cabecera larga y no su puerto, y lo sube `note(_:on:)` cuando la ve.
     private func initialTLSStatus(for packet: ParsedPacket) -> TLSInspectionStatus {
         guard packet.tcp != nil else { return .plaintext }
         let isHTTPS = packet.source.port == 443 || packet.destination.port == 443
@@ -271,6 +296,7 @@ public actor FlowTable {
         let resolvedName: ResolvedFlowName?
         var serverTLS: ServerTLSAnswer?
         var clientTLS: ClientTLSOffer?
+        var quic: QUICVersionReading?
         var reassembler: TCPReassembler?
         var finOutbound: Bool
         var finInbound: Bool
@@ -299,6 +325,7 @@ public actor FlowTable {
             self.resolvedName = resolvedName
             self.serverTLS = nil
             self.clientTLS = nil
+            self.quic = nil
             self.reassembler = nil
             self.finOutbound = false
             self.finInbound = false
@@ -320,7 +347,8 @@ public actor FlowTable {
                 sni: sni,
                 resolvedName: resolvedName,
                 serverTLS: serverTLS,
-                clientTLS: clientTLS
+                clientTLS: clientTLS,
+                quic: quic
             )
         }
     }

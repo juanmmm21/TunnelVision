@@ -691,6 +691,146 @@ final class FlowStoreTests: XCTestCase {
         }
     }
 
+    // MARK: - Versión de QUIC
+
+    private static let quicRemote = ModelFixtures.v4(142, 250, 184, 4)
+    private static let clientV1 = QUICVersionReading(version: .v1, source: .client)
+    private static let serverV1 = QUICVersionReading(version: .v1, source: .server)
+    private static let serverV2 = QUICVersionReading(version: .v2, source: .server)
+
+    private func quicFlow(
+        firstSeen: UInt64,
+        lastSeen: UInt64,
+        packetCount: UInt64 = 1,
+        tlsStatus: TLSInspectionStatus,
+        quic: QUICVersionReading?
+    ) -> FlowRecord {
+        PersistenceFixtures.flow(
+            remote: Self.quicRemote, proto: .udp, firstSeen: firstSeen, lastSeen: lastSeen,
+            packetCount: packetCount, tlsStatus: tlsStatus, quic: quic
+        )
+    }
+
+    func testTheQUICVersionSurvivesTheRoundTripFromBothEnds() async throws {
+        let store = try makeStore()
+        // El valor más alto que cabe en el cable también: no es un entero con signo de 32 bits.
+        let highest = QUICVersionReading(version: QUICVersion(rawValue: 0xffff_ffff), source: .client)
+
+        for (port, reading) in [(UInt16(51000), Self.clientV1), (51001, Self.serverV2), (51002, highest)] {
+            let id = try await store.upsertFlow(PersistenceFixtures.flow(
+                remote: Self.quicRemote, localPort: port, proto: .udp, firstSeen: 1, lastSeen: 2, quic: reading
+            ))
+            let stored = try await store.flow(id: id)
+            XCTAssertEqual(stored?.quic, reading)
+        }
+    }
+
+    func testAFlowWithoutAQUICVersionReadsBackWithoutOne() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(quicFlow(firstSeen: 1, lastSeen: 2, tlsStatus: .plaintext, quic: nil))
+
+        let stored = try await store.flow(id: id)
+        XCTAssertNil(stored?.quic)
+    }
+
+    /// La cabecera larga solo va en el arranque: los volcados siguientes de la misma vida la
+    /// traen puesta, pero uno de una vida nueva no, y no puede borrarla.
+    func testARecordWithoutAQUICVersionDoesNotEraseTheOneTheRowHas() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(quicFlow(firstSeen: 1, lastSeen: 2, tlsStatus: .encrypted, quic: Self.serverV1))
+
+        _ = try await store.upsertFlow(quicFlow(firstSeen: 200, lastSeen: 209, tlsStatus: .plaintext, quic: nil))
+
+        let stored = try await store.flow(id: id)
+        XCTAssertEqual(stored?.quic, Self.serverV1)
+        XCTAssertEqual(stored?.lastSeen, PersistenceFixtures.date(209), "lo demás sí se actualiza")
+    }
+
+    /// Y esa segunda vida nace `plaintext`, porque no vio la cabecera: la fila no puede volver a
+    /// «sin cifrar» por eso.
+    func testARecreatedQUICFlowDoesNotFallBackToPlaintext() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(
+            quicFlow(firstSeen: 1, lastSeen: 2, packetCount: 4, tlsStatus: .encrypted, quic: Self.serverV1)
+        )
+
+        _ = try await store.upsertFlow(
+            quicFlow(firstSeen: 200, lastSeen: 209, packetCount: 3, tlsStatus: .plaintext, quic: nil)
+        )
+
+        let stored = try await store.flow(id: id)
+        XCTAssertEqual(stored?.tlsStatus, .encrypted)
+        XCTAssertEqual(stored?.packetCount, 7, "la segunda vida suma a la primera")
+    }
+
+    /// Sin versión en la fila la regla no aplica: un flujo UDP corriente sigue como llegue.
+    func testAFlowWithoutAQUICVersionStillTakesTheStatusOfItsRecord() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(quicFlow(firstSeen: 1, lastSeen: 2, tlsStatus: .plaintext, quic: nil))
+
+        _ = try await store.upsertFlow(quicFlow(firstSeen: 1, lastSeen: 5, tlsStatus: .encrypted, quic: Self.clientV1))
+
+        let stored = try await store.flow(id: id)
+        XCTAssertEqual(stored?.tlsStatus, .encrypted)
+        XCTAssertEqual(stored?.quic, Self.clientV1)
+    }
+
+    func testANewQUICReadingReplacesThePreviousOneWhole() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(quicFlow(firstSeen: 1, lastSeen: 2, tlsStatus: .encrypted, quic: Self.clientV1))
+
+        _ = try await store.upsertFlow(quicFlow(firstSeen: 1, lastSeen: 5, tlsStatus: .encrypted, quic: Self.serverV2))
+
+        let stored = try await store.flow(id: id)
+        XCTAssertEqual(stored?.quic, Self.serverV2)
+    }
+
+    /// Una versión sin el extremo que la mandó no la escribe este store: se dice, no se supone.
+    func testAQUICVersionWithoutItsSourceIsACorruptRow() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(quicFlow(firstSeen: 1, lastSeen: 2, tlsStatus: .encrypted, quic: Self.serverV1))
+        let raw = try DatabaseQueue(path: dbURL.path)
+        try await raw.write { db in
+            try db.execute(sql: "UPDATE flows SET quic_from_server = NULL WHERE id = ?", arguments: [id])
+        }
+        try raw.close()
+
+        do {
+            _ = try await store.flow(id: id)
+            XCTFail("una fila con versión de QUIC y sin extremo tenía que rechazarse")
+        } catch FlowStore.StoreError.corruptRow {
+            // Lo esperado.
+        }
+    }
+
+    /// La v12 no toca filas: un flujo UDP de antes se lee sin versión y con el estado que tenía.
+    func testMigrationV12LeavesEarlierFlowsWithoutAQUICVersion() async throws {
+        let legacy = try DatabaseQueue(path: dbURL.path)
+        try Schema.migrator().migrate(legacy, upTo: "v11")
+        try await legacy.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO flows
+                    (session, proto, addr_a, port_a, addr_b, port_b,
+                     first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status, dns_name)
+                VALUES (0, 17, ?, 51000, ?, 443, 100, 200, 0, 0, 1, 0, 'quic.example.com')
+                """,
+                arguments: [
+                    Data(PersistenceFixtures.deviceIP.bytes),
+                    Data(ModelFixtures.v4(1, 1, 1, 1).bytes),
+                ]
+            )
+        }
+        try legacy.close()
+
+        let store = try makeStore()
+        let flows = try await store.recentFlows(limit: 10)
+        let flow = try XCTUnwrap(flows.first)
+        XCTAssertNil(flow.quic)
+        XCTAssertEqual(flow.tlsStatus, .plaintext)
+        XCTAssertEqual(flow.resolvedName?.name, "quic.example.com")
+    }
+
     /// La v11 no toca filas: un flujo de antes se lee sin oferta, y con todo lo que ya tenía.
     func testMigrationV11LeavesEarlierFlowsWithoutAnOffer() async throws {
         let legacy = try DatabaseQueue(path: dbURL.path)

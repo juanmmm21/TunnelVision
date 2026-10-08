@@ -58,6 +58,11 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
     /// Es de la app también en un flujo inspeccionado, al revés que `serverTLS`.
     public var clientTLS: ClientTLSOffer?
 
+    /// La versión de QUIC leída de una cabecera larga del flujo, y de qué extremo. `nil` si no
+    /// hubo lectura: el flujo no era UDP contra el 443, no hablaba QUIC, o su arranque —lo único
+    /// que lleva cabecera larga— pasó antes de que el túnel mirase.
+    public var quic: QUICVersionReading?
+
     public init(
         id: Int64,
         key: FlowKey,
@@ -70,7 +75,8 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
         sni: String?,
         resolvedName: ResolvedFlowName?,
         serverTLS: ServerTLSAnswer?,
-        clientTLS: ClientTLSOffer?
+        clientTLS: ClientTLSOffer?,
+        quic: QUICVersionReading?
     ) {
         self.id = id
         self.key = key
@@ -84,6 +90,7 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
         self.resolvedName = resolvedName
         self.serverTLS = serverTLS
         self.clientTLS = clientTLS
+        self.quic = quic
     }
 
     /// El nombre del flujo con su origen: el SNI si lo anunció, y si no el que se dedujo del DNS.

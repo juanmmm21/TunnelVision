@@ -70,7 +70,8 @@ final class CodableRoundTripTests: XCTestCase {
             sni: "example.com",
             resolvedName: nil,
             serverTLS: nil,
-            clientTLS: nil
+            clientTLS: nil,
+            quic: nil
         )
         try roundTrip(withSNI)
 
@@ -87,7 +88,8 @@ final class CodableRoundTripTests: XCTestCase {
             sni: nil,
             resolvedName: nil,
             serverTLS: nil,
-            clientTLS: nil
+            clientTLS: nil,
+            quic: nil
         )
         try roundTrip(withoutSNI)
 
@@ -104,7 +106,8 @@ final class CodableRoundTripTests: XCTestCase {
             sni: nil,
             resolvedName: ResolvedFlowName(name: "api.example.com", otherNames: ["cdn.example.net"]),
             serverTLS: nil,
-            clientTLS: nil
+            clientTLS: nil,
+            quic: nil
         )
         try roundTrip(named)
 
@@ -133,6 +136,13 @@ final class CodableRoundTripTests: XCTestCase {
             hasEncryptedClientHello: false
         )
         try roundTrip(offering)
+
+        // Y la versión de QUIC, de los dos extremos y con un valor fuera del registro.
+        var quic = withSNI
+        quic.quic = QUICVersionReading(version: .v1, source: .server)
+        try roundTrip(quic)
+        quic.quic = QUICVersionReading(version: QUICVersion(rawValue: 0xff00_001d), source: .client)
+        try roundTrip(quic)
     }
 
     func testPacketMetaEquatableAndHashable() {

@@ -195,11 +195,14 @@ public actor PacketPipeline {
         let remote = direction == .outbound ? parsed.destination.address : parsed.source.address
         let resolvedName = resolvedNames.name(for: remote, at: now).map(ResolvedFlowName.init)
 
+        let quic = quicVersion(in: packet, parsed: parsed, direction: direction)
+
         let flow = await flowTable.observe(
             parsed,
             direction: direction,
             length: length,
-            resolvedName: resolvedName
+            resolvedName: resolvedName,
+            quic: quic
         )
         // Un flujo con un solo paquete acaba de nacer: es el único momento en que recibe nombre.
         if flow.record.packetCount == 1, flow.record.resolvedName != nil {
@@ -254,6 +257,34 @@ public actor PacketPipeline {
             // solo importa que no dio ningún nombre.
             stats.dnsNames.unreadable &+= 1
         }
+    }
+
+    /// El puerto de HTTP/3. Es el mismo 443 con el que la tabla de flujos marca el TCP.
+    private static let quicPort: UInt16 = 443
+
+    /// La versión de QUIC de la cabecera larga de este datagrama, si es UDP contra el 443 **remoto**
+    /// y empieza por una.
+    ///
+    /// Se lee aquí y no en el relay, que es quien lee el handshake de TLS: aquél se eligió por el
+    /// reensamblado, y un datagrama no tiene nada que reensamblar. Aquí pasan además los dos
+    /// sentidos —lo reinyectado también—, y la versión del servidor es la que vale más.
+    ///
+    /// Solo el 443 remoto: es donde el dispositivo es el cliente, que es lo que permite decir de
+    /// qué extremo sale cada lectura por el sentido del paquete. QUIC por otro puerto existe (un
+    /// `Alt-Svc` puede anunciar cualquiera) y no se lee.
+    private func quicVersion(in packet: Data, parsed: ParsedPacket, direction: Direction) -> QUICVersionReading? {
+        guard let udp = parsed.udp else { return nil }
+        let remotePort = direction == .outbound ? udp.destinationPort : udp.sourcePort
+        guard remotePort == Self.quicPort else { return nil }
+
+        // El rango es 0-based sobre el datagrama, que puede llegar como un slice con otro origen.
+        let start = packet.startIndex + udp.payloadRange.lowerBound
+        let end = packet.startIndex + udp.payloadRange.upperBound
+        guard start <= end, end <= packet.endIndex else { return nil }
+        guard let version = QUICLongHeader.version(in: packet[start..<end]) else { return nil }
+
+        stats.quicVersionsObserved &+= 1
+        return QUICVersionReading(version: version, source: direction == .outbound ? .client : .server)
     }
 
     /// Resultado de registrar un datagrama, antes de decidir qué hacer con él.

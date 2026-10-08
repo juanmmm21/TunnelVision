@@ -11,4 +11,9 @@ feed it, and a flow is named from it when it is created — the name of everythi
 scanner cannot reach, QUIC first. Spec:
 [`../../docs/spec/packet-parsing.md`](../../docs/spec/packet-parsing.md) § *Naming flows*.
 
+And it reads the QUIC version from the long header of UDP datagrams to remote port 443
+(`Shared/QUIC`), handing it to the flow table with the packet: it is what marks a QUIC flow
+`encrypted` instead of leaving it as every UDP flow is born. Same spec, § *Above L4: the QUIC long
+header*.
+
 **Spec:** [`../../docs/spec/tunnel-provider.md`](../../docs/spec/tunnel-provider.md) · **Milestone:** M7

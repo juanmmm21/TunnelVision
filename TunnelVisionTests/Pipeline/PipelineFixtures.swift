@@ -78,6 +78,25 @@ enum PipelineFixtures {
         )
     }
 
+    /// Datagrama IPv4/UDP con el payload y el sentido que pida el test.
+    static func udpV4(
+        outbound: Bool,
+        localPort: UInt16 = 53535,
+        remotePort: UInt16 = 443,
+        payload: [UInt8]
+    ) -> Data {
+        PacketFixtures.ipv4(
+            proto: 17,
+            source: outbound ? localV4Bytes : remoteV4Bytes,
+            destination: outbound ? remoteV4Bytes : localV4Bytes,
+            payload: PacketFixtures.udpDatagram(
+                sourcePort: outbound ? localPort : remotePort,
+                destinationPort: outbound ? remotePort : localPort,
+                payload: payload
+            )
+        )
+    }
+
     static func tcpV6(remotePort: UInt16 = 443) -> Data {
         PacketFixtures.ipv6(
             nextHeader: 6,

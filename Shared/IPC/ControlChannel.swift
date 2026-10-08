@@ -119,6 +119,10 @@ public struct PipelineStats: Sendable, Equatable, Codable {
     /// Lo que se hizo con las respuestas de DNS vistas y cuántos flujos nombraron. Todo a cero con
     /// tráfico pasando es que el DNS del dispositivo va cifrado y no hubo nada que leer.
     public var dnsNames = DNSNameStats()
+    /// Datagramas UDP contra el 443 en los que se leyó una versión de QUIC de su cabecera larga.
+    /// Cuenta lecturas, no flujos: un arranque de conexión lleva varias. A cero con tráfico UDP
+    /// contra el 443 es que ningún arranque pasó por el túnel, o que aquello no era QUIC.
+    public var quicVersionsObserved: UInt64 = 0
 
     public init() {}
 }
