@@ -243,7 +243,8 @@ public struct FixtureFlow: Sendable, Equatable {
             serverTLS: nil,
             serverCertificates: nil,
             clientTLS: nil,
-            quic: quic
+            quic: quic,
+            streamOpening: nil
         )
     }
 }

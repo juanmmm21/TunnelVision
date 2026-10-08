@@ -70,6 +70,9 @@ public actor Relay {
     /// Quien recoge lo que el cliente ofreció en ese mismo ClientHello. Basta con que exista uno de
     /// los dos para que el handshake se escanee.
     private let clientTLSObserver: (any ClientTLSObserving)?
+    /// Quien recoge con qué empezó el stream saliente de un flujo TCP, en el puerto que sea. Sin
+    /// observador no se crea el lector.
+    private let streamOpeningObserver: (any StreamOpeningObserving)?
     /// Quien recoge lo que el servidor contestó al ClientHello. Sin observador tampoco se escanea
     /// el stream entrante, por la misma cuenta de memoria.
     private let serverTLSObserver: (any ServerTLSObserving)?
@@ -135,6 +138,9 @@ public actor Relay {
         /// cuanto lo da (o en cuanto se sabe que no lo dará), que es lo que hace que el resto del
         /// stream —ya cifrado— no se vuelva a mirar.
         var handshake: ClientHelloScanner?
+        /// Lector del arranque del stream saliente. Existe en **todo** flujo TCP, no solo en los
+        /// del 443, y se suelta en cuanto decide: suele ser en los seis primeros bytes.
+        var opening: StreamOpeningScanner?
         /// Lector del ServerHello, el gemelo del anterior para el stream entrante. Existe **solo
         /// mientras la conexión del flujo sea la del servidor de verdad** y aún no haya contestado:
         /// cuando una terminación la sustituye se suelta, porque desde entonces lo que llega es el
@@ -183,6 +189,7 @@ public actor Relay {
         connectionFactory: RelayConnectionFactory = NetworkConnectionFactory(),
         sniObserver: (any SNIObserving)? = nil,
         clientTLSObserver: (any ClientTLSObserving)? = nil,
+        streamOpeningObserver: (any StreamOpeningObserving)? = nil,
         serverTLSObserver: (any ServerTLSObserving)? = nil,
         inspector: (any FlowInspecting)? = nil,
         statusObserver: (any TLSStatusObserving)? = nil,
@@ -195,6 +202,7 @@ public actor Relay {
         self.factory = connectionFactory
         self.sniObserver = sniObserver
         self.clientTLSObserver = clientTLSObserver
+        self.streamOpeningObserver = streamOpeningObserver
         self.serverTLSObserver = serverTLSObserver
         self.inspector = inspector
         self.statusObserver = statusObserver
@@ -350,6 +358,7 @@ public actor Relay {
                 localEndpoint: packet.source,
                 remoteEndpoint: packet.destination,
                 handshake: readsHandshake ? ClientHelloScanner() : nil,
+                opening: streamOpeningObserver == nil ? nil : StreamOpeningScanner(),
                 serverHello: isTLSPort ? makeServerHelloScanner() : nil,
                 inspection: inspects ? .scanning(held: Data()) : .off
             )
@@ -439,6 +448,9 @@ public actor Relay {
                 openServerConnection(for: key)
             case .sendToServer(let data):
                 sendToServer(data, for: key)
+                // Aquí y no dentro de `sendToServer`: es el único punto por el que cada byte del
+                // dispositivo pasa una vez, se retenga, se mande al servidor o a una terminación.
+                readStreamOpening(data, for: key)
             case .closeServerSend:
                 closeServerSend(for: key)
             case .segmentToDevice(let segment):
@@ -616,6 +628,34 @@ public actor Relay {
             // Un 443 que no habla TLS —la mensajería de WhatsApp habla Noise— no tiene nombre y no
             // se puede terminar: vuelve al passthrough con todo lo retenido.
             abandonInspection(for: key)
+        }
+    }
+
+    // MARK: - Arranque del stream
+
+    /// Alimenta el lector del arranque con los bytes que el dispositivo acaba de mandar.
+    ///
+    /// Es independiente de `readHandshake` a propósito, aunque en el 443 los dos miren los mismos
+    /// bytes: aquél solo existe en el 443 y decide si se inspecciona; éste corre en todos los
+    /// puertos y solo apunta. Tampoco descifra nada: mira lo que el dispositivo mandó en claro.
+    private func readStreamOpening(_ data: Data, for key: FlowKey) {
+        guard var state = tcpFlows[key], var scanner = state.opening else { return }
+
+        switch scanner.scan(data) {
+        case .needMoreBytes:
+            state.opening = scanner
+            tcpFlows[key] = state
+        case .decided(let opening):
+            state.opening = nil
+            tcpFlows[key] = state
+            switch opening {
+            case .tlsHandshake: counters.streamOpeningsTLS &+= 1
+            case .httpRequest: counters.streamOpeningsHTTP &+= 1
+            case .unrecognised: counters.streamOpeningsUnrecognised &+= 1
+            }
+            if let streamOpeningObserver {
+                Task { await streamOpeningObserver.observe(streamOpening: opening, for: key) }
+            }
         }
     }
 

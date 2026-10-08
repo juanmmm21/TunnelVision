@@ -350,6 +350,83 @@ final class FlowTableTests: XCTestCase {
         XCTAssertEqual(closed.first?.tlsStatus, .encrypted)
     }
 
+    // MARK: - Arranque del stream
+
+    private var tlsOffPort443: ParsedPacket { FlowFixtures.tcp(source: local(51000), destination: remote(5223)) }
+
+    /// Un TCP fuera del 443 nace `plaintext` porque lo dice el puerto; ver un handshake de TLS
+    /// lo desmiente.
+    func testATLSHandshakeRaisesAFlowThatThePortCalledPlaintext() async {
+        let table = FlowTable(config: .init(), clock: ManualClock())
+        let born = await table.observe(tlsOffPort443, direction: .outbound, length: 60, resolvedName: nil, quic: nil)
+        XCTAssertEqual(born.record.tlsStatus, .plaintext)
+        XCTAssertNil(born.record.streamOpening)
+
+        await table.setStreamOpening(.tlsHandshake, for: tlsOffPort443.flowKey)
+
+        let live = await table.observe(tlsOffPort443, direction: .outbound, length: 60, resolvedName: nil, quic: nil)
+        XCTAssertEqual(live.record.streamOpening, .tlsHandshake)
+        XCTAssertEqual(live.record.tlsStatus, .encrypted)
+    }
+
+    func testAnHTTPRequestOrAnUnrecognisedOpeningLeavesTheStatusAlone() async {
+        for opening in [StreamOpening.httpRequest, .unrecognised] {
+            let table = FlowTable(config: .init(), clock: ManualClock())
+            let plain = FlowFixtures.tcp(source: local(51000), destination: remote(80))
+            _ = await table.observe(plain, direction: .outbound, length: 60, resolvedName: nil, quic: nil)
+            await table.setStreamOpening(opening, for: plain.flowKey)
+            let live = await table.observe(plain, direction: .outbound, length: 60, resolvedName: nil, quic: nil)
+            XCTAssertEqual(live.record.streamOpening, opening)
+            XCTAssertEqual(live.record.tlsStatus, .plaintext)
+        }
+    }
+
+    /// Un 443 que no habla TLS no baja a `plaintext`: que no se reconozca no es que vaya en claro.
+    func testAnOpeningNeverLowersTheStatus() async {
+        let table = FlowTable(config: .init(), clock: ManualClock())
+        let https = FlowFixtures.tcp(source: local(51000), destination: remote(443))
+        _ = await table.observe(https, direction: .outbound, length: 60, resolvedName: nil, quic: nil)
+
+        await table.setStreamOpening(.unrecognised, for: https.flowKey)
+
+        let live = await table.observe(https, direction: .outbound, length: 60, resolvedName: nil, quic: nil)
+        XCTAssertEqual(live.record.tlsStatus, .encrypted)
+    }
+
+    func testATLSHandshakeDoesNotOverwriteAnInspectionOutcome() async {
+        for outcome in [TLSInspectionStatus.inspected, .notInspectable] {
+            let table = FlowTable(config: .init(), clock: ManualClock())
+            let https = FlowFixtures.tcp(source: local(51000), destination: remote(443))
+            _ = await table.observe(https, direction: .outbound, length: 60, resolvedName: nil, quic: nil)
+            await table.setTLSStatus(outcome, for: https.flowKey, sni: nil)
+
+            await table.setStreamOpening(.tlsHandshake, for: https.flowKey)
+
+            let live = await table.observe(https, direction: .outbound, length: 60, resolvedName: nil, quic: nil)
+            XCTAssertEqual(live.record.tlsStatus, outcome)
+        }
+    }
+
+    func testTheClosingRecordCarriesTheStreamOpening() async {
+        let table = FlowTable(config: .init(maxFlows: 1), clock: ManualClock())
+        _ = await table.observe(tlsOffPort443, direction: .outbound, length: 60, resolvedName: nil, quic: nil)
+        await table.setStreamOpening(.tlsHandshake, for: tlsOffPort443.flowKey)
+
+        // Un segundo flujo desaloja al primero.
+        _ = await table.observe(FlowFixtures.udp(source: local(51001), destination: remote(53)), direction: .outbound, length: 60, resolvedName: nil, quic: nil)
+
+        let closed = await table.drainClosed()
+        XCTAssertEqual(closed.first?.streamOpening, .tlsHandshake)
+        XCTAssertEqual(closed.first?.tlsStatus, .encrypted)
+    }
+
+    func testAnOpeningForAFlowTheTableNoLongerHasIsIgnored() async {
+        let table = FlowTable(config: .init(), clock: ManualClock())
+        await table.setStreamOpening(.httpRequest, for: tlsOffPort443.flowKey)
+        let count = await table.count
+        XCTAssertEqual(count, 0)
+    }
+
     // MARK: - Cierre
 
     func testRSTClosesImmediately() async {

@@ -67,7 +67,8 @@ enum PersistenceFixtures {
         serverTLS: ServerTLSAnswer? = nil,
         serverCertificates: ServerCertificateReading? = nil,
         clientTLS: ClientTLSOffer? = nil,
-        quic: QUICVersionReading? = nil
+        quic: QUICVersionReading? = nil,
+        streamOpening: StreamOpening? = nil
     ) -> FlowRecord {
         FlowRecord(
             id: 0,
@@ -83,7 +84,8 @@ enum PersistenceFixtures {
             serverTLS: serverTLS,
             serverCertificates: serverCertificates,
             clientTLS: clientTLS,
-            quic: quic
+            quic: quic,
+            streamOpening: streamOpening
         )
     }
 

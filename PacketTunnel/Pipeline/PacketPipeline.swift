@@ -495,6 +495,14 @@ public actor PacketPipeline {
         await flowTable.setClientTLS(clientTLS, for: key)
     }
 
+    // MARK: - Arranque del stream de un flujo
+
+    /// Anota con qué empezó el stream saliente de un flujo TCP: un handshake de TLS, una petición
+    /// de HTTP en claro, o ninguna de las dos. Lo lee el relay en cualquier puerto.
+    public func observe(streamOpening: StreamOpening, for key: FlowKey) async {
+        await flowTable.setStreamOpening(streamOpening, for: key)
+    }
+
     // MARK: - Respuesta TLS del servidor de un flujo
 
     /// Anota lo que el servidor contestó al ClientHello de un flujo: la versión y la suite que
@@ -706,6 +714,7 @@ extension PacketPipeline: SNIObserving {}
 extension PacketPipeline: ServerTLSObserving {}
 
 extension PacketPipeline: ClientTLSObserving {}
+extension PacketPipeline: StreamOpeningObserving {}
 
 /// Y por lo mismo recoge el desenlace de las terminaciones TLS. Son dos costuras y no una porque son
 /// dos hechos distintos: tener nombre no es haber sido inspeccionado.

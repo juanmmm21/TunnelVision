@@ -126,6 +126,22 @@ public actor FlowTable {
         nodes[key]?.clientTLS = offer
     }
 
+    /// Anota con qué empezó el stream saliente del flujo (`Relay.readStreamOpening`) y, si fue un
+    /// handshake de TLS, lo saca de `plaintext`. No-op si el flujo ya no está en la tabla.
+    ///
+    /// Es el camino por el que un TLS **fuera del 443** deja de salir «sin cifrar»: ese estado lo
+    /// puso el puerto, y aquí hay una observación que lo desmiente. Solo sube desde `plaintext`,
+    /// como la versión de QUIC: no pisa un desenlace de inspección. Y no baja nunca: un 443 que
+    /// no habla TLS no queda `plaintext` por ello, porque `unrecognised` no afirma que vaya en
+    /// claro.
+    public func setStreamOpening(_ opening: StreamOpening, for key: FlowKey) {
+        guard let node = nodes[key] else { return }
+        node.streamOpening = opening
+        if opening == .tlsHandshake, node.tlsStatus == .plaintext {
+            node.tlsStatus = .encrypted
+        }
+    }
+
     /// Anota lo que el servidor contestó al ClientHello del flujo —la versión y la suite que eligió,
     /// o la alerta con la que se negó—, que el relay lee del stream entrante
     /// (`Relay.readServerHello`). No-op si el flujo ya no está en la tabla.
@@ -305,6 +321,7 @@ public actor FlowTable {
         var serverCertificates: ServerCertificateReading?
         var clientTLS: ClientTLSOffer?
         var quic: QUICVersionReading?
+        var streamOpening: StreamOpening?
         var reassembler: TCPReassembler?
         var finOutbound: Bool
         var finInbound: Bool
@@ -335,6 +352,7 @@ public actor FlowTable {
             self.serverCertificates = nil
             self.clientTLS = nil
             self.quic = nil
+            self.streamOpening = nil
             self.reassembler = nil
             self.finOutbound = false
             self.finInbound = false
@@ -358,7 +376,8 @@ public actor FlowTable {
                 serverTLS: serverTLS,
                 serverCertificates: serverCertificates,
                 clientTLS: clientTLS,
-                quic: quic
+                quic: quic,
+                streamOpening: streamOpening
             )
         }
     }

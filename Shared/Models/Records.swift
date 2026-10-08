@@ -68,6 +68,11 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
     /// que lleva cabecera larga— pasó antes de que el túnel mirase.
     public var quic: QUICVersionReading?
 
+    /// Con qué empezó el stream saliente de un flujo TCP: un handshake de TLS, una petición de
+    /// HTTP en claro, o ninguna de las dos. `nil` si no hubo lectura: el flujo no era TCP, o el
+    /// dispositivo no llegó a mandar bytes suficientes para decidir.
+    public var streamOpening: StreamOpening?
+
     public init(
         id: Int64,
         key: FlowKey,
@@ -82,7 +87,8 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
         serverTLS: ServerTLSAnswer?,
         serverCertificates: ServerCertificateReading?,
         clientTLS: ClientTLSOffer?,
-        quic: QUICVersionReading?
+        quic: QUICVersionReading?,
+        streamOpening: StreamOpening?
     ) {
         self.id = id
         self.key = key
@@ -98,6 +104,7 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
         self.serverCertificates = serverCertificates
         self.clientTLS = clientTLS
         self.quic = quic
+        self.streamOpening = streamOpening
     }
 
     /// El nombre del flujo con su origen: el SNI si lo anunció, y si no el que se dedujo del DNS.

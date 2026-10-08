@@ -14,7 +14,8 @@ enum FindingFixtures {
         tlsStatus: TLSInspectionStatus = .encrypted,
         serverTLS: ServerTLSAnswer? = nil,
         clientTLS: ClientTLSOffer? = nil,
-        quic: QUICVersionReading? = nil
+        quic: QUICVersionReading? = nil,
+        streamOpening: StreamOpening? = nil
     ) -> StoredFlow {
         let local = IPEndpoint(address: IPAddress(version: .v4, bytes: [10, 7, 0, 2]), port: 50_000)
         let remote = IPEndpoint(address: IPAddress(version: .v4, bytes: [203, 0, 113, 9]), port: remotePort)
@@ -33,7 +34,8 @@ enum FindingFixtures {
             serverTLS: serverTLS,
             serverCertificates: nil,
             clientTLS: clientTLS,
-            quic: quic
+            quic: quic,
+            streamOpening: streamOpening
         )
     }
 

@@ -83,6 +83,9 @@ public actor FlowStore {
     /// El estado con el que nace un flujo UDP, como literal de SQL.
     private static let plaintextStatus = String(TLSInspectionStatus.plaintext.rawValue)
 
+    /// El arranque «handshake de TLS», como literal de SQL.
+    private static let tlsHandshakeOpening = String(Serialization.streamOpeningCode(.tlsHandshake))
+
     /// La condición de SQL con la que el upsert reconoce un record que no trae oferta del cliente:
     /// una oferta tiene siempre una de las dos columnas de versiones (`Schema`, `v11`).
     private static let recordHasNoOffer =
@@ -136,6 +139,12 @@ public actor FlowStore {
     /// que es QUIC; sin esto, el flujo más largo de una sesión —un vídeo— acabaría rotulado «sin
     /// cifrar» en cuanto la tabla lo desalojara una vez.
     ///
+    /// El **arranque del stream** sigue las dos reglas de la versión de QUIC y por lo mismo —solo
+    /// se ve al principio de la conexión—: un record sin lectura conserva la de la fila, y una
+    /// fila cuyo arranque fue un handshake de TLS no vuelve a `plaintext` por un record que nace
+    /// así sin haber visto el suyo. Es lo que mantiene «cifrado» un TLS fuera del 443 cuando la
+    /// tabla lo desaloja y lo vuelve a crear.
+    ///
     /// La **cadena de certificados** va atada a la respuesta del servidor, no suelta: un record
     /// que no trae ninguna de las dos conserva la de la fila (es un flujo que la tabla volvió a
     /// crear), y uno que trae cualquiera de ellas fija la cadena a la suya **aunque sea ninguna**.
@@ -159,6 +168,7 @@ public actor FlowStore {
         let offer = Serialization.clientTLSColumns(record.clientTLS)
         let quic = Serialization.quicColumns(record.quic)
         let chain = try Serialization.serverCertificateColumns(record.serverCertificates)
+        let opening = record.streamOpening.map(Serialization.streamOpeningCode)
         return try dbPool.write { db in
             try db.execute(
                 sql: """
@@ -171,8 +181,9 @@ public actor FlowStore {
                      tls_offered_alpn_omitted, tls_offered_ech,
                      quic_version, quic_from_server,
                      tls_chain_state, tls_chain,
+                     stream_opening,
                      audit_session_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         (SELECT id FROM audit_sessions WHERE ended_at IS NULL))
                 ON CONFLICT (session, proto, addr_a, port_a, addr_b, port_b) DO UPDATE SET
                     last_seen = excluded.last_seen,
@@ -191,7 +202,9 @@ public actor FlowStore {
                     tls_status = CASE WHEN (flows.tls_status IN (\(Self.outcomeStatuses))
                                 AND excluded.tls_status NOT IN (\(Self.outcomeStatuses)))
                             OR (excluded.tls_status = \(Self.plaintextStatus)
-                                AND flows.quic_version IS NOT NULL)
+                                AND (flows.quic_version IS NOT NULL
+                                    OR (excluded.stream_opening IS NULL
+                                        AND flows.stream_opening = \(Self.tlsHandshakeOpening))))
                         THEN flows.tls_status ELSE excluded.tls_status END,
                     sni = COALESCE(excluded.sni, flows.sni),
                     dns_name = COALESCE(flows.dns_name, excluded.dns_name),
@@ -218,6 +231,7 @@ public actor FlowStore {
                     tls_offered_ech = CASE WHEN \(Self.recordHasNoOffer)
                         THEN flows.tls_offered_ech ELSE excluded.tls_offered_ech END,
                     quic_version = COALESCE(excluded.quic_version, flows.quic_version),
+                    stream_opening = COALESCE(excluded.stream_opening, flows.stream_opening),
                     quic_from_server = CASE WHEN excluded.quic_version IS NULL
                         THEN flows.quic_from_server ELSE excluded.quic_from_server END,
                     tls_chain_state = CASE WHEN \(Self.recordHasNoServerReading)
@@ -243,6 +257,7 @@ public actor FlowStore {
                     offer.omittedApplicationProtocols, offer.encryptedClientHello,
                     quic.version, quic.fromServer,
                     chain.state, chain.certificates,
+                    opening,
                 ]
             )
             // El UPSERT pudo ser INSERT o UPDATE; `lastInsertedRowID` solo vale para INSERT, así
@@ -343,7 +358,7 @@ public actor FlowStore {
                    tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
                    tls_offered_alpn_omitted, tls_offered_ech,
                    quic_version, quic_from_server,
-                   tls_chain_state, tls_chain
+                   tls_chain_state, tls_chain, stream_opening
             FROM flows
             """
             var arguments: [DatabaseValueConvertible] = []
@@ -398,7 +413,7 @@ public actor FlowStore {
                        tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
                        tls_offered_alpn_omitted, tls_offered_ech,
                        quic_version, quic_from_server,
-                       tls_chain_state, tls_chain
+                       tls_chain_state, tls_chain, stream_opening
                 FROM flows
                 WHERE proto = ? AND addr_a = ? AND port_a = ? AND addr_b = ? AND port_b = ?
                 ORDER BY last_seen DESC, id DESC
@@ -432,7 +447,7 @@ public actor FlowStore {
                        tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
                        tls_offered_alpn_omitted, tls_offered_ech,
                        quic_version, quic_from_server,
-                       tls_chain_state, tls_chain
+                       tls_chain_state, tls_chain, stream_opening
                 FROM flows
                 WHERE id = ?
                 """,
@@ -459,7 +474,7 @@ public actor FlowStore {
                        tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
                        tls_offered_alpn_omitted, tls_offered_ech,
                        quic_version, quic_from_server,
-                       tls_chain_state, tls_chain
+                       tls_chain_state, tls_chain, stream_opening
                 FROM flows
                 WHERE audit_session_id = ?
                 ORDER BY first_seen ASC, id ASC
@@ -931,7 +946,8 @@ private enum Serialization {
                 omittedApplicationProtocols: row["tls_offered_alpn_omitted"],
                 encryptedClientHello: row["tls_offered_ech"]
             ),
-            quic: try quic(version: row["quic_version"], fromServer: row["quic_from_server"])
+            quic: try quic(version: row["quic_version"], fromServer: row["quic_from_server"]),
+            streamOpening: try streamOpening(code: row["stream_opening"])
         )
     }
 
@@ -1021,6 +1037,23 @@ private enum Serialization {
             },
             isComplete: isComplete
         ))
+    }
+
+    /// Lo que guarda `stream_opening`. Los valores son formato de disco: no se renumeran.
+    static func streamOpeningCode(_ opening: StreamOpening) -> Int {
+        switch opening {
+        case .tlsHandshake: return 1
+        case .httpRequest: return 2
+        case .unrecognised: return 3
+        }
+    }
+
+    static func streamOpening(code: Int?) throws -> StreamOpening? {
+        guard let code else { return nil }
+        guard let opening = StreamOpening.allCases.first(where: { streamOpeningCode($0) == code }) else {
+            throw FlowStore.StoreError.corruptRow("arranque de stream desconocido: \(code)")
+        }
+        return opening
     }
 
     /// Las dos columnas de la versión de QUIC, tal y como van a la fila.

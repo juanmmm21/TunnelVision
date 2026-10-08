@@ -368,6 +368,18 @@ public enum Schema {
             }
         }
 
+        // v14 — con qué empezó el stream saliente de un flujo TCP, en el puerto que sea
+        // (`FlowStore.Serialization.streamOpeningCode`): un handshake de TLS, una petición de
+        // HTTP en claro, o ninguna de las dos. `NULL` es que no hubo lectura.
+        //
+        // Existe porque `tls_status` nace del puerto: sin esta columna, un TLS fuera del 443 y un
+        // HTTP al 80 son la misma fila.
+        migrator.registerMigration("v14") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "stream_opening", .integer)
+            }
+        }
+
         return migrator
     }
 }

@@ -1019,6 +1019,175 @@ final class FlowStoreTests: XCTestCase {
         }
     }
 
+    // MARK: - Arranque del stream (v14)
+
+    private static let openingRemote = ModelFixtures.v4(17, 57, 144, 10)
+
+    private func openingFlow(
+        firstSeen: UInt64, lastSeen: UInt64, packetCount: UInt64 = 1,
+        tlsStatus: TLSInspectionStatus, opening: StreamOpening?
+    ) -> FlowRecord {
+        PersistenceFixtures.flow(
+            remote: Self.openingRemote, remotePort: 5223, firstSeen: firstSeen, lastSeen: lastSeen,
+            packetCount: packetCount, tlsStatus: tlsStatus, streamOpening: opening
+        )
+    }
+
+    func testEveryStreamOpeningSurvivesTheRoundTrip() async throws {
+        let store = try makeStore()
+        for (offset, opening) in StreamOpening.allCases.enumerated() {
+            let id = try await store.upsertFlow(PersistenceFixtures.flow(
+                remote: Self.openingRemote, remotePort: 80, localPort: 51000 + UInt16(offset),
+                firstSeen: 1, lastSeen: 2, tlsStatus: .plaintext, streamOpening: opening
+            ))
+            let stored = try await store.flow(id: id)
+            XCTAssertEqual(stored?.streamOpening, opening)
+        }
+    }
+
+    func testAFlowWithoutAStreamOpeningReadsBackWithoutOne() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(openingFlow(firstSeen: 1, lastSeen: 2, tlsStatus: .plaintext, opening: nil))
+
+        let stored = try await store.flow(id: id)
+        XCTAssertNil(stored?.streamOpening)
+    }
+
+    /// El arranque solo se ve al principio: una vida nueva del flujo no lo trae y no puede
+    /// borrarlo, ni devolver la fila a «sin cifrar».
+    func testARecreatedFlowKeepsItsOpeningAndDoesNotFallBackToPlaintext() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(
+            openingFlow(firstSeen: 1, lastSeen: 2, packetCount: 4, tlsStatus: .encrypted, opening: .tlsHandshake)
+        )
+
+        _ = try await store.upsertFlow(
+            openingFlow(firstSeen: 200, lastSeen: 209, packetCount: 3, tlsStatus: .plaintext, opening: nil)
+        )
+
+        let stored = try await store.flow(id: id)
+        XCTAssertEqual(stored?.streamOpening, .tlsHandshake)
+        XCTAssertEqual(stored?.tlsStatus, .encrypted)
+        XCTAssertEqual(stored?.packetCount, 7, "la segunda vida suma a la primera")
+    }
+
+    /// La regla es del handshake de TLS: una fila cuyo arranque fue HTTP sigue como llegue.
+    func testOnlyATLSOpeningHoldsTheStatus() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(
+            openingFlow(firstSeen: 1, lastSeen: 2, tlsStatus: .encrypted, opening: .unrecognised)
+        )
+
+        _ = try await store.upsertFlow(
+            openingFlow(firstSeen: 200, lastSeen: 209, tlsStatus: .plaintext, opening: nil)
+        )
+
+        let stored = try await store.flow(id: id)
+        XCTAssertEqual(stored?.tlsStatus, .plaintext)
+        XCTAssertEqual(stored?.streamOpening, .unrecognised)
+    }
+
+    /// Un record que trae su propio arranque es una conexión nueva sobre la misma 5-tupla: manda
+    /// el suyo, y su estado.
+    func testANewOpeningReplacesThePreviousOneAndItsStatus() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(
+            openingFlow(firstSeen: 1, lastSeen: 2, tlsStatus: .encrypted, opening: .tlsHandshake)
+        )
+
+        _ = try await store.upsertFlow(
+            openingFlow(firstSeen: 200, lastSeen: 209, tlsStatus: .plaintext, opening: .httpRequest)
+        )
+
+        let stored = try await store.flow(id: id)
+        XCTAssertEqual(stored?.streamOpening, .httpRequest)
+        XCTAssertEqual(stored?.tlsStatus, .plaintext)
+    }
+
+    func testTheFlowsOfAnAuditSessionCarryTheirStreamOpening() async throws {
+        let store = try makeStore()
+        let project = try await store.createAuditProject(
+            AuditProjectDraft(name: "App", bundleIdentifier: nil, catalogueVersion: nil, allowlist: []),
+            at: PersistenceFixtures.date(1)
+        )
+        _ = try await store.startAuditSession(
+            AuditSessionDraft(
+                projectID: project.id, kind: .baseline,
+                environment: AuditEnvironment(deviceModel: "iPhone", osVersion: "26.0", toolVersion: "1.0.0"),
+                inspection: InspectionConditions(inspectionEnabled: false, caTrusted: false),
+                notes: ""
+            ),
+            at: PersistenceFixtures.date(1)
+        )
+        _ = try await store.upsertFlow(openingFlow(firstSeen: 1, lastSeen: 2, tlsStatus: .plaintext, opening: .httpRequest))
+
+        let session = try await store.openAuditSession()
+        let flows = try await store.flows(inAuditSession: try XCTUnwrap(session).id, limit: 10)
+        XCTAssertEqual(flows.map(\.streamOpening), [.httpRequest])
+    }
+
+    func testAnUnknownStreamOpeningCodeIsACorruptRow() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(openingFlow(firstSeen: 1, lastSeen: 2, tlsStatus: .plaintext, opening: .httpRequest))
+        let raw = try DatabaseQueue(path: dbURL.path)
+        try await raw.write { db in
+            try db.execute(sql: "UPDATE flows SET stream_opening = 9 WHERE id = ?", arguments: [id])
+        }
+        try raw.close()
+
+        do {
+            _ = try await store.flow(id: id)
+            XCTFail("un código de arranque desconocido tenía que rechazarse")
+        } catch FlowStore.StoreError.corruptRow {
+            // Lo esperado: se dice, no se supone.
+        }
+    }
+
+    /// Los códigos son formato de disco: si se renumeran, lo guardado cambia de significado.
+    func testTheStreamOpeningCodesOnDiskAreStable() async throws {
+        let store = try makeStore()
+        var codes: [StreamOpening: Int] = [:]
+        for (offset, opening) in StreamOpening.allCases.enumerated() {
+            let id = try await store.upsertFlow(PersistenceFixtures.flow(
+                remote: Self.openingRemote, remotePort: 80, localPort: 52000 + UInt16(offset),
+                firstSeen: 1, lastSeen: 2, tlsStatus: .plaintext, streamOpening: opening
+            ))
+            let raw = try DatabaseQueue(path: dbURL.path)
+            codes[opening] = try await raw.read { db in
+                try Int.fetchOne(db, sql: "SELECT stream_opening FROM flows WHERE id = ?", arguments: [id])
+            }
+            try raw.close()
+        }
+        XCTAssertEqual(codes, [.tlsHandshake: 1, .httpRequest: 2, .unrecognised: 3])
+    }
+
+    /// La v14 no toca filas: un flujo de antes se lee sin arranque y con el estado que tenía.
+    func testMigrationV14LeavesEarlierFlowsWithoutAStreamOpening() async throws {
+        let legacy = try DatabaseQueue(path: dbURL.path)
+        try Schema.migrator().migrate(legacy, upTo: "v13")
+        try await legacy.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO flows
+                    (session, proto, addr_a, port_a, addr_b, port_b,
+                     first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status)
+                VALUES (0, 6, ?, 51000, ?, 80, 100, 200, 0, 0, 1, 0)
+                """,
+                arguments: [
+                    Data(PersistenceFixtures.deviceIP.bytes),
+                    Data(ModelFixtures.v4(1, 1, 1, 1).bytes),
+                ]
+            )
+        }
+        try legacy.close()
+
+        let store = try makeStore()
+        let flows = try await store.recentFlows(limit: 10)
+        let flow = try XCTUnwrap(flows.first)
+        XCTAssertNil(flow.streamOpening)
+        XCTAssertEqual(flow.tlsStatus, .plaintext)
+    }
+
     /// La v13 no toca filas: un flujo de antes se lee sin cadena y con la respuesta que tenía.
     func testMigrationV13LeavesEarlierFlowsWithoutACertificateReading() async throws {
         let legacy = try DatabaseQueue(path: dbURL.path)

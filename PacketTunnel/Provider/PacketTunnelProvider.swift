@@ -617,6 +617,7 @@ actor TunnelRuntime {
             }
         }, sniObserver: pipeline,
            clientTLSObserver: pipeline,
+           streamOpeningObserver: pipeline,
            serverTLSObserver: pipeline,
            inspector: Self.makeInspector(),
            statusObserver: pipeline,

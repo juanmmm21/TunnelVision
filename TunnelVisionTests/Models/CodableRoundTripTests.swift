@@ -72,7 +72,8 @@ final class CodableRoundTripTests: XCTestCase {
             serverTLS: nil,
             serverCertificates: nil,
             clientTLS: nil,
-            quic: nil
+            quic: nil,
+            streamOpening: nil
         )
         try roundTrip(withSNI)
 
@@ -91,7 +92,8 @@ final class CodableRoundTripTests: XCTestCase {
             serverTLS: nil,
             serverCertificates: nil,
             clientTLS: nil,
-            quic: nil
+            quic: nil,
+            streamOpening: nil
         )
         try roundTrip(withoutSNI)
 
@@ -110,7 +112,8 @@ final class CodableRoundTripTests: XCTestCase {
             serverTLS: nil,
             serverCertificates: nil,
             clientTLS: nil,
-            quic: nil
+            quic: nil,
+            streamOpening: nil
         )
         try roundTrip(named)
 

@@ -62,6 +62,14 @@ public struct RelayStats: Sendable, Equatable, Codable {
     /// flujos hacia el 443 tienen oferta apuntada.
     public var clientOfferObserved: UInt64 = 0
 
+    /// Flujos TCP, en cualquier puerto, cuyo stream saliente empezó por un handshake de TLS.
+    public var streamOpeningsTLS: UInt64 = 0
+    /// Flujos TCP cuyo stream saliente empezó por una petición de HTTP en claro.
+    public var streamOpeningsHTTP: UInt64 = 0
+    /// Flujos TCP cuyo arranque no era ni lo uno ni lo otro. Los tres juntos contra
+    /// `tcpFlowsOpened` dicen cuántos se cerraron sin mandar bytes suficientes para decidir.
+    public var streamOpeningsUnrecognised: UInt64 = 0
+
     /// Flujos TLS a los que se les leyó la respuesta del servidor: la versión y la suite de su
     /// ServerHello. Solo los que **no** se inspeccionan: en uno inspeccionado lo que el dispositivo
     /// recibe es el ServerHello de nuestra terminación, y ese no se lee (lo cuenta

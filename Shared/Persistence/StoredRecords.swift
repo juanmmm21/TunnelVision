@@ -47,6 +47,10 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
     /// `quic_from_server`), o `nil` si no hubo lectura.
     public let quic: QUICVersionReading?
 
+    /// Con qué empezó el stream saliente de un flujo TCP (columna `stream_opening`), o `nil` si
+    /// no hubo lectura.
+    public let streamOpening: StreamOpening?
+
     public init(
         id: Int64,
         key: FlowKey,
@@ -61,7 +65,8 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
         serverTLS: ServerTLSAnswer?,
         serverCertificates: ServerCertificateReading?,
         clientTLS: ClientTLSOffer?,
-        quic: QUICVersionReading?
+        quic: QUICVersionReading?,
+        streamOpening: StreamOpening?
     ) {
         self.id = id
         self.key = key
@@ -77,6 +82,7 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
         self.serverCertificates = serverCertificates
         self.clientTLS = clientTLS
         self.quic = quic
+        self.streamOpening = streamOpening
     }
 
     /// El nombre del flujo con su origen: el SNI si lo anunció, y si no el que se dedujo del DNS.
