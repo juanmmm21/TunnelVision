@@ -340,3 +340,107 @@ wins without erasing the resolved name; IPv6; a flow that predates the reply; a 
 its name; the other names of a shared address reaching the store; an expired answer; the configured
 limits; outbound datagrams and other ports left unread; and each counter, including the all-zero
 case.
+
+## Above L4: the QUIC long header
+
+`Shared/QUIC/QUICLongHeader.swift`, types in `Shared/Models/QUICVersion.swift`. It answers one
+question about a UDP datagram — *which QUIC version does this packet say it speaks?* — and through it
+a second one the flow table could not answer before: *is this UDP flow encrypted?*
+
+```swift
+public struct QUICVersion: RawRepresentable, Sendable, Hashable, Codable {   // the four wire bytes
+    public static let v1: QUICVersion        // 0x00000001, RFC 9000
+    public static let v2: QUICVersion        // 0x6b3343cf, RFC 9369
+    public var hasKnownPacketProtection: Bool { get }   // v1 and v2, nothing else
+}
+
+public enum QUICVersionSource: String, Sendable, Hashable, Codable { case client, server }
+
+public struct QUICVersionReading: Sendable, Hashable, Codable {
+    public let version: QUICVersion
+    public let source: QUICVersionSource
+    public func replaces(_ current: QUICVersionReading?) -> Bool
+}
+
+public enum QUICLongHeader {
+    public static func version(in payload: Data) -> QUICVersion?
+}
+```
+
+### What is read
+
+Only what RFC 8999 fixes for every version: the first byte, the four bytes of version, and the two
+connection IDs with their length bytes — far enough to know they fit. Nothing is decrypted and the
+ClientHello inside the Initial is not touched; that is a different piece of work.
+
+The long header travels only on the first packets of a connection (Initial, 0-RTT, Handshake, Retry).
+Everything after uses the short header, which carries no version. **A flow whose start the tunnel did
+not see therefore has no reading, and that is not the same as not being QUIC.**
+
+### What counts as a long header
+
+More than its top bit, because half the internet starts a datagram with a byte above `0x80` (RTP
+does):
+
+- the long-header bit **and** the fixed bit (`0x40`) set. A packet that clears the fixed bit under
+  RFC 9287 is not read; that extension can only be used after the peer advertises it, so the first
+  packet of a connection always has the bit;
+- a version other than `0`. A Version Negotiation packet says which versions a server *would* speak,
+  not which one anyone is speaking, and its other seven bits are arbitrary;
+- both connection IDs inside the datagram, and — for the versions whose limit is known — no longer
+  than 20 bytes (RFC 9000 § 17.2: a receiver must drop such a packet).
+
+The version is kept as its **raw value**, like a TLS version: a draft, a vendor version or a number
+made up to force a negotiation (RFC 9000 § 15) is evidence. The two named values were checked
+against the IANA *QUIC Versions* registry, not written from memory.
+
+### Encrypted is said only of what is known to be
+
+`hasKnownPacketProtection` is true for versions 1 and 2, which protect every packet with TLS 1.3
+(RFC 9001, RFC 9369), and for nothing else. A long-header shape with an unknown version is recorded
+on the flow and **does not** mark it encrypted: unknown bytes that look like a header do not prove
+anything, and a tool that produces evidence must not hide a possible cleartext flow behind a guess.
+When the registry gains a version, it is added in that one property.
+
+### Where it is read, and what a flow keeps
+
+In `PacketPipeline.observe`, on every UDP datagram whose **remote** port is 443, in both directions
+(what the server sends reaches the pipeline through `record(reinjected:)`). The relay reads the TLS
+handshake because that needs a reassembled stream; a datagram needs nothing reassembled, and the
+pipeline is where both directions pass. The reading goes to the flow table **with the packet**
+(`FlowTable.observe(…, quic:)`), not through a second call: no extra actor hop, and the record
+enqueued for that very packet already carries it.
+
+- **Remote port 443 only.** That is where the device is the client, which is what lets the direction
+  of the packet say which end a reading comes from. QUIC on another port exists — `Alt-Svc` may
+  announce any — and is not read.
+- **Which reading a flow keeps** (`QUICVersionReading.replaces`): the server's replaces anything —
+  it is the version in use —; the client's replaces only an earlier client reading (its retry after
+  a Version Negotiation) and never what the server said. A flow that only ever shows a `client`
+  reading has a version that was *proposed*, and a reader citing it says so.
+- **`tlsStatus`**: a UDP flow is born `plaintext`, port 443 or not — the port does not say it is
+  QUIC. A reading with a version known to encrypt raises it to `encrypted`, and nothing lowers it
+  again. So `plaintext` on a UDP/443 flow means *no QUIC start was recognised*, which covers real
+  cleartext, a protocol that is not QUIC, a version this tool does not know, and a connection that
+  was already open when the tunnel started. A classifier must not read it as proof of cleartext
+  without looking at `quic`.
+- **QUIC is never inspected** ([ADR 0006](../decisions/0006-udp-quic-passthrough.md)): recognising it
+  changes a label and a column, not the route.
+- **One counter**, `PipelineStats.quicVersionsObserved`: datagrams a version was read from. It
+  counts readings, not flows — a connection start carries several.
+
+The store keeps the reading in `quic_version` / `quic_from_server` (schema `v12`,
+[`persistence.md`](persistence.md)).
+
+### Tests
+
+`QUICLongHeaderTests`: versions 1 and 2, every long packet type, an unknown version kept by value,
+connection IDs at their limit and empty, a slice that does not start at index zero; and what is
+*not* a long header — a short header, a Version Negotiation, a cleared fixed bit, a payload too
+short, IDs that do not fit, an oversized ID on a known version (and the same length accepted on an
+unknown one). `QUICVersionReadingTests`: the registry values, which versions are known to encrypt,
+and the four cases of `replaces`. `FlowTableTests` (*Versión de QUIC*) and `PacketPipelineTests`
+(*Versión de QUIC de un flujo*) cover the hookup: a flow born or raised to `encrypted`, short
+headers leaving it alone, the server's version arriving through the reinjected path and winning, an
+unknown version recorded without the mark, a non-QUIC payload and another port left `plaintext`, the
+local port being 443 not counting, and the route staying passthrough with inspection on.

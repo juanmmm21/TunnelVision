@@ -168,6 +168,7 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
     public var resolvedName: ResolvedFlowName?   // el nombre que el DNS daba a la dirección remota
     public var serverTLS: ServerTLSAnswer?   // lo que el servidor contestó al ClientHello, si se leyó
     public var clientTLS: ClientTLSOffer?    // lo que el cliente ofreció en su ClientHello, si se leyó
+    public var quic: QUICVersionReading?     // la versión de QUIC de su cabecera larga, y de qué extremo
     public var name: FlowName? { get }  // el nombre con su origen: el SNI, y si no el resuelto
 }
 
@@ -248,6 +249,16 @@ terminated, the server's answer is an answer to the tunnel's ClientHello
 (`TLSAnswerSource.upstreamConnection`), and the offer is the only TLS fact left that comes from the
 app. A reader that wants to know whether the app would have accepted an old version reads the offer,
 not the negotiated version.
+
+### A UDP flow is `encrypted` only when its QUIC start was seen
+
+`quic` is the version read from a QUIC long header of the flow, with the end it came from
+([`packet-parsing.md`](packet-parsing.md) § *Above L4: the QUIC long header*). It is what moves a
+UDP flow from `plaintext`, the status every UDP flow is born with, to `encrypted` — and only when
+the version is one known to protect its packets (`QUICVersion.hasKnownPacketProtection`). A flow
+can therefore carry a `quic` reading and still be `plaintext`: an unknown version is recorded, not
+vouched for. And `plaintext` with `quic == nil` on UDP/443 means no QUIC start was recognised, not
+that cleartext was observed.
 
 `OfferedTLSVersions` is an enum because the two shapes are different claims. `.listed` is exhaustive:
 a version that is not in it was not offered. `.upTo` is only a maximum: the ClientHello does not say

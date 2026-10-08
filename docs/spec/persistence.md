@@ -176,6 +176,14 @@ public enum Schema {
                 t.add(column: "tls_offered_ech", .integer)
             }
         }
+
+        // v12 — la versión de QUIC de un flujo y de qué extremo se leyó. Juntas o las dos NULL.
+        m.registerMigration("v12") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "quic_version", .integer)             // los cuatro bytes del cable
+                t.add(column: "quic_from_server", .integer)         // 1 = la mandó el servidor
+            }
+        }
         return m
     }
 }
@@ -260,6 +268,7 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
     public let resolvedName: ResolvedFlowName?   // `dns_name` / `dns_other_names`
     public let serverTLS: ServerTLSAnswer?       // `tls_version` / `tls_cipher_suite` / `tls_hello_retry` / `tls_upstream` / `tls_alert`
     public let clientTLS: ClientTLSOffer?        // las cinco columnas `tls_offered_*`
+    public let quic: QUICVersionReading?         // `quic_version` / `quic_from_server`
     public var name: FlowName? { get }           // el nombre con su origen (`data-model.md`)
     public var duration: TimeInterval { get }
     public var totalBytes: UInt64 { get }
@@ -372,6 +381,17 @@ introducirá un reloj monotónico cuando lo necesite el código productor (parse
 - **`tls_offered_alpn` is one text column**, the identifiers joined by a single space, `NULL` when
   there are none. The scanner only keeps printable ASCII without spaces, so no escaping is needed;
   what it did not keep is counted in `tls_offered_alpn_omitted`.
+- **The QUIC version follows the same rule, and brings a second one** (`v12`,
+  [`packet-parsing.md`](packet-parsing.md) § *Above L4: the QUIC long header*). The long header only
+  travels at the start of a connection, so a record without a reading keeps the row's and one with a
+  reading replaces both columns. And **a row that has a QUIC version does not go back to
+  `plaintext`** because a record born that way arrives: that record is the second life of a UDP flow
+  the in-memory table created again, which never saw the header. Without this the longest flow of a
+  session — a video — would end up labelled as cleartext the first time the table evicted it.
+  `quic_version` is the wire value (it does not fit a signed 32-bit integer; SQLite's is 64);
+  `quic_from_server` is 1 for a server reading, 0 for a client one. A version of `0`, one out of
+  range, or one without its source is a `corruptRow`. There is no "is QUIC" column: `tls_status`
+  already says what was concluded from the version.
 - **Retention:** `prune(before:)` enforces the user's storage cap; the app exposes it in Settings →
   Storage. The cutoff is a `Date` precisely because retention is about *real* age, which a monotonic
   stamp cannot express across a reboot. `ON DELETE CASCADE` removes a flow's packets automatically.
@@ -433,6 +453,11 @@ underneath. Never share a raw `Database` handle across actors — go through the
   does not erase the row's; a new one replaces the previous whole in both directions; it and the
   server's answer do not overwrite each other; four shapes of corrupt row; and a database stopped at
   `v10` migrates keeping its flows, without an offer.
+- The QUIC version (`v12`): a reading round-trips from both ends and at the top of its four bytes; a
+  record without one does not erase the row's; a flow created again does not fall back to
+  `plaintext` and still adds its totals; a row without a version takes its record's status as
+  before; a new reading replaces the previous whole; a version without its source is a `corruptRow`;
+  and a database stopped at `v11` migrates keeping its flows, without a version.
 - A flow created again (`v9`): its totals are added to what the row had, later writes of the second
   life are not added twice, a third life builds on both, the SNI survives a life that brings none
   and is replaced by a new one, an inspection outcome is not undone by a starting state and is

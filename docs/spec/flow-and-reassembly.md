@@ -22,12 +22,17 @@ public actor FlowTable {
     /// `resolvedName` es el nombre que el DNS daba a la dirección remota en el instante del paquete,
     /// y **solo se usa si el flujo es nuevo**: un flujo se nombra al crearse y no cambia de nombre
     /// (`packet-parsing.md` § *Naming flows*).
+    ///
+    /// `quic` es la versión que este paquete llevaba en su cabecera larga, si llevaba una. Se apunta
+    /// según `QUICVersionReading.replaces` y, si la versión es de las que se sabe que cifran, sube
+    /// el flujo de `plaintext` a `encrypted` (`packet-parsing.md` § *Above L4: the QUIC long header*).
     @discardableResult
     public func observe(
         _ packet: ParsedPacket,
         direction: Direction,
         length: UInt32,
-        resolvedName: ResolvedFlowName?
+        resolvedName: ResolvedFlowName?,
+        quic: QUICVersionReading?
     ) -> LiveFlow
 
     /// Marca el estado de inspección TLS de un flujo (lo fija el pipeline TLS).
@@ -122,3 +127,7 @@ degradation (downgrade to metadata) rather than unbounded growth.
 - Overflow returns `.downgraded` and frees memory; a 10k-flow storm keeps `FlowTable` at or
   under `maxFlows` with bounded total memory.
 - LRU eviction emits the correct `FlowRecord` and O(1) behaviour under load.
+- The QUIC version: a UDP/443 flow is `plaintext` until a known version is seen and `encrypted` from
+  then on, in its first packet or a later one; packets without a reading change nothing; the server's
+  version wins and the client cannot take it back; an unknown version is recorded without the mark;
+  and the closing record carries the reading.
