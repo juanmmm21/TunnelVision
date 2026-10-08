@@ -19,15 +19,24 @@ public struct FindingsPolicy: Sendable, Hashable {
 /// comprobación, hasta dónde llegó.
 public struct SessionFindings: Sendable, Hashable {
 
-    /// En el orden en que cada uno apareció por primera vez al recorrer los flujos.
+    /// En el orden en que cada uno apareció por primera vez al recorrer los flujos; si un flujo
+    /// prueba dos, el de tráfico sin cifrar va antes que el de la versión de TLS.
     public let findings: [Finding]
 
     /// Lo que la comprobación de la versión de TLS pudo y no pudo mirar.
     public let tlsVersion: CheckCoverage<TLSVersionGap>
 
-    public init(findings: [Finding], tlsVersion: CheckCoverage<TLSVersionGap>) {
+    /// Lo que la comprobación de tráfico sin cifrar pudo y no pudo mirar.
+    public let encryption: CheckCoverage<EncryptionGap>
+
+    public init(
+        findings: [Finding],
+        tlsVersion: CheckCoverage<TLSVersionGap>,
+        encryption: CheckCoverage<EncryptionGap>
+    ) {
         self.findings = findings
         self.tlsVersion = tlsVersion
+        self.encryption = encryption
     }
 }
 
@@ -45,8 +54,22 @@ public enum FindingsClassifier {
         var tlsGaps = Grouping<TLSVersionGap>()
         var tlsSatisfied: [Int64] = []
         var tlsNotApplicable: [Int64] = []
+        var encryptionGaps = Grouping<EncryptionGap>()
+        var encryptionSatisfied: [Int64] = []
+        var encryptionNotApplicable: [Int64] = []
 
         for flow in flows {
+            switch EncryptionAssessment(of: flow) {
+            case .cleartext(let proto):
+                findings.add(flow.id, to: .cleartextTraffic(proto))
+            case .encrypted:
+                encryptionSatisfied.append(flow.id)
+            case .notAssessed(let gap):
+                encryptionGaps.add(flow.id, to: gap)
+            case .notApplicable:
+                encryptionNotApplicable.append(flow.id)
+            }
+
             switch TLSVersionAssessment(of: flow, minimum: policy.minimumTLSVersion) {
             case .weak(let observation):
                 findings.add(flow.id, to: .weakTLSVersion(observation))
@@ -65,6 +88,11 @@ public enum FindingsClassifier {
                 satisfiedFlowIDs: tlsSatisfied,
                 unassessed: tlsGaps.groups.map { UnassessedFlows(gap: $0.key, flowIDs: $0.flowIDs) },
                 notApplicableFlowIDs: tlsNotApplicable
+            ),
+            encryption: CheckCoverage(
+                satisfiedFlowIDs: encryptionSatisfied,
+                unassessed: encryptionGaps.groups.map { UnassessedFlows(gap: $0.key, flowIDs: $0.flowIDs) },
+                notApplicableFlowIDs: encryptionNotApplicable
             )
         )
     }

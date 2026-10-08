@@ -29,6 +29,10 @@ final class FindingsClassifierTests: XCTestCase {
             result.tlsVersion,
             CheckCoverage(satisfiedFlowIDs: [], unassessed: [], notApplicableFlowIDs: [])
         )
+        XCTAssertEqual(
+            result.encryption,
+            CheckCoverage(satisfiedFlowIDs: [], unassessed: [], notApplicableFlowIDs: [])
+        )
     }
 
     func testFlowsThatProveTheSameThingAreOneFinding() throws {
@@ -112,8 +116,67 @@ final class FindingsClassifierTests: XCTestCase {
         )
     }
 
+    // MARK: - Tráfico sin cifrar
+
+    func testFlowsSeenInTheClearAreOneFinding() throws {
+        let flows = [
+            Fixtures.flow(id: 1, remotePort: 80, tlsStatus: .plaintext, streamOpening: .httpRequest),
+            Fixtures.flow(id: 2, remotePort: 5223, tlsStatus: .encrypted, streamOpening: .tlsHandshake),
+            Fixtures.flow(id: 3, remotePort: 8080, tlsStatus: .plaintext, streamOpening: .httpRequest),
+        ]
+        let result = FindingsClassifier.classify(flows: flows, policy: try policy())
+        XCTAssertEqual(result.findings, [Finding(evidence: .cleartextTraffic(.http), flowIDs: [1, 3])])
+        XCTAssertEqual(result.findings.first?.kind, .cleartextTraffic)
+        XCTAssertEqual(result.encryption.satisfiedFlowIDs, [2])
+    }
+
+    /// Las dos comprobaciones son independientes: cada una coloca **todos** los flujos.
+    func testEachCheckPlacesEveryFlow() throws {
+        let flows = [
+            Fixtures.flow(id: 1, remotePort: 80, tlsStatus: .plaintext, streamOpening: .httpRequest),
+            Fixtures.flow(id: 2, serverTLS: Fixtures.negotiated(.tls10), streamOpening: .tlsHandshake),
+            Fixtures.flow(id: 3),
+            Fixtures.flow(id: 4, remotePort: 22, tlsStatus: .plaintext, streamOpening: .unrecognised),
+            Fixtures.flow(id: 5, proto: .udp, quic: QUICVersionReading(version: .v1, source: .server)),
+            Fixtures.flow(id: 6, proto: .udp, remotePort: 53, tlsStatus: .plaintext),
+            Fixtures.flow(id: 7, proto: .icmp, remotePort: 0, tlsStatus: .plaintext),
+        ]
+        let result = FindingsClassifier.classify(flows: flows, policy: try policy())
+
+        XCTAssertEqual(result.findings, [
+            Finding(evidence: .cleartextTraffic(.http), flowIDs: [1]),
+            Finding(evidence: .weakTLSVersion(serverHello(.tls10)), flowIDs: [2]),
+        ])
+        XCTAssertEqual(result.encryption.satisfiedFlowIDs, [2, 5])
+        XCTAssertEqual(result.encryption.unassessed, [
+            UnassessedFlows(gap: .openingNotRead, flowIDs: [3]),
+            UnassessedFlows(gap: .unrecognisedOpening, flowIDs: [4]),
+            UnassessedFlows(gap: .datagramsNotRead, flowIDs: [6]),
+        ])
+        XCTAssertEqual(result.encryption.notApplicableFlowIDs, [7])
+
+        let cleartext = result.findings.filter { $0.kind == .cleartextTraffic }.flatMap(\.flowIDs)
+        let placed = cleartext
+            + result.encryption.satisfiedFlowIDs
+            + result.encryption.unassessed.flatMap(\.flowIDs)
+            + result.encryption.notApplicableFlowIDs
+        XCTAssertEqual(placed.sorted(), flows.map(\.id))
+    }
+
+    /// Una sesión grabada antes de que el arranque se leyera: nada en claro, y nada a favor.
+    func testNoOpeningsReadIsNotTheSameAsNoCleartext() throws {
+        let flows = [
+            Fixtures.flow(id: 1, remotePort: 80, tlsStatus: .plaintext),
+            Fixtures.flow(id: 2, remotePort: 443, tlsStatus: .encrypted),
+        ]
+        let result = FindingsClassifier.classify(flows: flows, policy: try policy())
+        XCTAssertEqual(result.findings, [])
+        XCTAssertEqual(result.encryption.satisfiedFlowIDs, [])
+        XCTAssertEqual(result.encryption.unassessed, [UnassessedFlows(gap: .openingNotRead, flowIDs: [1, 2])])
+    }
+
     /// El `rawValue` es lo que escribirá un catálogo de requisitos: no puede moverse solo.
     func testTheKindIdentifiersAreStable() {
-        XCTAssertEqual(FindingKind.allCases.map(\.rawValue), ["weakTLSVersion"])
+        XCTAssertEqual(FindingKind.allCases.map(\.rawValue), ["weakTLSVersion", "cleartextTraffic"])
     }
 }

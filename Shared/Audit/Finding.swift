@@ -8,6 +8,8 @@ import Foundation
 public enum FindingKind: String, Sendable, Hashable, Codable, CaseIterable {
     /// Una conexión negoció una versión de TLS por debajo del mínimo exigido.
     case weakTLSVersion
+    /// Una conexión mandó contenido sin cifrar, y se vio.
+    case cleartextTraffic
 }
 
 /// Lo que un hallazgo **afirma**, con lo observado que lo sostiene.
@@ -17,10 +19,12 @@ public enum FindingKind: String, Sendable, Hashable, Codable, CaseIterable {
 /// instante—: eso se lee de los flujos que el hallazgo señala.
 public enum FindingEvidence: Sendable, Hashable {
     case weakTLSVersion(TLSVersionObservation)
+    case cleartextTraffic(CleartextProtocol)
 
     public var kind: FindingKind {
         switch self {
         case .weakTLSVersion: return .weakTLSVersion
+        case .cleartextTraffic: return .cleartextTraffic
         }
     }
 }
