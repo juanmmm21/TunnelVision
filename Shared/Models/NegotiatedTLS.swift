@@ -20,6 +20,14 @@ public struct TLSProtocolVersion: RawRepresentable, Sendable, Hashable, Codable 
     public static let tls11 = TLSProtocolVersion(rawValue: 0x0302)
     public static let tls12 = TLSProtocolVersion(rawValue: 0x0303)
     public static let tls13 = TLSProtocolVersion(rawValue: 0x0304)
+
+    /// El valor es una de las cinco versiones publicadas, SSL 3.0 a TLS 1.3, que son las únicas
+    /// que se pueden **ordenar** entre sí. De cualquier otro número —un borrador `0x7F..`, uno
+    /// inventado— no se sabe si es más o menos que nada: compararlo por su valor crudo pondría un
+    /// borrador de 1.3 por encima de TLS 1.3 y daría por buena una versión que nadie publicó.
+    public var isPublished: Bool {
+        (Self.ssl30.rawValue...Self.tls13.rawValue).contains(rawValue)
+    }
 }
 
 /// Una suite de cifrado TLS por su código del registro de IANA: dos bytes.
