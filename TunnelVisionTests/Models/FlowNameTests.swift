@@ -38,6 +38,15 @@ final class FlowNameTests: XCTestCase {
         XCTAssertEqual(name?.otherCandidates, [])
     }
 
+    /// Un SNI vacío no nombra a nadie: no tapa el nombre resuelto, y solo no es un nombre.
+    func testAnEmptySNIDoesNotCount() {
+        XCTAssertNil(FlowName(sni: "", resolved: nil))
+        XCTAssertEqual(
+            FlowName(sni: "", resolved: resolved),
+            FlowName(text: "api.example.com", origin: .dns, otherCandidates: ["cdn.example.net"])
+        )
+    }
+
     func testAResolvedFlowNameKeepsTheNameAndCandidatesOfTheMapsAnswer() {
         let answer = ResolvedName(name: "api.example.com", resolvedAt: 42, otherNames: ["a.example", "b.example"])
 

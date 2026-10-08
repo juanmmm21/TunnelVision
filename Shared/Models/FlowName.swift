@@ -64,8 +64,11 @@ public struct FlowName: Sendable, Hashable {
     /// **El SNI gana siempre que exista**: es una declaración de la conexión, y la resolución es una
     /// inferencia sobre una dirección que puede ser compartida. Cuando el SNI gana, los candidatos
     /// del DNS no viajan con él: ya no son alternativas, la conexión ha dicho cuál era.
+    ///
+    /// Un SNI vacío cuenta como que no hay: no nombra a nadie, y dejarle ganar taparía el nombre
+    /// resuelto con una cadena en blanco.
     public init?(sni: String?, resolved: ResolvedFlowName?) {
-        if let sni {
+        if let sni, !sni.isEmpty {
             self.init(text: sni, origin: .sni, otherCandidates: [])
         } else if let resolved {
             self.init(text: resolved.name, origin: .dns, otherCandidates: resolved.otherNames)

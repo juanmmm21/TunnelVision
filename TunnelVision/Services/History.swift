@@ -31,12 +31,7 @@ public struct HistoryFlow: Sendable, Hashable, Identifiable {
 
     /// El nombre del flujo con su origen: el SNI que anunció y, si no anunció ninguno, el que el
     /// DNS había dado a su dirección. `nil` si no tiene ninguno de los dos.
-    ///
-    /// Un SNI vacío cuenta como que no hay: no nombra a nadie, y dejarle ganar taparía el nombre
-    /// resuelto con una cadena en blanco.
-    public var name: FlowName? {
-        FlowName(sni: stored.sni.flatMap { $0.isEmpty ? nil : $0 }, resolved: stored.resolvedName)
-    }
+    public var name: FlowName? { stored.name }
 
     /// La dirección del host remoto tal y como se escribe, o `nil` si no se pudo repartir los extremos.
     public var remoteAddress: String? { endpoints?.remote.address.description }

@@ -224,7 +224,9 @@ two it is asserting.
 report. Its rules:
 
 - **The SNI wins whenever there is one.** It is the connection's own statement; the resolution is a
-  guess about an address that may be shared.
+  guess about an address that may be shared. **An empty SNI is not one**: it names nobody, and
+  letting it win would cover a resolved name with a blank. The rule is in `FlowName`'s initialiser,
+  so every reader of a flow's name gets it.
 - **The origin is derived, not stored**: it is which of the two fields is set. A stored origin would
   be a second place to say the same thing, free to disagree with the first.
 - **Only a name from DNS has `otherCandidates`.** When the SNI wins they are dropped: the connection
