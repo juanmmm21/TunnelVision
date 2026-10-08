@@ -9,6 +9,8 @@ Code linked into **both** the app and the extension, across the App Group. Exten
 - `IPC/` — mmap ring buffer layout, Darwin signal names, control-channel codec ([spec](../docs/spec/ipc.md))
 - `Capture/` — the libpcap format and its streaming writer ([why here](Capture/README.md))
 - `Retention/` — what the storage caps mean, for both processes ([why here](Retention/README.md))
+- `DNS/` — the DNS dissector and the address → name map ([spec](../docs/spec/packet-parsing.md))
+- `QUIC/` — the QUIC long header: which version a datagram says it speaks ([spec](../docs/spec/packet-parsing.md))
 - `TLS/` — the local CA: pure X.509 core + Keychain shell ([spec](../docs/spec/relay-and-tls.md))
 - `Fixtures/` — **Debug-only** synthetic capture generator ([why](Fixtures/README.md))
 

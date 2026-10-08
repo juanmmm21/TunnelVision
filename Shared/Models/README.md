@@ -18,6 +18,13 @@ versions it accepts and its ALPN. `OfferedTLSVersions` is an enum because a list
 `supported_versions` is exact and a bare `legacy_version` is only a ceiling, and a report must not
 confuse the two. Spec: same file, § *What the client offered*.
 
+`QUICVersion.swift` is the QUIC counterpart: the version from a long header as its raw four bytes,
+and `QUICVersionReading`, which adds the end it was read from — a client's version is a proposal, a
+server's is the one in use. `hasKnownPacketProtection` is the only place that says which versions
+are known to encrypt, and it is what lets a UDP flow be called `encrypted`. Spec:
+[`../../docs/spec/packet-parsing.md`](../../docs/spec/packet-parsing.md) § *Above L4: the QUIC long
+header*.
+
 `TunnelAddressing` also lives here (it moved out of the extension in M9): the tunnel's own IPs are
 knowledge of *both* processes — the extension announces them to NetworkExtension and compares against
 them to resolve direction, and the app needs them to tell which endpoint of a canonical `FlowKey` is
