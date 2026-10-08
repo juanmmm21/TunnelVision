@@ -184,6 +184,14 @@ public enum Schema {
                 t.add(column: "quic_from_server", .integer)         // 1 = la mandó el servidor
             }
         }
+
+        // v13 — lo leído del certificado del servidor en un flujo de TLS ≤ 1.2.
+        m.registerMigration("v13") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "tls_chain_state", .integer)          // 0 entera, 1 parcial, 2 sesión reanudada, 3 sin certificado
+                t.add(column: "tls_chain", .text)                   // JSON; NULL si el estado no es una cadena
+            }
+        }
         return m
     }
 }
@@ -267,6 +275,7 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
     public let sni: String?
     public let resolvedName: ResolvedFlowName?   // `dns_name` / `dns_other_names`
     public let serverTLS: ServerTLSAnswer?       // `tls_version` / `tls_cipher_suite` / `tls_hello_retry` / `tls_upstream` / `tls_alert`
+    public let serverCertificates: ServerCertificateReading?   // `tls_chain_state` / `tls_chain`
     public let clientTLS: ClientTLSOffer?        // las cinco columnas `tls_offered_*`
     public let quic: QUICVersionReading?         // `quic_version` / `quic_from_server`
     public var name: FlowName? { get }           // el nombre con su origen (`data-model.md`)
@@ -392,6 +401,21 @@ introducirá un reloj monotónico cuando lo necesite el código productor (parse
   `quic_from_server` is 1 for a server reading, 0 for a client one. A version of `0`, one out of
   range, or one without its source is a `corruptRow`. There is no "is QUIC" column: `tls_status`
   already says what was concluded from the version.
+- **The certificate chain is tied to the server's answer, not kept on its own** (`v13`,
+  [`relay-and-tls.md`](relay-and-tls.md) § *The certificate chain of TLS ≤ 1.2*). A record that
+  brings **nothing** read from the server — no version, no alert, no chain — keeps the row's
+  chain: it is a flow the in-memory table created again. A record that brings any of them sets the
+  chain to its own, **even when that is none**. Kept separately, a new TLS 1.3 handshake on the
+  same 5-tuple would inherit the previous connection's chain, and the history would say a 1.3 flow
+  presented in the clear a certificate nobody could have seen. `tls_chain_state` is `0` a whole
+  chain, `1` a chain of which only the beginning is kept, `2` a resumed session, `3` a handshake
+  without a certificate, `NULL` no reading — and `NULL` does not say why; that TLS 1.3 encrypts it
+  is derived from `tls_version` (`ServerCertificateVisibility`), not written here. `tls_chain` is a
+  JSON array of `{subject, subjectTruncated, issuer, issuerTruncated, notAfter}` in the order sent,
+  `notAfter` in seconds since 1970. It is JSON, unlike the other lists, because a subject is text
+  the server chooses and may contain anything; it has its own stored type, so renaming a model
+  property does not change what is on disk. An unknown state, a chain state without its JSON, or
+  JSON that does not decode is a `corruptRow`.
 - **Retention:** `prune(before:)` enforces the user's storage cap; the app exposes it in Settings →
   Storage. The cutoff is a `Date` precisely because retention is about *real* age, which a monotonic
   stamp cannot express across a reboot. `ON DELETE CASCADE` removes a flow's packets automatically.
@@ -458,6 +482,12 @@ underneath. Never share a raw `Database` handle across actors — go through the
   `plaintext` and still adds its totals; a row without a version takes its record's status as
   before; a new reading replaces the previous whole; a version without its source is a `corruptRow`;
   and a database stopped at `v11` migrates keeping its flows, without a version.
+- The certificate chain (`v13`): a chain, an incomplete one with truncated names, an empty one and
+  both reasons for none round-trip; names with quotes, backslashes and non-ASCII text come back as
+  written; every flow query returns it, the audit-session one included; a chain that arrives after
+  the answer is added; a record with nothing read from the server keeps it; a new answer without a
+  chain drops it; a new reading replaces it; four shapes of corrupt row; the documented state
+  values, asserted against the column; and a database stopped at `v12` migrates keeping its flows.
 - A flow created again (`v9`): its totals are added to what the row had, later writes of the second
   life are not added twice, a third life builds on both, the SNI survives a life that brings none
   and is replaced by a new one, an inspection outcome is not undone by a starting state and is

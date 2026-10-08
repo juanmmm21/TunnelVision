@@ -1112,6 +1112,129 @@ arrives after a rollback or after the flow is gone is dropped. `TLSInterceptorTe
 `NetworkTLSTerminationEngineTests` — the callback reaches the caller untouched and the upstream leg
 is built with it.
 
+### The certificate chain of TLS ≤ 1.2 ✅
+
+Up to TLS 1.2 the server's `Certificate` message travels **in the clear**, right behind its
+ServerHello and before any key exists. Reading it decrypts nothing, needs no local CA and does not
+touch ADR 0003 — it is the same kind of read as the two hellos. TLS 1.3 encrypts it, so there the
+tool reads nothing **and says so** rather than leaving an empty field.
+
+```swift
+public struct ServerCertificateScanner: Sendable {                         // PacketTunnel/TLS
+    public struct Config { maxChainBytes = 32768; maxCertificates = 8; maxNameLength = 256 }
+    public enum Outcome { case needMoreBytes, found(ServerCertificateReading), unavailable(Reason) }
+    public enum Reason { case notTLSHandshake, alert(description: UInt8), unexpectedMessage(type: UInt8), malformed }
+    public init(resuming: ServerHelloScanner.Remainder, config: Config = Config())
+    public mutating func scan(_ bytes: Data) -> Outcome
+}
+
+public enum ServerCertificateReader {                                      // Shared/TLS
+    public static func certificate(fromDER: ArraySlice<UInt8>, maxNameLength: Int) -> ServerCertificate?
+}
+
+public struct ServerCertificate { subject: CertificateName; issuer: CertificateName; notAfter: Date }   // Shared/Models
+public struct ServerCertificateChain { certificates: [ServerCertificate]; isComplete: Bool }
+public enum ServerCertificateReading { case chain(ServerCertificateChain), notSent(ServerCertificateAbsence) }
+public enum ServerCertificateVisibility {
+    case presented(ServerCertificateChain), notSent(ServerCertificateAbsence)
+    case encryptedInHandshake, replacedByInspection, noNegotiation, notRead
+    public init(answer: ServerTLSAnswer?, reading: ServerCertificateReading?)
+}
+```
+
+What had to be decided:
+
+- **A relay of scanners, not one more state.** `ServerHelloScanner` still settles on the hello and
+  lets go; what it keeps is `remainder` — the handshake bytes and the stream bytes that had already
+  arrived *behind* the ServerHello — and `ServerCertificateScanner` starts from there. They answer
+  different things at different times: the version is reported the moment it is read, and the chain
+  arrives several segments later, or never (a resumed session sends none). One scanner would have
+  to hold the first until it knew about the second. In TLS 1.2 the certificate usually shares the
+  ServerHello's record, so the first `scan` of the second scanner is called with no new bytes and
+  often already has its answer.
+- **Only for a version known to send it in the clear** — `TLSProtocolVersion.sendsCertificateInClear`,
+  SSL 3.0 to TLS 1.2, one tested property. For 1.3, and for a value that is no published version,
+  no scanner is created: it would only see opaque records.
+- **What follows the ServerHello says which handshake this is.** `Certificate` (11) is the chain.
+  A ChangeCipherSpec record, or a `NewSessionTicket` (4), is the **abbreviated handshake**: the
+  session was resumed and the server does not present itself again —
+  `.notSent(.resumedSession)`. A `ServerKeyExchange` (12) or `ServerHelloDone` (14) is a full
+  handshake without a certificate, an anonymous or pre-shared-key suite —
+  `.notSent(.noCertificateMessage)`. Both are readings, and the flow carries them: "no certificate
+  was sent" is a fact about the connection. Message and content types were checked against IANA's
+  *TLS HandshakeType* and *TLS ContentType* registries.
+- **What does not fit is said, and the leaf is not lost with it.** A chain is normally 3–6 KiB. The
+  scanner accumulates at most `maxChainBytes` of the message and **decides when it has that much**,
+  without waiting for a message that declares 16 MiB to finish arriving; it keeps at most
+  `maxCertificates`; and reading **stops at the first certificate that cannot be read** instead of
+  skipping it. So what is kept is always a *prefix* of what was sent — its first element, if there
+  is one, is the server's own — and `isComplete` says whether it is all of it. An empty, incomplete
+  chain means "certificates were sent and none could be read".
+- **A flight that cannot be read is counted, not stored**: an alert after the hello, a message that
+  has no business there, a record or a list whose lengths disagree. The flow keeps its version and
+  gets no certificate reading, the same rule as an unreadable ServerHello.
+- **Three fields, and no validation.** Subject, issuer and `notAfter`, read from the start of the
+  TBSCertificate; the key, the extensions and the signature are not looked at. Nothing checks the
+  signature, the dates, that the chain reaches a root or that the name is the host's. It says "the
+  server presented this", which is all a passive observer can say.
+- **Its own reader, not `SecCertificate`.** On iOS `Security` exposes neither the issuer nor the
+  validity of a certificate, and this runs in the extension on bytes the other end chooses.
+  `DERReader` (single-byte tags, definite lengths, every length checked against what is there) and
+  `ServerCertificateReader` are pure and tested byte by byte, including every truncation of a
+  certificate. The date is computed with integer arithmetic, not `Calendar`.
+- **A name is text the server picks, so it is escaped and bounded.** It is written as RFC 4514
+  (`CN=…,O=…,C=…`, most specific first, the short names of its § 3 table and the dotted OID for
+  anything else). The special characters of § 2.4 get a backslash — a value containing
+  `,O=Trusted Bank` cannot pass for a second attribute — and every character that is not visible
+  (controls, **format characters such as the direction overrides**, line separators, private use,
+  unassigned) is written as `\XX` per UTF-8 byte, so a name cannot break a report's row or read
+  backwards. A value that is not a string, or does not decode, is `#` and the hex of its TLV. Over
+  `maxNameLength` it is cut and **marked** (`CertificateName.isTruncated`), not ended in an ellipsis
+  a reader would have to guess at.
+- **The same seam, a second method** — `ServerTLSObserving.observe(serverCertificates:for:)` —
+  rather than a seam of its own like the client's offer: the same end says it, in the same flight,
+  and it cannot exist without a ServerHello. It is a **separate field** of the flow
+  (`FlowRecord.serverCertificates`) set by its own task, so neither reading waits for the other
+  and the order in which they reach the flow table does not matter.
+- **Never our own termination's certificate.** The scanner lives exactly as long as the ServerHello
+  one would: it is dropped when a termination replaces the flow's connection, and after a rollback
+  the new plain connection is read from its ServerHello on.
+- **Why there is no chain is derived, not stored** — `ServerCertificateVisibility`, which is what a
+  report reads instead of the bare field. A reading, when there is one, wins. Without one: a
+  refusal is `noNegotiation`; an upstream reading is `replacedByInspection` (the certificate the
+  app received was the local CA's leaf); TLS 1.3 from a ServerHello is `encryptedInHandshake`;
+  anything else is `notRead`, including TLS ≤ 1.2 whose flight was cut and a version no one
+  published, which is not assumed to encrypt.
+- **Three counters**, `RelayStats.serverCertificatesObserved`, `…NotSent` and `…Unavailable`.
+  Against `serverHelloObserved` they do **not** say how many are missing: TLS 1.3 flows are never
+  attempted.
+
+**Not read, on purpose:** the upstream leg of an inspected flow. There the tunnel is the TLS
+client and the system would hand over the peer's chain (in 1.3 too), but that is a different
+source answering a different client, as with the version, and it is not part of this increment.
+Nor `notBefore`, the SANs, or a `CertificateStatus`.
+
+**Unproven until a device runs it:** that real TLS 1.2 servers' flights are read (the vectors are
+built with the local CA's own DER writer and by hand, not captured).
+
+**Tests (81 + 8):** `DERReaderTests` (10) — short and long form, a slice inside a larger buffer,
+lengths that declare more than there is, indefinite length, more than four length bytes, high tag
+numbers, truncated headers. `ServerCertificateReaderTests` (27) — the three fields; certificates
+the local CA really issues; a v1 certificate; attribute order, short names and OIDs, multi-valued
+RDNs; five string types; **a value that tries to forge an attribute**, the special characters,
+control and format characters; values that are not text; the name limit; OIDs including a first
+subidentifier of two bytes; both time forms, both centuries of the short one, leap days, what the
+writer writes, nine malformed times; and every truncation of a certificate.
+`ServerCertificateScannerTests` (33) — the chain in the ServerHello's record, in its own, arriving
+later, split across records and at seven chunk sizes; what follows it ignored; the two shapes of a
+resumed session and the certificate-less handshake; alerts, unexpected messages, non-handshake
+records, a ChangeCipherSpec mid-message, lying lengths; an unreadable certificate stopping the
+reading; the count limit, the byte limit, a message that declares 16 MiB; and the hand-over from
+`ServerHelloScanner`. `ServerCertificateVisibilityTests` (11). And in `RelayServerHelloTests` (8):
+the chain from the shared record, the version reported before the chain arrives, nothing read
+after a TLS 1.3 hello, a resumed session, an unreadable flight counted and not reported, once per
+flow, our own termination's certificate never read, and the real server's read after a rollback.
+
 ## Tests
 
 - Leaf minting produces a valid chain under the local CA (verify with `Security`).

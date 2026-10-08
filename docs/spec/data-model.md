@@ -167,9 +167,11 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
     public var sni: String?             // hostname del ClientHello, si se vio
     public var resolvedName: ResolvedFlowName?   // el nombre que el DNS daba a la dirección remota
     public var serverTLS: ServerTLSAnswer?   // lo que el servidor contestó al ClientHello, si se leyó
+    public var serverCertificates: ServerCertificateReading?   // su cadena de certificados (TLS ≤ 1.2), o que no mandó
     public var clientTLS: ClientTLSOffer?    // lo que el cliente ofreció en su ClientHello, si se leyó
     public var quic: QUICVersionReading?     // la versión de QUIC de su cabecera larga, y de qué extremo
     public var name: FlowName? { get }  // el nombre con su origen: el SNI, y si no el resuelto
+    public var certificateVisibility: ServerCertificateVisibility { get }   // qué se sabe del certificado, y por qué no
 }
 
 /// Lo que el servidor contestó al ClientHello de un flujo (`relay-and-tls.md` § *What the server
@@ -265,6 +267,22 @@ a version that is not in it was not offered. `.upTo` is only a maximum: the Clie
 how far below it the client would go, and a reader must not treat it as a list of one. `nil` means
 the offer was not read — the flow was not TLS over TCP/443, or its ClientHello could not be walked
 to the end — and is never an empty offer.
+
+### An empty certificate field is not an answer
+
+`serverCertificates` is what was read behind the ServerHello of a TLS ≤ 1.2 flow
+([`relay-and-tls.md`](relay-and-tls.md) § *The certificate chain of TLS ≤ 1.2*): the chain the
+server presented — a prefix of it, with `isComplete` saying whether it is all of it — or the fact
+that the handshake carried none and why. It is `nil` for every other flow, and `nil` does not say
+why. `certificateVisibility` does, and it is what a report reads: `encryptedInHandshake` for TLS
+1.3 is a property of the protocol and has to be stated as one, not shown as a gap in the tool;
+`replacedByInspection` says the certificate the app saw was the local CA's; `notRead` is the only
+case that means the tool did not get there. It is derived from `serverTLS` and the reading, never
+stored.
+
+What is recorded of a certificate is its subject, its issuer and its expiry, and **nothing is
+validated**. The two names are text chosen by the server: they arrive escaped (RFC 4514) and
+bounded, and one that was cut says so (`CertificateName.isTruncated`).
 
 ## Tests to write (M1)
 
