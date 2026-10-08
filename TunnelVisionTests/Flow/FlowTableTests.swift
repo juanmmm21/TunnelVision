@@ -157,6 +157,42 @@ final class FlowTableTests: XCTestCase {
         XCTAssertEqual(closed.first?.serverTLS, .refused(alert: 70))
     }
 
+    // MARK: - Certificado del servidor
+
+    /// La cadena llega aparte de la versión y no la toca, ni al estado de inspección.
+    func testSetServerCertificatesRecordsTheReadingWithoutChangingTheAnswerOrStatus() async {
+        let table = FlowTable(config: .init(), clock: ManualClock())
+        let packet = FlowFixtures.tcp(source: local(51000), destination: remote(443))
+        _ = await table.observe(packet, direction: .outbound, length: 60, resolvedName: nil, quic: nil)
+        await table.setServerTLS(Self.tls13, for: packet.flowKey)
+
+        await table.setServerCertificates(.notSent(.resumedSession), for: packet.flowKey)
+        let live = await table.observe(packet, direction: .inbound, length: 60, resolvedName: nil, quic: nil)
+
+        XCTAssertEqual(live.record.serverCertificates, .notSent(.resumedSession))
+        XCTAssertEqual(live.record.serverTLS, Self.tls13)
+        XCTAssertEqual(live.record.tlsStatus, .encrypted)
+    }
+
+    func testAFlowStartsWithoutACertificateReading() async {
+        let table = FlowTable(config: .init(), clock: ManualClock())
+        let packet = FlowFixtures.tcp(source: local(51000), destination: remote(443))
+
+        let live = await table.observe(packet, direction: .outbound, length: 60, resolvedName: nil, quic: nil)
+
+        XCTAssertNil(live.record.serverCertificates)
+    }
+
+    func testSetServerCertificatesOnAnUnknownFlowIsANoOp() async {
+        let table = FlowTable(config: .init(), clock: ManualClock())
+        let packet = FlowFixtures.tcp(source: local(51000), destination: remote(443))
+
+        await table.setServerCertificates(.notSent(.noCertificateMessage), for: packet.flowKey)
+
+        let count = await table.count
+        XCTAssertEqual(count, 0)
+    }
+
     // MARK: - Nombre resuelto por DNS
 
     /// El nombre se fija al crear el flujo: el que llega con sus paquetes siguientes no lo cambia.

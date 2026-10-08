@@ -74,6 +74,17 @@ public struct RelayStats: Sendable, Equatable, Codable {
     /// empezaba por un ServerHello, o venía malformado. Los que se cierran antes de que el servidor
     /// diga nada no están en ninguno de los tres.
     public var serverHelloUnavailable: UInt64 = 0
+    /// Flujos de TLS ≤ 1.2 a los que se les leyó la cadena de certificados que el servidor mandó
+    /// en claro detrás de su ServerHello, entera o hasta donde cupo. Contra `serverHelloObserved`
+    /// **no** dice cuántos faltan: los de TLS 1.3 la llevan cifrada y no se intenta.
+    public var serverCertificatesObserved: UInt64 = 0
+    /// Flujos de TLS ≤ 1.2 cuyo handshake siguió sin mensaje `Certificate`: una sesión reanudada
+    /// o una suite sin certificado. Es una lectura, y el flujo se la lleva apuntada.
+    public var serverCertificatesNotSent: UInt64 = 0
+    /// Flujos de TLS ≤ 1.2 en los que lo que venía detrás del ServerHello no se dejó leer: una
+    /// alerta, un mensaje fuera de sitio o uno malformado. Los que se cortan antes no están en
+    /// ninguno de los tres.
+    public var serverCertificatesUnavailable: UInt64 = 0
     /// Terminaciones cuya pata saliente dijo qué negoció con el servidor real: la versión y la
     /// suite de un flujo inspeccionado. Contra `terminationsOpened` dice cuántas llegaron a
     /// completar su TLS de subida; no es `flowsInspected`, porque un cliente que rechaza nuestro

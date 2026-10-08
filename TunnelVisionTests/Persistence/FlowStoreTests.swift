@@ -803,6 +803,251 @@ final class FlowStoreTests: XCTestCase {
         }
     }
 
+    // MARK: - Certificado del servidor
+
+    private static let chainRemote = ModelFixtures.v4(93, 184, 216, 34)
+
+    private static let tls12 = ServerTLSAnswer.negotiated(
+        NegotiatedTLS(version: .tls12, cipherSuite: TLSCipherSuite(rawValue: 0xC02F), fromHelloRetryRequest: false, source: .serverHello)
+    )
+
+    private static func certificate(_ subject: String, truncated: Bool = false) -> ServerCertificate {
+        ServerCertificate(
+            subject: CertificateName(text: subject, isTruncated: truncated),
+            issuer: CertificateName(text: "CN=Example CA,O=Example Trust", isTruncated: false),
+            notAfter: Date(timeIntervalSince1970: 1_893_456_000)
+        )
+    }
+
+    private static let chain = ServerCertificateReading.chain(ServerCertificateChain(
+        certificates: [certificate("CN=www.example.com"), certificate("CN=Example CA,O=Example Trust")],
+        isComplete: true
+    ))
+
+    private func chainFlow(
+        firstSeen: UInt64 = 1,
+        lastSeen: UInt64 = 2,
+        serverTLS: ServerTLSAnswer? = FlowStoreTests.tls12,
+        serverCertificates: ServerCertificateReading?
+    ) -> FlowRecord {
+        PersistenceFixtures.flow(
+            remote: Self.chainRemote, firstSeen: firstSeen, lastSeen: lastSeen,
+            serverTLS: serverTLS, serverCertificates: serverCertificates
+        )
+    }
+
+    private func storeAndReadBack(certificates reading: ServerCertificateReading?) async throws -> StoredFlow {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(chainFlow(serverCertificates: reading))
+        let stored = try await store.flow(id: id)
+        return try XCTUnwrap(stored)
+    }
+
+    func testAChainRoundTrips() async throws {
+        let flow = try await storeAndReadBack(certificates: Self.chain)
+        XCTAssertEqual(flow.serverCertificates, Self.chain)
+        XCTAssertEqual(flow.certificateVisibility, ServerCertificateVisibility(answer: Self.tls12, reading: Self.chain))
+    }
+
+    func testAnIncompleteChainAndItsTruncatedNamesRoundTrip() async throws {
+        let reading = ServerCertificateReading.chain(ServerCertificateChain(
+            certificates: [Self.certificate("CN=aaaa", truncated: true)], isComplete: false
+        ))
+        let flow = try await storeAndReadBack(certificates: reading)
+        XCTAssertEqual(flow.serverCertificates, reading)
+    }
+
+    /// «Mandó certificados y no se leyó ninguno» no es lo mismo que no tener lectura.
+    func testAnEmptyChainIsStillAReading() async throws {
+        for isComplete in [true, false] {
+            let reading = ServerCertificateReading.chain(ServerCertificateChain(certificates: [], isComplete: isComplete))
+            let flow = try await storeAndReadBack(certificates: reading)
+            XCTAssertEqual(flow.serverCertificates, reading)
+        }
+    }
+
+    /// Un sujeto es texto del servidor: comillas, barras, saltos escapados y lo que no es ASCII
+    /// vuelven tal cual.
+    func testNamesWithAnyTextRoundTrip() async throws {
+        let reading = ServerCertificateReading.chain(ServerCertificateChain(
+            certificates: [Self.certificate("CN=Müller \\\"GmbH\\\"\\0A,O=日本 [1] {a: 'b'}")], isComplete: true
+        ))
+        let flow = try await storeAndReadBack(certificates: reading)
+        XCTAssertEqual(flow.serverCertificates, reading)
+    }
+
+    func testAHandshakeWithoutCertificateRoundTripsWithItsReason() async throws {
+        for absence in [ServerCertificateAbsence.resumedSession, .noCertificateMessage] {
+            let flow = try await storeAndReadBack(certificates: .notSent(absence))
+            XCTAssertEqual(flow.serverCertificates, .notSent(absence))
+        }
+    }
+
+    func testAFlowWithoutACertificateReadingReadsBackWithoutOne() async throws {
+        let flow = try await storeAndReadBack(certificates: nil)
+        XCTAssertNil(flow.serverCertificates)
+        XCTAssertEqual(flow.certificateVisibility, .notRead)
+    }
+
+    func testEveryFlowQueryReturnsTheCertificateReading() async throws {
+        let store = try makeStore()
+        let project = try await store.createAuditProject(
+            AuditProjectDraft(name: "Example Health", bundleIdentifier: nil, catalogueVersion: nil, allowlist: []),
+            at: PersistenceFixtures.date(0)
+        )
+        let session = try await store.startAuditSession(
+            AuditSessionDraft(
+                projectID: project.id,
+                kind: .baseline,
+                environment: AuditEnvironment(deviceModel: "iPhone18,3", osVersion: "27.0", toolVersion: "1.0.0 (1)"),
+                inspection: InspectionConditions(inspectionEnabled: false, caTrusted: false),
+                notes: ""
+            ),
+            at: PersistenceFixtures.date(0)
+        )
+        let record = chainFlow(serverCertificates: Self.chain)
+
+        let id = try await store.upsertFlow(record)
+
+        let byID = try await store.flow(id: id)
+        let byKey = try await store.flow(matching: record.key)
+        let recent = try await store.recentFlows(limit: 10)
+        let inSession = try await store.flows(inAuditSession: session.id, limit: 10)
+        XCTAssertEqual(byID?.serverCertificates, Self.chain)
+        XCTAssertEqual(byKey?.serverCertificates, Self.chain)
+        XCTAssertEqual(recent.map(\.serverCertificates), [Self.chain])
+        XCTAssertEqual(inSession.map(\.serverCertificates), [Self.chain])
+    }
+
+    /// La cadena llega después que la versión: el volcado que la trae la añade a la fila.
+    func testAChainThatArrivesAfterTheAnswerIsAdded() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(chainFlow(serverCertificates: nil))
+        _ = try await store.upsertFlow(chainFlow(lastSeen: 5, serverCertificates: Self.chain))
+
+        let stored = try await store.flow(id: id)
+        XCTAssertEqual(stored?.serverCertificates, Self.chain)
+        XCTAssertEqual(stored?.serverTLS, Self.tls12)
+    }
+
+    /// Un flujo que la tabla en memoria vuelve a crear llega sin nada leído del servidor, y eso
+    /// no borra ni la respuesta ni la cadena que la fila ya tenía.
+    func testARecordWithNothingReadFromTheServerKeepsTheChain() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(chainFlow(serverCertificates: Self.chain))
+        _ = try await store.upsertFlow(chainFlow(firstSeen: 200, lastSeen: 209, serverTLS: nil, serverCertificates: nil))
+
+        let stored = try await store.flow(id: id)
+        XCTAssertEqual(stored?.serverCertificates, Self.chain)
+        XCTAssertEqual(stored?.serverTLS, Self.tls12)
+    }
+
+    /// Un handshake nuevo sobre la misma 5-tupla trae su respuesta: la cadena del anterior no es
+    /// suya. Sin esto un flujo TLS 1.3 heredaría un certificado «presentado en claro».
+    func testANewAnswerWithoutAChainDropsThePreviousChain() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(chainFlow(serverCertificates: Self.chain))
+        _ = try await store.upsertFlow(
+            chainFlow(firstSeen: 200, lastSeen: 209, serverTLS: Self.tls13, serverCertificates: nil)
+        )
+
+        let stored = try await store.flow(id: id)
+        XCTAssertNil(stored?.serverCertificates)
+        XCTAssertEqual(stored?.certificateVisibility, .encryptedInHandshake)
+    }
+
+    func testANewReadingReplacesThePreviousOne() async throws {
+        let store = try makeStore()
+        let id = try await store.upsertFlow(chainFlow(serverCertificates: Self.chain))
+        _ = try await store.upsertFlow(
+            chainFlow(firstSeen: 200, lastSeen: 209, serverCertificates: .notSent(.resumedSession))
+        )
+
+        let stored = try await store.flow(id: id)
+        XCTAssertEqual(stored?.serverCertificates, .notSent(.resumedSession))
+    }
+
+    /// Lo que este store no escribe no se interpreta: se dice.
+    func testChainColumnsThisStoreDoesNotWriteAreACorruptRow() async throws {
+        let corruptions = [
+            "tls_chain_state = 9",
+            "tls_chain = NULL",
+            "tls_chain = 'no es json'",
+            "tls_chain = '[{\"subject\": \"CN=x\"}]'",
+        ]
+        for corruption in corruptions {
+            let store = try makeStore()
+            let id = try await store.upsertFlow(chainFlow(serverCertificates: Self.chain))
+            let raw = try DatabaseQueue(path: dbURL.path)
+            try await raw.write { db in
+                try db.execute(sql: "UPDATE flows SET \(corruption) WHERE id = ?", arguments: [id])
+            }
+            try raw.close()
+
+            do {
+                _ = try await store.flow(id: id)
+                XCTFail("tenía que rechazarse: \(corruption)")
+            } catch FlowStore.StoreError.corruptRow {
+                // Lo esperado.
+            }
+        }
+    }
+
+    /// Los valores de `tls_chain_state` son formato de disco: se afirman contra la columna.
+    func testTheChainStateIsWrittenWithItsDocumentedValues() async throws {
+        let cases: [(ServerCertificateReading, Int)] = [
+            (Self.chain, 0),
+            (.chain(ServerCertificateChain(certificates: [], isComplete: false)), 1),
+            (.notSent(.resumedSession), 2),
+            (.notSent(.noCertificateMessage), 3),
+        ]
+        for (reading, expected) in cases {
+            let store = try makeStore()
+            let id = try await store.upsertFlow(chainFlow(serverCertificates: reading))
+            let raw = try DatabaseQueue(path: dbURL.path)
+            let row = try await raw.read { db in
+                try Row.fetchOne(db, sql: "SELECT tls_chain_state, tls_chain FROM flows WHERE id = ?", arguments: [id])
+            }
+            try raw.close()
+
+            XCTAssertEqual(row?["tls_chain_state"] as Int?, expected)
+            if case .notSent = reading {
+                XCTAssertNil(row?["tls_chain"] as String?)
+            } else {
+                XCTAssertNotNil(row?["tls_chain"] as String?)
+            }
+        }
+    }
+
+    /// La v13 no toca filas: un flujo de antes se lee sin cadena y con la respuesta que tenía.
+    func testMigrationV13LeavesEarlierFlowsWithoutACertificateReading() async throws {
+        let legacy = try DatabaseQueue(path: dbURL.path)
+        try Schema.migrator().migrate(legacy, upTo: "v12")
+        try await legacy.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO flows
+                    (session, proto, addr_a, port_a, addr_b, port_b,
+                     first_seen, last_seen, bytes_out, bytes_in, packet_count, tls_status,
+                     tls_version, tls_cipher_suite)
+                VALUES (0, 6, ?, 51000, ?, 443, 100, 200, 0, 0, 1, 1, 771, 49199)
+                """,
+                arguments: [
+                    Data(PersistenceFixtures.deviceIP.bytes),
+                    Data(ModelFixtures.v4(1, 1, 1, 1).bytes),
+                ]
+            )
+        }
+        try legacy.close()
+
+        let store = try makeStore()
+        let flows = try await store.recentFlows(limit: 10)
+        let flow = try XCTUnwrap(flows.first)
+        XCTAssertNil(flow.serverCertificates)
+        XCTAssertEqual(flow.serverTLS, Self.tls12)
+        XCTAssertEqual(flow.certificateVisibility, .notRead)
+    }
+
     /// La v12 no toca filas: un flujo UDP de antes se lee sin versión y con el estado que tenía.
     func testMigrationV12LeavesEarlierFlowsWithoutAQUICVersion() async throws {
         let legacy = try DatabaseQueue(path: dbURL.path)

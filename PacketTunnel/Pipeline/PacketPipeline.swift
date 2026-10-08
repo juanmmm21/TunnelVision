@@ -507,6 +507,12 @@ public actor PacketPipeline {
         await flowTable.setServerTLS(serverTLS, for: key)
     }
 
+    /// Anota la cadena de certificados que el servidor presentó —o que no presentó ninguna y por
+    /// qué—, leída detrás del ServerHello en un flujo de TLS ≤ 1.2.
+    public func observe(serverCertificates: ServerCertificateReading, for key: FlowKey) async {
+        await flowTable.setServerCertificates(serverCertificates, for: key)
+    }
+
     // MARK: - Desenlace de la inspección de un flujo
 
     /// Anota cómo acabó el intento de inspeccionar un flujo: `inspected` si se descifró de punta a

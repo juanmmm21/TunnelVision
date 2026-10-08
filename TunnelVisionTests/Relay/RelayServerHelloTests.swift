@@ -406,6 +406,153 @@ final class RelayServerHelloTests: XCTestCase {
             ))
         )
     }
+
+    // MARK: - La cadena de certificados (TLS ≤ 1.2)
+
+    private static let certificateMessage = CertificateFixtures.certificateMessage(
+        [CertificateFixtures.leaf, CertificateFixtures.intermediate]
+    )
+    private static let readChain = ServerCertificateReading.chain(ServerCertificateChain(
+        certificates: [CertificateFixtures.readLeaf, CertificateFixtures.readIntermediate], isComplete: true
+    ))
+
+    /// El caso normal de TLS 1.2: ServerHello y Certificate en el mismo record. Salen las dos
+    /// lecturas, cada una por su lado.
+    func testReadsTheChainThatSharesTheRecordWithTheServerHello() async throws {
+        let h = makeHarness()
+        await establish(h)
+
+        h.factory.tcpConnections[0].fireReceive(Data(CertificateFixtures.record(
+            CertificateFixtures.serverHelloMessage() + Self.certificateMessage
+        )))
+
+        let answer = await h.observer.next()
+        let certificates = await h.observer.nextCertificates()
+        guard case .negotiated(let negotiated) = answer.answer else {
+            return XCTFail("se esperaba una negociación, llegó \(answer.answer)")
+        }
+        XCTAssertEqual(negotiated.version, .tls12)
+        XCTAssertEqual(certificates.key, flowKey())
+        XCTAssertEqual(certificates.reading, Self.readChain)
+        let stats = await h.relay.stats
+        XCTAssertEqual(stats.serverCertificatesObserved, 1)
+        XCTAssertEqual(stats.serverCertificatesNotSent, 0)
+        XCTAssertEqual(stats.serverCertificatesUnavailable, 0)
+    }
+
+    /// La versión no espera a la cadena: se cuenta en cuanto se lee el ServerHello, y la cadena
+    /// llega con los trozos siguientes del stream.
+    func testTheVersionIsReportedBeforeTheChainArrives() async throws {
+        let h = makeHarness()
+        await establish(h)
+        let message = Self.certificateMessage
+        let cut = message.count / 2
+
+        h.factory.tcpConnections[0].fireReceive(ServerHelloFixtures.tls12())
+        _ = await h.observer.next()
+        h.factory.tcpConnections[0].fireReceive(Data(CertificateFixtures.record(Array(message[..<cut]))))
+        try await waitForServerData(h, chunks: 2)
+        let early = await h.relay.stats
+        XCTAssertEqual(early.serverCertificatesObserved, 0, "con media cadena todavía no hay lectura")
+
+        h.factory.tcpConnections[0].fireReceive(Data(CertificateFixtures.record(Array(message[cut...]))))
+
+        let certificates = await h.observer.nextCertificates()
+        XCTAssertEqual(certificates.reading, Self.readChain)
+    }
+
+    /// En TLS 1.3 el certificado va cifrado: no se intenta leer, y lo que sigue al ServerHello
+    /// —aunque tenga forma de mensaje Certificate— no se mira.
+    func testNothingIsReadAfterATLS13ServerHello() async throws {
+        let h = makeHarness()
+        await establish(h)
+
+        h.factory.tcpConnections[0].fireReceive(ServerHelloFixtures.tls13())
+        _ = await h.observer.next()
+        h.factory.tcpConnections[0].fireReceive(Data(CertificateFixtures.record(Self.certificateMessage)))
+        try await waitForServerData(h, chunks: 2)
+
+        let stats = await h.relay.stats
+        XCTAssertEqual(stats.serverCertificatesObserved, 0)
+        XCTAssertEqual(stats.serverCertificatesNotSent, 0)
+        XCTAssertEqual(stats.serverCertificatesUnavailable, 0)
+        let pending = await h.observer.certificateReadings
+        XCTAssertEqual(pending, [])
+    }
+
+    func testAResumedSessionIsReportedAsNoCertificateSent() async throws {
+        let h = makeHarness()
+        await establish(h)
+
+        h.factory.tcpConnections[0].fireReceive(ServerHelloFixtures.tls12() + Data(CertificateFixtures.changeCipherSpec))
+
+        let certificates = await h.observer.nextCertificates()
+        XCTAssertEqual(certificates.reading, .notSent(.resumedSession))
+        let stats = await h.relay.stats
+        XCTAssertEqual(stats.serverCertificatesNotSent, 1)
+        XCTAssertEqual(stats.serverCertificatesObserved, 0)
+    }
+
+    /// Lo que no se deja leer se cuenta, y al flujo no se le apunta nada: se queda con su versión.
+    func testAnUnreadableFlightIsCountedAndNotReported() async throws {
+        let h = makeHarness()
+        await establish(h)
+
+        h.factory.tcpConnections[0].fireReceive(ServerHelloFixtures.tls12() + ServerHelloFixtures.alert(description: 40))
+        _ = await h.observer.next()
+        try await waitUntil("vuelo ilegible contado") { await h.relay.stats.serverCertificatesUnavailable == 1 }
+
+        let pending = await h.observer.certificateReadings
+        XCTAssertEqual(pending, [])
+    }
+
+    func testTheChainIsReportedOnlyOncePerFlow() async throws {
+        let h = makeHarness()
+        await establish(h)
+        let flight = Data(CertificateFixtures.record(CertificateFixtures.serverHelloMessage() + Self.certificateMessage))
+
+        h.factory.tcpConnections[0].fireReceive(flight)
+        _ = await h.observer.nextCertificates()
+        h.factory.tcpConnections[0].fireReceive(Data(CertificateFixtures.record(Self.certificateMessage)))
+        try await waitForServerData(h, chunks: 2)
+
+        let stats = await h.relay.stats
+        XCTAssertEqual(stats.serverCertificatesObserved, 1)
+        let pending = await h.observer.certificateReadings
+        XCTAssertEqual(pending, [])
+    }
+
+    /// El certificado que nuestra terminación le presenta al dispositivo es el de la CA local:
+    /// leerlo sería apuntarle al servidor un certificado que no es suyo.
+    func testTheCertificateOfOurOwnTerminationIsNeverRead() async throws {
+        let h = makeHarness(inspecting: true)
+        try await terminate(h)
+
+        h.inspector.openedTerminations[0].fireReceive(Data(CertificateFixtures.record(
+            CertificateFixtures.serverHelloMessage() + Self.certificateMessage
+        )))
+        try await waitForServerData(h, chunks: 1)
+
+        let stats = await h.relay.stats
+        XCTAssertEqual(stats.serverCertificatesObserved, 0)
+        let pending = await h.observer.certificateReadings
+        XCTAssertEqual(pending, [])
+    }
+
+    /// Tras un rollback la conexión llana nueva sí es la del servidor: su cadena se lee.
+    func testAfterARollbackTheRealServersChainIsRead() async throws {
+        let h = makeHarness(inspecting: true)
+        try await terminate(h)
+        h.inspector.openedTerminations[0].fireClose(RelayConnectionError("la pila no levantó"))
+        try await waitUntil("terminación deshecha") { await h.relay.stats.terminationsRolledBack == 1 }
+
+        h.factory.tcpConnections[1].fireReceive(Data(CertificateFixtures.record(
+            CertificateFixtures.serverHelloMessage() + Self.certificateMessage
+        )))
+
+        let certificates = await h.observer.nextCertificates()
+        XCTAssertEqual(certificates.reading, Self.readChain)
+    }
 }
 
 /// Observador doble: recoge lo que el relay lee del ServerHello. `next()` suspende hasta que llega
@@ -427,6 +574,31 @@ actor RecordingServerTLSObserver: ServerTLSObserving {
             waiters.removeFirst().resume(returning: observed)
         }
     }
+
+    struct ObservedCertificates: Sendable, Equatable {
+        let reading: ServerCertificateReading
+        let key: FlowKey
+    }
+
+    private var certificateBuffer: [ObservedCertificates] = []
+    private var certificateWaiters: [CheckedContinuation<ObservedCertificates, Never>] = []
+
+    func observe(serverCertificates: ServerCertificateReading, for key: FlowKey) async {
+        let observed = ObservedCertificates(reading: serverCertificates, key: key)
+        if certificateWaiters.isEmpty {
+            certificateBuffer.append(observed)
+        } else {
+            certificateWaiters.removeFirst().resume(returning: observed)
+        }
+    }
+
+    /// La siguiente lectura de certificados, suspendiendo hasta que llegue.
+    func nextCertificates() async -> ObservedCertificates {
+        if !certificateBuffer.isEmpty { return certificateBuffer.removeFirst() }
+        return await withCheckedContinuation { certificateWaiters.append($0) }
+    }
+
+    var certificateReadings: [ObservedCertificates] { certificateBuffer }
 
     func next() async -> Observed {
         if !buffer.isEmpty {

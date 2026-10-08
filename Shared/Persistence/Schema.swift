@@ -348,6 +348,26 @@ public enum Schema {
             }
         }
 
+        // v13 — lo que se leyó del certificado del servidor en un flujo de TLS ≤ 1.2, que lo
+        // manda en claro detrás del ServerHello.
+        //
+        // `tls_chain_state` dice qué se leyó (`FlowStore.Serialization.ChainState`): una cadena
+        // entera, una cadena de la que solo se guarda el principio, o que el handshake siguió
+        // sin certificado y por qué. `NULL` es que no hubo lectura, **y no dice el motivo**: que
+        // un flujo de TLS 1.3 la lleva cifrada se deduce de `tls_version`, no se apunta aquí.
+        //
+        // `tls_chain` son los certificados, en el orden en que se mandaron, como un array JSON
+        // de `{subject, subjectTruncated, issuer, issuerTruncated, notAfter}` (`notAfter` en
+        // segundos desde 1970). Es JSON y no una lista separada por espacios como las demás
+        // porque un sujeto es texto que elige el servidor y puede llevar cualquier carácter.
+        // `NULL` cuando el estado no es una cadena.
+        migrator.registerMigration("v13") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "tls_chain_state", .integer)
+                t.add(column: "tls_chain", .text)
+            }
+        }
+
         return migrator
     }
 }

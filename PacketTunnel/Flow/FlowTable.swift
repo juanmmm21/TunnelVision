@@ -136,6 +136,13 @@ public actor FlowTable {
         nodes[key]?.serverTLS = answer
     }
 
+    /// Anota lo que se leyó, detrás del ServerHello, del certificado del servidor: su cadena, o
+    /// que el handshake no llevaba ninguna (`Relay.readServerCertificates`). No-op si el flujo ya
+    /// no está en la tabla. Va aparte de `setServerTLS` porque llega después y puede no llegar.
+    public func setServerCertificates(_ reading: ServerCertificateReading, for key: FlowKey) {
+        nodes[key]?.serverCertificates = reading
+    }
+
     /// El agregado actual de un flujo vivo, o `nil` si la tabla ya no lo tiene.
     ///
     /// Existe para el contenido descifrado: un trozo llega del relay con la `FlowKey` y sin paquete
@@ -295,6 +302,7 @@ public actor FlowTable {
         var sni: String?
         let resolvedName: ResolvedFlowName?
         var serverTLS: ServerTLSAnswer?
+        var serverCertificates: ServerCertificateReading?
         var clientTLS: ClientTLSOffer?
         var quic: QUICVersionReading?
         var reassembler: TCPReassembler?
@@ -324,6 +332,7 @@ public actor FlowTable {
             self.sni = nil
             self.resolvedName = resolvedName
             self.serverTLS = nil
+            self.serverCertificates = nil
             self.clientTLS = nil
             self.quic = nil
             self.reassembler = nil
@@ -347,6 +356,7 @@ public actor FlowTable {
                 sni: sni,
                 resolvedName: resolvedName,
                 serverTLS: serverTLS,
+                serverCertificates: serverCertificates,
                 clientTLS: clientTLS,
                 quic: quic
             )

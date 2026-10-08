@@ -88,6 +88,11 @@ public actor FlowStore {
     private static let recordHasNoOffer =
         "excluded.tls_offered_versions IS NULL AND excluded.tls_offered_legacy IS NULL"
 
+    /// La condición de SQL con la que el upsert reconoce un record que no trae **nada** leído del
+    /// servidor: ni respuesta (versión o alerta) ni cadena de certificados.
+    private static let recordHasNoServerReading =
+        "excluded.tls_version IS NULL AND excluded.tls_alert IS NULL AND excluded.tls_chain_state IS NULL"
+
     /// Inserta el flujo o, si ya existe (misma 5-tupla canónica **en esta sesión**), actualiza su
     /// estado agregado. Devuelve el `rowid` del flujo, con el que enlazar sus paquetes.
     ///
@@ -131,6 +136,13 @@ public actor FlowStore {
     /// que es QUIC; sin esto, el flujo más largo de una sesión —un vídeo— acabaría rotulado «sin
     /// cifrar» en cuanto la tabla lo desalojara una vez.
     ///
+    /// La **cadena de certificados** va atada a la respuesta del servidor, no suelta: un record
+    /// que no trae ninguna de las dos conserva la de la fila (es un flujo que la tabla volvió a
+    /// crear), y uno que trae cualquiera de ellas fija la cadena a la suya **aunque sea ninguna**.
+    /// Si se conservara por separado, un handshake nuevo de TLS 1.3 sobre la misma 5-tupla
+    /// heredaría la cadena del anterior, y el historial diría que un flujo 1.3 presentó en claro
+    /// un certificado que nadie pudo ver.
+    ///
     /// Si hay una **sesión de auditoría abierta**, el flujo queda etiquetado con ella. La sesión se
     /// lee de la propia BD en la misma sentencia, así que la extensión no necesita que nadie le avise
     /// de que la app abrió una: la BD compartida ya es ese aviso. Un flujo que venía de antes y sigue
@@ -146,6 +158,7 @@ public actor FlowStore {
         let tls = Serialization.serverTLSColumns(record.serverTLS)
         let offer = Serialization.clientTLSColumns(record.clientTLS)
         let quic = Serialization.quicColumns(record.quic)
+        let chain = try Serialization.serverCertificateColumns(record.serverCertificates)
         return try dbPool.write { db in
             try db.execute(
                 sql: """
@@ -157,8 +170,9 @@ public actor FlowStore {
                      tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
                      tls_offered_alpn_omitted, tls_offered_ech,
                      quic_version, quic_from_server,
+                     tls_chain_state, tls_chain,
                      audit_session_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         (SELECT id FROM audit_sessions WHERE ended_at IS NULL))
                 ON CONFLICT (session, proto, addr_a, port_a, addr_b, port_b) DO UPDATE SET
                     last_seen = excluded.last_seen,
@@ -206,6 +220,10 @@ public actor FlowStore {
                     quic_version = COALESCE(excluded.quic_version, flows.quic_version),
                     quic_from_server = CASE WHEN excluded.quic_version IS NULL
                         THEN flows.quic_from_server ELSE excluded.quic_from_server END,
+                    tls_chain_state = CASE WHEN \(Self.recordHasNoServerReading)
+                        THEN flows.tls_chain_state ELSE excluded.tls_chain_state END,
+                    tls_chain = CASE WHEN \(Self.recordHasNoServerReading)
+                        THEN flows.tls_chain ELSE excluded.tls_chain END,
                     first_seen = min(flows.first_seen, excluded.first_seen),
                     audit_session_id = COALESCE(flows.audit_session_id, excluded.audit_session_id)
                 """,
@@ -224,6 +242,7 @@ public actor FlowStore {
                     offer.versions, offer.legacyVersion, offer.applicationProtocols,
                     offer.omittedApplicationProtocols, offer.encryptedClientHello,
                     quic.version, quic.fromServer,
+                    chain.state, chain.certificates,
                 ]
             )
             // El UPSERT pudo ser INSERT o UPDATE; `lastInsertedRowID` solo vale para INSERT, así
@@ -323,7 +342,8 @@ public actor FlowStore {
                    tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
                    tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
                    tls_offered_alpn_omitted, tls_offered_ech,
-                   quic_version, quic_from_server
+                   quic_version, quic_from_server,
+                   tls_chain_state, tls_chain
             FROM flows
             """
             var arguments: [DatabaseValueConvertible] = []
@@ -377,7 +397,8 @@ public actor FlowStore {
                        tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
                        tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
                        tls_offered_alpn_omitted, tls_offered_ech,
-                       quic_version, quic_from_server
+                       quic_version, quic_from_server,
+                       tls_chain_state, tls_chain
                 FROM flows
                 WHERE proto = ? AND addr_a = ? AND port_a = ? AND addr_b = ? AND port_b = ?
                 ORDER BY last_seen DESC, id DESC
@@ -410,7 +431,8 @@ public actor FlowStore {
                        tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
                        tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
                        tls_offered_alpn_omitted, tls_offered_ech,
-                       quic_version, quic_from_server
+                       quic_version, quic_from_server,
+                       tls_chain_state, tls_chain
                 FROM flows
                 WHERE id = ?
                 """,
@@ -436,7 +458,8 @@ public actor FlowStore {
                        tls_version, tls_cipher_suite, tls_hello_retry, tls_upstream, tls_alert,
                        tls_offered_versions, tls_offered_legacy, tls_offered_alpn,
                        tls_offered_alpn_omitted, tls_offered_ech,
-                       quic_version, quic_from_server
+                       quic_version, quic_from_server,
+                       tls_chain_state, tls_chain
                 FROM flows
                 WHERE audit_session_id = ?
                 ORDER BY first_seen ASC, id ASC
@@ -898,6 +921,9 @@ private enum Serialization {
                 upstream: row["tls_upstream"],
                 alert: row["tls_alert"]
             ),
+            serverCertificates: try serverCertificates(
+                state: row["tls_chain_state"], certificates: row["tls_chain"]
+            ),
             clientTLS: try clientTLS(
                 versions: row["tls_offered_versions"],
                 legacyVersion: row["tls_offered_legacy"],
@@ -907,6 +933,94 @@ private enum Serialization {
             ),
             quic: try quic(version: row["quic_version"], fromServer: row["quic_from_server"])
         )
+    }
+
+    /// Lo que guarda `tls_chain_state`. Los valores son formato de disco: no se renumeran.
+    enum ChainState: Int {
+        case completeChain = 0
+        case partialChain = 1
+        case resumedSession = 2
+        case noCertificateMessage = 3
+    }
+
+    /// Un certificado tal y como va dentro del JSON de `tls_chain`. Es un tipo propio, y no el
+    /// `Codable` de `ServerCertificate`, para que renombrar una propiedad del modelo no cambie lo
+    /// que hay escrito en disco.
+    private struct StoredCertificate: Codable {
+        let subject: String
+        let subjectTruncated: Bool
+        let issuer: String
+        let issuerTruncated: Bool
+        let notAfter: Int64
+    }
+
+    /// Las dos columnas de la cadena de certificados, tal y como van a la fila.
+    struct ServerCertificateColumns {
+        let state: Int?
+        let certificates: String?
+    }
+
+    static func serverCertificateColumns(_ reading: ServerCertificateReading?) throws -> ServerCertificateColumns {
+        switch reading {
+        case nil:
+            return ServerCertificateColumns(state: nil, certificates: nil)
+        case .notSent(.resumedSession):
+            return ServerCertificateColumns(state: ChainState.resumedSession.rawValue, certificates: nil)
+        case .notSent(.noCertificateMessage):
+            return ServerCertificateColumns(state: ChainState.noCertificateMessage.rawValue, certificates: nil)
+        case .chain(let chain):
+            let stored = chain.certificates.map { certificate in
+                StoredCertificate(
+                    subject: certificate.subject.text,
+                    subjectTruncated: certificate.subject.isTruncated,
+                    issuer: certificate.issuer.text,
+                    issuerTruncated: certificate.issuer.isTruncated,
+                    notAfter: Int64(certificate.notAfter.timeIntervalSince1970.rounded(.down))
+                )
+            }
+            let encoder = JSONEncoder()
+            // Orden fijo de claves: la misma cadena se escribe siempre con los mismos bytes.
+            encoder.outputFormatting = [.sortedKeys]
+            let json = String(decoding: try encoder.encode(stored), as: UTF8.self)
+            let state: ChainState = chain.isComplete ? .completeChain : .partialChain
+            return ServerCertificateColumns(state: state.rawValue, certificates: json)
+        }
+    }
+
+    /// Un estado de cadena sin su JSON —o uno que no se deja decodificar— no lo escribe este
+    /// store: es una fila corrupta y se dice. Los certificados sin estado no significan nada y se
+    /// ignoran, igual que el extremo de una versión de QUIC que no está.
+    static func serverCertificates(state: Int?, certificates: String?) throws -> ServerCertificateReading? {
+        guard let state else { return nil }
+        guard let kind = ChainState(rawValue: state) else {
+            throw FlowStore.StoreError.corruptRow("estado de la cadena de certificados desconocido: \(state)")
+        }
+        let isComplete: Bool
+        switch kind {
+        case .resumedSession: return .notSent(.resumedSession)
+        case .noCertificateMessage: return .notSent(.noCertificateMessage)
+        case .completeChain: isComplete = true
+        case .partialChain: isComplete = false
+        }
+        guard let certificates else {
+            throw FlowStore.StoreError.corruptRow("cadena de certificados sin sus certificados")
+        }
+        let stored: [StoredCertificate]
+        do {
+            stored = try JSONDecoder().decode([StoredCertificate].self, from: Data(certificates.utf8))
+        } catch {
+            throw FlowStore.StoreError.corruptRow("cadena de certificados ilegible: \(error)")
+        }
+        return .chain(ServerCertificateChain(
+            certificates: stored.map { certificate in
+                ServerCertificate(
+                    subject: CertificateName(text: certificate.subject, isTruncated: certificate.subjectTruncated),
+                    issuer: CertificateName(text: certificate.issuer, isTruncated: certificate.issuerTruncated),
+                    notAfter: Date(timeIntervalSince1970: TimeInterval(certificate.notAfter))
+                )
+            },
+            isComplete: isComplete
+        ))
     }
 
     /// Las dos columnas de la versión de QUIC, tal y como van a la fila.

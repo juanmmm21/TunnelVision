@@ -53,6 +53,11 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
     /// no se dejó leer, o la respuesta aún no ha llegado.
     public var serverTLS: ServerTLSAnswer?
 
+    /// Lo que se leyó, detrás del ServerHello, del certificado del servidor: su cadena, o que el
+    /// handshake no llevaba ninguna. Solo existe en TLS ≤ 1.2 leído en claro; `nil` **no** dice
+    /// por qué no hay lectura —eso lo contesta `certificateVisibility`—.
+    public var serverCertificates: ServerCertificateReading?
+
     /// Lo que el cliente ofreció en su ClientHello —versiones de TLS y ALPN—. `nil` si no hubo
     /// lectura: el flujo no era TLS sobre TCP/443, o su ClientHello no se dejó recorrer entero.
     /// Es de la app también en un flujo inspeccionado, al revés que `serverTLS`.
@@ -75,6 +80,7 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
         sni: String?,
         resolvedName: ResolvedFlowName?,
         serverTLS: ServerTLSAnswer?,
+        serverCertificates: ServerCertificateReading?,
         clientTLS: ClientTLSOffer?,
         quic: QUICVersionReading?
     ) {
@@ -89,10 +95,16 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
         self.sni = sni
         self.resolvedName = resolvedName
         self.serverTLS = serverTLS
+        self.serverCertificates = serverCertificates
         self.clientTLS = clientTLS
         self.quic = quic
     }
 
     /// El nombre del flujo con su origen: el SNI si lo anunció, y si no el que se dedujo del DNS.
     public var name: FlowName? { FlowName(sni: sni, resolved: resolvedName) }
+
+    /// Qué se sabe del certificado del servidor, con el motivo cuando no se sabe.
+    public var certificateVisibility: ServerCertificateVisibility {
+        ServerCertificateVisibility(answer: serverTLS, reading: serverCertificates)
+    }
 }

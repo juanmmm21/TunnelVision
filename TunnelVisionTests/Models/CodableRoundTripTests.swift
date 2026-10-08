@@ -70,6 +70,7 @@ final class CodableRoundTripTests: XCTestCase {
             sni: "example.com",
             resolvedName: nil,
             serverTLS: nil,
+            serverCertificates: nil,
             clientTLS: nil,
             quic: nil
         )
@@ -88,6 +89,7 @@ final class CodableRoundTripTests: XCTestCase {
             sni: nil,
             resolvedName: nil,
             serverTLS: nil,
+            serverCertificates: nil,
             clientTLS: nil,
             quic: nil
         )
@@ -106,6 +108,7 @@ final class CodableRoundTripTests: XCTestCase {
             sni: nil,
             resolvedName: ResolvedFlowName(name: "api.example.com", otherNames: ["cdn.example.net"]),
             serverTLS: nil,
+            serverCertificates: nil,
             clientTLS: nil,
             quic: nil
         )

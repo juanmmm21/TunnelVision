@@ -613,6 +613,34 @@ final class PacketPipelineTests: XCTestCase {
         XCTAssertEqual(record?.tlsStatus, .encrypted)
     }
 
+    /// La cadena de certificados llega por la misma costura que la versión y acaba en el
+    /// historial junto a ella, sin pisarla.
+    func testObservedServerCertificatesReachTheStore() async {
+        let h = makeHarness(batchSize: 1_000, flushInterval: .max)
+        let key = PipelineFixtures.tcpV4Key()
+        let answer = ServerTLSAnswer.negotiated(
+            NegotiatedTLS(version: .tls12, cipherSuite: TLSCipherSuite(rawValue: 0xC02F), fromHelloRetryRequest: false, source: .serverHello)
+        )
+        let reading = ServerCertificateReading.chain(ServerCertificateChain(
+            certificates: [ServerCertificate(
+                subject: CertificateName(text: "CN=www.example.com", isTruncated: false),
+                issuer: CertificateName(text: "CN=Example CA", isTruncated: false),
+                notAfter: Date(timeIntervalSince1970: 1_893_456_000)
+            )],
+            isComplete: true
+        ))
+
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(), protocolFamily: Int32(AF_INET))
+        await h.pipeline.observe(serverTLS: answer, for: key)
+        await h.pipeline.observe(serverCertificates: reading, for: key)
+        await h.pipeline.handle(packet: PipelineFixtures.tcpV4(payloadBytes: 8), protocolFamily: Int32(AF_INET))
+        await h.pipeline.flush()
+
+        let record = await h.store.flows[key]
+        XCTAssertEqual(record?.serverCertificates, reading)
+        XCTAssertEqual(record?.serverTLS, answer)
+    }
+
     /// Un servidor que se niega cierra la conexión acto seguido: la negativa llega al historial
     /// con el record de cierre, sin que haga falta otro paquete.
     func testARefusalReachesTheStoreEvenIfTheFlowClosesRightAfter() async {

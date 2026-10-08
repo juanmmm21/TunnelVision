@@ -29,7 +29,9 @@ import Shared
 /// ofreció** —versiones de TLS y ALPN—, por `ClientTLSObserving`. Y por lo mismo, en el otro sentido, **le lee
 /// la respuesta del servidor**: la versión de TLS y la suite de su ServerHello, que también viajan
 /// en claro y salen por `ServerTLSObserving` (`readServerHello`). En un flujo inspeccionado ese
-/// ServerHello es el nuestro, así que la cifra la da la terminación (`observeUpstreamTLS`).
+/// ServerHello es el nuestro, así que la cifra la da la terminación (`observeUpstreamTLS`). Y si la
+/// versión es TLS ≤ 1.2, detrás del ServerHello va en claro **la cadena de certificados**, que sale
+/// por la misma costura (`readServerCertificates`).
 ///
 /// ## Inspección TLS (opt-in): la conexión saliente se **sustituye**
 ///
@@ -138,6 +140,10 @@ public actor Relay {
         /// cuando una terminación la sustituye se suelta, porque desde entonces lo que llega es el
         /// ServerHello de nuestro leaf y leerlo sería apuntarle al servidor lo que elegimos nosotros.
         var serverHello: ServerHelloScanner?
+        /// Lector de la cadena de certificados, que releva al anterior cuando el ServerHello dijo
+        /// TLS ≤ 1.2 —la única versión que la manda en claro—. Vive lo mismo que aquél y por lo
+        /// mismo: solo mientras la conexión sea la del servidor de verdad.
+        var serverCertificates: ServerCertificateScanner?
         var inspection: Inspection = .off
         /// El dispositivo ya mandó su FIN. Se anota en vez de trasladarse cuando el flujo está
         /// reteniendo bytes: el EOF va **detrás** de lo retenido, y lo aplica quien acabe soltándolo.
@@ -627,10 +633,16 @@ public actor Relay {
     /// dispositivo no pasa nunca por aquí. La cifra de un flujo inspeccionado es la que negocia la
     /// conexión de subida, y esa no se saca de un stream.
     private func readServerHello(_ data: Data, for key: FlowKey) {
-        guard var state = tcpFlows[key], var scanner = state.serverHello else { return }
+        guard var state = tcpFlows[key] else { return }
+        guard var scanner = state.serverHello else {
+            // El ServerHello ya se leyó: si queda algo por leer es la cadena que va detrás.
+            readServerCertificates(data, for: key)
+            return
+        }
 
         let outcome = scanner.scan(data)
         let answer: ServerTLSAnswer?
+        var certificates: ServerCertificateScanner?
         switch outcome {
         case .needMoreBytes:
             state.serverHello = scanner
@@ -639,6 +651,11 @@ public actor Relay {
         case .found(let negotiated):
             counters.serverHelloObserved &+= 1
             answer = .negotiated(negotiated)
+            // En TLS 1.3 el certificado va cifrado: no hay nada que seguir leyendo, y un lector
+            // ahí solo vería records opacos.
+            if negotiated.version.sendsCertificateInClear, let remainder = scanner.remainder {
+                certificates = ServerCertificateScanner(resuming: remainder)
+            }
         case .unavailable(.alert(let description)):
             counters.serverHelloRefused &+= 1
             answer = .refused(alert: description)
@@ -648,10 +665,47 @@ public actor Relay {
             answer = nil
         }
         state.serverHello = nil
+        state.serverCertificates = certificates
         tcpFlows[key] = state
 
         if let answer, let serverTLSObserver {
             Task { await serverTLSObserver.observe(serverTLS: answer, for: key) }
+        }
+        if certificates != nil {
+            // Sin bytes nuevos: en TLS 1.2 la cadena suele venir en el mismo record que el
+            // ServerHello, y entonces ya está entera en lo que el primer lector dejó.
+            readServerCertificates(Data(), for: key)
+        }
+    }
+
+    /// Alimenta el lector de la cadena de certificados con lo que sigue llegando del servidor.
+    ///
+    /// La cadena sale por su propia tarea y **no espera ni hace esperar a la versión**: son dos
+    /// campos distintos del flujo, así que da igual cuál de las dos llegue antes a la tabla.
+    private func readServerCertificates(_ data: Data, for key: FlowKey) {
+        guard var state = tcpFlows[key], var scanner = state.serverCertificates else { return }
+
+        let reading: ServerCertificateReading?
+        switch scanner.scan(data) {
+        case .needMoreBytes:
+            state.serverCertificates = scanner
+            tcpFlows[key] = state
+            return
+        case .found(.chain(let chain)):
+            counters.serverCertificatesObserved &+= 1
+            reading = .chain(chain)
+        case .found(.notSent(let absence)):
+            counters.serverCertificatesNotSent &+= 1
+            reading = .notSent(absence)
+        case .unavailable:
+            counters.serverCertificatesUnavailable &+= 1
+            reading = nil
+        }
+        state.serverCertificates = nil
+        tcpFlows[key] = state
+
+        if let reading, let serverTLSObserver {
+            Task { await serverTLSObserver.observe(serverCertificates: reading, for: key) }
         }
     }
 
@@ -736,6 +790,7 @@ public actor Relay {
         state.inspection = .terminating(rollback: held)
         // Desde aquí el stream entrante es el de nuestra terminación, no el del servidor.
         state.serverHello = nil
+        state.serverCertificates = nil
         tcpFlows[key] = state
         counters.terminationsOpened &+= 1
 
@@ -784,6 +839,7 @@ public actor Relay {
         // La conexión nueva sí es la del servidor, y va a recibir el ClientHello entero: su
         // ServerHello es el de verdad y se lee desde el principio.
         state.serverHello = makeServerHelloScanner()
+        state.serverCertificates = nil
         tcpFlows[key] = state
         counters.terminationsRolledBack &+= 1
 

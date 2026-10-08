@@ -34,6 +34,11 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
     /// `tls_hello_retry`, `tls_upstream` y `tls_alert`), o `nil` si no hubo lectura.
     public let serverTLS: ServerTLSAnswer?
 
+    /// Lo que se leyó del certificado del servidor en un flujo de TLS ≤ 1.2 (columnas
+    /// `tls_chain_state` y `tls_chain`), o `nil` si no hubo lectura. El motivo de un `nil` lo
+    /// da `certificateVisibility`.
+    public let serverCertificates: ServerCertificateReading?
+
     /// Lo que el cliente ofreció en su ClientHello (columnas `tls_offered_*`), o `nil` si no hubo
     /// lectura.
     public let clientTLS: ClientTLSOffer?
@@ -54,6 +59,7 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
         sni: String?,
         resolvedName: ResolvedFlowName?,
         serverTLS: ServerTLSAnswer?,
+        serverCertificates: ServerCertificateReading?,
         clientTLS: ClientTLSOffer?,
         quic: QUICVersionReading?
     ) {
@@ -68,12 +74,18 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
         self.sni = sni
         self.resolvedName = resolvedName
         self.serverTLS = serverTLS
+        self.serverCertificates = serverCertificates
         self.clientTLS = clientTLS
         self.quic = quic
     }
 
     /// El nombre del flujo con su origen: el SNI si lo anunció, y si no el que se dedujo del DNS.
     public var name: FlowName? { FlowName(sni: sni, resolved: resolvedName) }
+
+    /// Qué se sabe del certificado del servidor, con el motivo cuando no se sabe.
+    public var certificateVisibility: ServerCertificateVisibility {
+        ServerCertificateVisibility(answer: serverTLS, reading: serverCertificates)
+    }
 
     /// Cuánto duró el flujo. Nunca negativa: `first_seen` guarda el mínimo visto.
     public var duration: TimeInterval { lastSeen.timeIntervalSince(firstSeen) }

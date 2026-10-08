@@ -17,6 +17,12 @@ import Shared
 /// lectura**: en cuanto el escáner decide. Lo que no es una respuesta sobre TLS —un stream que no
 /// era un handshake, un mensaje ilegible— no pasa por aquí: se cuenta en `RelayStats` y el flujo se
 /// queda sin nada apuntado.
+///
+/// **La cadena de certificados sale por la misma costura**, y no por una propia como la oferta del
+/// cliente: la dice el mismo extremo, en el mismo vuelo del handshake, y no existe sin un
+/// ServerHello delante. Llega aparte de la versión —y puede no llegar— porque viene detrás en el
+/// stream: quien observa no debe esperar a una para apuntar la otra.
 public protocol ServerTLSObserving: Sendable {
     func observe(serverTLS: ServerTLSAnswer, for key: FlowKey) async
+    func observe(serverCertificates: ServerCertificateReading, for key: FlowKey) async
 }
