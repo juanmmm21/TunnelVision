@@ -12,6 +12,12 @@ tunnel extension's writes are tagged with the open session, and the controls ext
 markers in it. Their storage is the audit half of `FlowStore`
 (`../Persistence/FlowStore+Audit.swift`, schema `v6`).
 
+`FindingsClassifier` reads the flows of a session and returns what they prove: a `Finding` is a
+statement (`FindingEvidence`) with the flows behind it, and each check also returns its
+`CheckCoverage` — what it found in order, what it could not look at and why — so that "no findings"
+is never mistaken for "nothing wrong". Thresholds arrive in a `FindingsPolicy`; none is written here.
+`TLSVersionAssessment` is the per-flow rule behind `weakTLSVersion`.
+
 An *audit* session is not the *capture* session of `FlowStore`: the latter is the instant the store was
 opened and only keeps a recycled 5-tuple from merging two connections.
 

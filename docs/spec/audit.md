@@ -1,7 +1,8 @@
 # Spec — Audit model (`Shared/Audit`, schema `v6`)
 
 The data model of the TR-03161 network evidence workflow: what is audited, each recording of it, and
-the instants marked inside a recording. Scope and attribution method:
+the instants marked inside a recording, and the classifier that turns a recording's flows into
+findings (§ *Findings*). Scope and attribution method:
 [`../decisions/0008-tr03161-audit-workflow-scope.md`](../decisions/0008-tr03161-audit-workflow-scope.md).
 
 The value types live in `Shared/Audit`; their storage is the audit half of `FlowStore`
@@ -342,8 +343,111 @@ saved settings and the trust evaluation of the CA. Settings that cannot be read 
 both ended, each tagged with a quarter of the synthetic flows by the same path the extension takes —
 the session is open while its flows are written.
 
+## Findings
+
+`FindingsClassifier` (`Shared/Audit`) turns the flows of a session into what they prove. It is pure —
+it reads neither the history nor the clock — and it does **not** decide verdicts: whether a finding
+breaks a requirement is the catalogue's rule. It only states what the flows allow to be stated, and
+what could not be looked at comes back with its reason instead of being left out.
+
+```swift
+public enum FindingKind: String, Sendable, Hashable, Codable, CaseIterable {
+    case weakTLSVersion                       // the raw value is what a catalogue refers to
+}
+
+public enum FindingEvidence: Sendable, Hashable {
+    case weakTLSVersion(TLSVersionObservation)
+    public var kind: FindingKind { get }
+}
+
+public struct Finding: Sendable, Hashable {
+    public let evidence: FindingEvidence      // what is stated
+    public let flowIDs: [Int64]               // the flows that prove it, as they happened; never empty
+}
+
+public struct CheckCoverage<Gap>: Sendable, Hashable {
+    public let satisfiedFlowIDs: [Int64]              // looked at, nothing to report
+    public let unassessed: [UnassessedFlows<Gap>]     // applicable, could not be looked at: why
+    public let notApplicableFlowIDs: [Int64]          // not what this check looks at
+}
+
+public struct FindingsPolicy: Sendable, Hashable {
+    public let minimumTLSVersion: TLSProtocolVersion
+    public init?(minimumTLSVersion: TLSProtocolVersion)   // nil unless a published version
+}
+
+public struct SessionFindings: Sendable, Hashable {
+    public let findings: [Finding]
+    public let tlsVersion: CheckCoverage<TLSVersionGap>
+}
+
+public enum FindingsClassifier {
+    public static func classify(flows: [StoredFlow], policy: FindingsPolicy) -> SessionFindings
+}
+```
+
+- **A finding is a statement, and the flows are its proof.** Flows that prove exactly the same thing
+  are one finding with several flows. Nothing that belongs to a flow — its host, its instant — is in
+  the evidence: it is read from the flows the finding points at. Packets are reached through the
+  flow, and from there to the file and offset of their bytes.
+- **Order is the order things happened.** Findings and reasons appear in the order of their first
+  flow; the report's order never depends on a hash.
+- **No findings is not the same as nothing wrong.** Each check also returns its coverage, and every
+  flow lands in exactly one place: a finding, *satisfied*, *unassessed* with a reason, or *not
+  applicable*. A requirement can only be reported as observed without incident when its check has
+  satisfied flows; otherwise it is *not assessed by this tool*.
+- **Thresholds are configuration.** The classifier is given a `FindingsPolicy` and carries no
+  threshold of its own. A minimum that is not a published version is refused when the policy is
+  built, so a miswritten catalogue is found on loading it.
+- **`FindingKind` only has the kinds the classifier produces.** A kind nothing can raise would be a
+  line of the report that is always clean without anybody having looked.
+
+### The TLS version of a flow
+
+`TLSVersionAssessment(of:minimum:)` says one of four things about a flow: `weak`, `acceptable` (both
+with a `TLSVersionObservation`: the version **and where it came from**), `notAssessed` with a
+`TLSVersionGap`, or `notApplicable`.
+
+| What the flow carries | Result |
+|---|---|
+| A ServerHello reading below the minimum | `weak`, basis `serverHello` |
+| A ServerHello reading at or above it | `acceptable` — what the client offered does not qualify it |
+| An upstream reading below the minimum | `weak`, basis `upstreamConnection` |
+| An upstream reading at or above it, and the app's ClientHello **listed** its versions, all published and none below the minimum | `acceptable`, basis `upstreamConnection` |
+| An upstream reading at or above it, anything else | `notAssessed(.appNegotiationNotObserved)` with the reason the offer does not settle it |
+| A version that is not one of the five published | `notAssessed(.unrecognisedVersion)` |
+| An alert instead of a ServerHello | `notAssessed(.serverRefused)` |
+| QUIC v1 or v2 read from the **server** | TLS 1.3, basis `quic` |
+| QUIC read only from the client | `notAssessed(.quicVersionOnlyProposed)` |
+| A QUIC version not known to carry TLS 1.3 | `notAssessed(.unrecognisedQUICVersion)` |
+| No reading, but the status is not `plaintext` or a ClientHello was read | `notAssessed(.serverAnswerNotRead)` |
+| No reading and no sign of TLS or QUIC | `notApplicable` |
+
+- **An upstream reading answers the tunnel's ClientHello, not the app's**
+  ([`relay-and-tls.md`](relay-and-tls.md) § *What an inspected flow's server chose*). A weak one is
+  still a finding — a server that gives a modern client no more than that gave the app no more
+  either — but a good one only says what the server accepts. What the app would have negotiated
+  comes from its own offer, and only an exact list with nothing below the minimum rules a weaker
+  version out: a `legacy_version` ceiling does not say where the floor is, an offer with Encrypted
+  Client Hello may not be the real one, and an empty list or one with unpublished values cannot be
+  ordered. Each of those is its own `ClientOfferGap`, so the report can say which.
+- **Only published versions are ordered** (`TLSProtocolVersion.isPublished`, SSL 3.0 to TLS 1.3). By
+  raw value a TLS 1.3 draft (`0x7F..`) is greater than TLS 1.3; it is neither weak nor acceptable.
+- **`serverTLS == nil` is never read as "not TLS".** With any sign of TLS it is a reading that is
+  missing. And `notApplicable` is **not** a statement that the flow went in the clear: on TCP the
+  status is `encrypted` for port 443 and `plaintext` for every other port *because of the port*
+  (`FlowTable.initialTLSStatus`), and a handshake is only looked for on 443.
+  TLS on any other port is not seen by this check.
+
 ## Tests
 
+- `TLSVersionAssessmentTests`: every row of the table above; the threshold is the one given, for the
+  version and for the offer; a listed weaker version outweighs an unrecognised one beside it; which
+  versions are published.
+- `FindingsClassifierTests`: flows that prove the same thing are one finding and a different version
+  or source is another; first-appearance order; every flow lands in exactly one place; a session
+  where nothing could be read has neither findings nor satisfied flows; a policy needs a published
+  minimum; the kind identifiers are stable.
 - `DomainPatternTests`: normalisation, the canonical text round-trips, every rejection, and the edges
   of a wildcard (own suffix, any depth, same trailing letters, a name that continues past the suffix).
 - `AuditStoreTests`: a project and a session read back as written; the allowlist keeps its order; a
