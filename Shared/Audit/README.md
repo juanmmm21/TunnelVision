@@ -16,7 +16,9 @@ markers in it. Their storage is the audit half of `FlowStore`
 statement (`FindingEvidence`) with the flows behind it, and each check also returns its
 `CheckCoverage` — what it found in order, what it could not look at and why — so that "no findings"
 is never mistaken for "nothing wrong". Thresholds arrive in a `FindingsPolicy`; none is written here.
-`TLSVersionAssessment` is the per-flow rule behind `weakTLSVersion`.
+`TLSVersionAssessment` is the per-flow rule behind `weakTLSVersion`, and `EncryptionAssessment`
+the one behind `cleartextTraffic` — which only ever comes from an HTTP request that was seen, never
+from a port number.
 
 An *audit* session is not the *capture* session of `FlowStore`: the latter is the instant the store was
 opened and only keeps a recycled 5-tuple from merging two connections.

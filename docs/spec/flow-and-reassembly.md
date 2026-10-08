@@ -127,6 +127,10 @@ degradation (downgrade to metadata) rather than unbounded growth.
 - Overflow returns `.downgraded` and frees memory; a 10k-flow storm keeps `FlowTable` at or
   under `maxFlows` with bounded total memory.
 - LRU eviction emits the correct `FlowRecord` and O(1) behaviour under load.
+- The stream opening: a TLS handshake raises a flow the port called `plaintext`; an HTTP request or
+  an unrecognised opening leaves the status alone; no opening lowers a status or overwrites an
+  inspection outcome; the closing record carries it; one for a flow the table no longer has is
+  ignored.
 - The QUIC version: a UDP/443 flow is `plaintext` until a known version is seen and `encrypted` from
   then on, in its first packet or a later one; packets without a reading change nothing; the server's
   version wins and the client cannot take it back; an unknown version is recorded without the mark;

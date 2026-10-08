@@ -353,10 +353,12 @@ what could not be looked at comes back with its reason instead of being left out
 ```swift
 public enum FindingKind: String, Sendable, Hashable, Codable, CaseIterable {
     case weakTLSVersion                       // the raw value is what a catalogue refers to
+    case cleartextTraffic
 }
 
 public enum FindingEvidence: Sendable, Hashable {
     case weakTLSVersion(TLSVersionObservation)
+    case cleartextTraffic(CleartextProtocol)
     public var kind: FindingKind { get }
 }
 
@@ -379,6 +381,7 @@ public struct FindingsPolicy: Sendable, Hashable {
 public struct SessionFindings: Sendable, Hashable {
     public let findings: [Finding]
     public let tlsVersion: CheckCoverage<TLSVersionGap>
+    public let encryption: CheckCoverage<EncryptionGap>
 }
 
 public enum FindingsClassifier {
@@ -392,8 +395,8 @@ public enum FindingsClassifier {
   flow, and from there to the file and offset of their bytes.
 - **Order is the order things happened.** Findings and reasons appear in the order of their first
   flow; the report's order never depends on a hash.
-- **No findings is not the same as nothing wrong.** Each check also returns its coverage, and every
-  flow lands in exactly one place: a finding, *satisfied*, *unassessed* with a reason, or *not
+- **No findings is not the same as nothing wrong.** Each check also returns its coverage, and in
+  each check every flow lands in exactly one place: a finding, *satisfied*, *unassessed* with a reason, or *not
   applicable*. A requirement can only be reported as observed without incident when its check has
   satisfied flows; otherwise it is *not assessed by this tool*.
 - **Thresholds are configuration.** The classifier is given a `FindingsPolicy` and carries no
@@ -436,17 +439,51 @@ with a `TLSVersionObservation`: the version **and where it came from**), `notAss
 - **`serverTLS == nil` is never read as "not TLS".** With any sign of TLS it is a reading that is
   missing. And `notApplicable` is **not** a statement that the flow went in the clear: on TCP the
   status is `encrypted` for port 443 and `plaintext` for every other port *because of the port*
-  (`FlowTable.initialTLSStatus`), and a handshake is only looked for on 443.
-  TLS on any other port is not seen by this check.
+  (`FlowTable.initialTLSStatus`), and the ServerHello is only read on 443. TLS
+  on any other port is recognised (it raises the status, so it lands in `serverAnswerNotRead`), but
+  its version is not read.
+
+### Whether a flow was encrypted
+
+`EncryptionAssessment(of:)` is the rule behind `cleartextTraffic`. **`cleartext` only comes from an
+observation**: the flow's stream was seen to open with a readable HTTP request
+(`StreamOpening.httpRequest`, [`relay-and-tls.md`](relay-and-tls.md) § *How a stream opened*).
+Neither the port nor `TLSInspectionStatus` is enough for anything — the status of a TCP flow is
+born from its port — so what was not seen is `notAssessed` with its reason, never "cleartext" and
+never "encrypted".
+
+| What the flow carries | Result |
+|---|---|
+| A stream that opened with an HTTP request, on any port, whatever the status | `cleartext(.http)` |
+| TCP whose stream opened with a TLS handshake, or any reading that only exists if TLS was negotiated (the client's offer, the server's answer, an inspection outcome) | `encrypted(.tls)` |
+| TCP whose stream opened with something else | `notAssessed(.unrecognisedOpening)` |
+| TCP with no opening read and none of the above — including 443, whose `encrypted` is the port's | `notAssessed(.openingNotRead)` |
+| UDP with a QUIC version known to protect its packets, from either end | `encrypted(.quic)` |
+| UDP with another QUIC version | `notAssessed(.unrecognisedQUICVersion)` |
+| UDP with no QUIC reading — port 443 or not, and DNS on 53 | `notAssessed(.datagramsNotRead)` |
+| Anything that is neither TCP nor UDP | `notApplicable` |
+
+- **A session recorded before schema `v14` has no openings**, so its plain TCP flows are
+  `openingNotRead`: no cleartext finding and no satisfied flow either. That is correct — nobody
+  looked — and it is why the coverage exists.
+- **DNS on port 53 is not a `cleartextTraffic` finding.** Today it falls in `datagramsNotRead`
+  with every other datagram; a finding of its own needs to know which end of the flow is the
+  device, which a stored flow does not say.
+- **Only HTTP is recognised as cleartext.** Another unencrypted protocol is `unrecognisedOpening`:
+  the report can list those flows, and cannot call them clear.
 
 ## Tests
 
+- `EncryptionAssessmentTests`: every row of the table above; an HTTP request is cleartext on any
+  port and whatever the status says; a `plaintext` status alone is not cleartext and an `encrypted`
+  one alone is not encrypted.
 - `TLSVersionAssessmentTests`: every row of the table above; the threshold is the one given, for the
   version and for the offer; a listed weaker version outweighs an unrecognised one beside it; which
   versions are published.
 - `FindingsClassifierTests`: flows that prove the same thing are one finding and a different version
-  or source is another; first-appearance order; every flow lands in exactly one place; a session
-  where nothing could be read has neither findings nor satisfied flows; a policy needs a published
+  or source is another; flows seen in the clear are one finding; first-appearance order; each check
+  places every flow exactly once; a session where nothing could be read — or recorded before the
+  openings were — has neither findings nor satisfied flows; a policy needs a published
   minimum; the kind identifiers are stable.
 - `DomainPatternTests`: normalisation, the canonical text round-trips, every rejection, and the edges
   of a wildcard (own suffix, any depth, same trailing letters, a name that continues past the suffix).

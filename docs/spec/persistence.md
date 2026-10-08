@@ -192,6 +192,13 @@ public enum Schema {
                 t.add(column: "tls_chain", .text)                   // JSON; NULL si el estado no es una cadena
             }
         }
+
+        // v14 — con qué empezó el stream saliente de un flujo TCP, en el puerto que sea.
+        m.registerMigration("v14") { db in
+            try db.alter(table: "flows") { t in
+                t.add(column: "stream_opening", .integer)           // 1 TLS, 2 HTTP en claro, 3 ninguna; NULL sin lectura
+            }
+        }
         return m
     }
 }
@@ -278,6 +285,7 @@ public struct StoredFlow: Sendable, Hashable, Identifiable {
     public let serverCertificates: ServerCertificateReading?   // `tls_chain_state` / `tls_chain`
     public let clientTLS: ClientTLSOffer?        // las cinco columnas `tls_offered_*`
     public let quic: QUICVersionReading?         // `quic_version` / `quic_from_server`
+    public let streamOpening: StreamOpening?     // `stream_opening`
     public var name: FlowName? { get }           // el nombre con su origen (`data-model.md`)
     public var duration: TimeInterval { get }
     public var totalBytes: UInt64 { get }
@@ -401,6 +409,15 @@ introducirá un reloj monotónico cuando lo necesite el código productor (parse
   `quic_from_server` is 1 for a server reading, 0 for a client one. A version of `0`, one out of
   range, or one without its source is a `corruptRow`. There is no "is QUIC" column: `tls_status`
   already says what was concluded from the version.
+- **The stream opening follows both rules of the QUIC version, for the same reason** (`v14`,
+  [`relay-and-tls.md`](relay-and-tls.md) § *How a stream opened*). It is only seen at the start of
+  a connection, so a record without a reading keeps the row's and one with a reading replaces it.
+  And a row whose opening was a **TLS handshake** does not go back to `plaintext` because a record
+  born that way arrives *without an opening of its own*: that is the second life of a TLS flow on
+  a port other than 443, which the port calls `plaintext`. A record that does bring its own
+  opening is a new connection on the same 5-tuple and sets its own status. `stream_opening` is
+  `1` a TLS handshake, `2` an HTTP request, `3` neither, `NULL` no reading; any other value is a
+  `corruptRow`.
 - **The certificate chain is tied to the server's answer, not kept on its own** (`v13`,
   [`relay-and-tls.md`](relay-and-tls.md) § *The certificate chain of TLS ≤ 1.2*). A record that
   brings **nothing** read from the server — no version, no alert, no chain — keeps the row's
@@ -482,6 +499,11 @@ underneath. Never share a raw `Database` handle across actors — go through the
   `plaintext` and still adds its totals; a row without a version takes its record's status as
   before; a new reading replaces the previous whole; a version without its source is a `corruptRow`;
   and a database stopped at `v11` migrates keeping its flows, without a version.
+- The stream opening (`v14`): every case round-trips; a flow without one reads back without one; a
+  flow created again keeps its opening, does not fall back to `plaintext` and still adds its
+  totals; only a TLS opening holds the status; a new opening replaces the previous one and its
+  status; the audit-session query returns it; an unknown code is a `corruptRow`; the documented
+  codes, asserted against the column; and a database stopped at `v13` migrates keeping its flows.
 - The certificate chain (`v13`): a chain, an incomplete one with truncated names, an empty one and
   both reasons for none round-trip; names with quotes, backslashes and non-ASCII text come back as
   written; every flow query returns it, the audit-session one included; a chain that arrives after

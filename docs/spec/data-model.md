@@ -170,6 +170,7 @@ public struct FlowRecord: Sendable, Hashable, Codable, Identifiable {
     public var serverCertificates: ServerCertificateReading?   // su cadena de certificados (TLS ≤ 1.2), o que no mandó
     public var clientTLS: ClientTLSOffer?    // lo que el cliente ofreció en su ClientHello, si se leyó
     public var quic: QUICVersionReading?     // la versión de QUIC de su cabecera larga, y de qué extremo
+    public var streamOpening: StreamOpening? // con qué empezó su stream TCP: TLS, HTTP en claro o ninguna
     public var name: FlowName? { get }  // el nombre con su origen: el SNI, y si no el resuelto
     public var certificateVisibility: ServerCertificateVisibility { get }   // qué se sabe del certificado, y por qué no
 }
@@ -261,6 +262,32 @@ the version is one known to protect its packets (`QUICVersion.hasKnownPacketProt
 can therefore carry a `quic` reading and still be `plaintext`: an unknown version is recorded, not
 vouched for. And `plaintext` with `quic == nil` on UDP/443 means no QUIC start was recognised, not
 that cleartext was observed.
+
+### What a TCP stream opened with is an observation; the status is not
+
+`TLSInspectionStatus` on TCP is born from the **port**: 443 is `encrypted`, every other port is
+`plaintext`. By itself it cannot tell an HTTP request to port 80 from TLS to port 5223.
+`streamOpening` is what was recognised in the first bytes the device sent on the connection, on
+any port ([`relay-and-tls.md`](relay-and-tls.md) § *How a stream opened*):
+
+```swift
+public enum StreamOpening: String, Sendable, Hashable, Codable, CaseIterable {
+    case tlsHandshake    // a TLS handshake record carrying a ClientHello
+    case httpRequest     // a readable HTTP request line: HTTP in the clear
+    case unrecognised    // neither
+}
+```
+
+- **`unrecognised` is not "cleartext".** A protocol that is neither TLS nor HTTP may be encrypted
+  in its own way (SSH, Noise) or not; nothing is claimed about it.
+- **`nil` is not `unrecognised`.** No reading means the flow is not TCP, the device never sent
+  enough bytes to decide, or the connection was already open when the tunnel started.
+- **`tlsHandshake` raises a `plaintext` flow to `encrypted`**, the same way a known QUIC version
+  does for UDP: that status came from the port and an observation contradicts it. It never
+  overwrites an inspection outcome, and no opening ever *lowers* a status — a 443 that does not
+  speak TLS stays `encrypted`-by-port, because not recognising it is not seeing it in the clear.
+  Whoever needs to know whether a flow was encrypted reads the observation
+  ([`audit.md`](audit.md) § *Whether a flow was encrypted*), not the status.
 
 `OfferedTLSVersions` is an enum because the two shapes are different claims. `.listed` is exhaustive:
 a version that is not in it was not offered. `.upTo` is only a maximum: the ClientHello does not say

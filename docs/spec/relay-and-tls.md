@@ -1235,6 +1235,70 @@ the chain from the shared record, the version reported before the chain arrives,
 after a TLS 1.3 hello, a resumed session, an unreadable flight counted and not reported, once per
 flow, our own termination's certificate never read, and the real server's read after a rollback.
 
+## How a stream opened ✅
+
+Everything above reads a handshake **on port 443**. Off that port nothing was looked at, and a
+flow's `TLSInspectionStatus` was whatever its port said — which made "this connection went in the
+clear" something no flow could prove. `StreamOpeningScanner` (`PacketTunnel/Relay`) closes that: it
+reads the first bytes the device sends on **every** TCP flow and says which of three things they
+are (`StreamOpening`, [`data-model.md`](data-model.md)).
+
+```swift
+public struct StreamOpeningScanner: Sendable {
+    public struct Config: Sendable { public var maxRequestLineBytes: Int }   // 8192
+    public enum Outcome: Sendable, Equatable { case needMoreBytes, decided(StreamOpening) }
+    public init(config: Config = Config())
+    public mutating func scan(_ data: Data) -> Outcome
+}
+
+public protocol StreamOpeningObserving: Sendable {
+    func observe(streamOpening: StreamOpening, for key: FlowKey) async
+}
+```
+
+- **A TLS handshake** is a record header of type 22, major version 3, minor ≤ 4, a length between
+  4 and 2^14, and a first handshake message of type 1 (ClientHello). Decided on the sixth byte.
+- **An HTTP request is a whole request line, not a prefix.** This is the only statement of "sent
+  unencrypted" the tool makes, so starting with `GET ` is not enough: the stream has to carry
+  RFC 9112 § 3's `method SP request-target SP HTTP-version` and the end of the line (CRLF, or a
+  bare LF as § 2.2 allows a recipient to accept). The method is any RFC 9110 token rather than a
+  table of known ones, and the version is `HTTP/` digit `.` digit — which also takes the
+  cleartext HTTP/2 preface (`PRI * HTTP/2.0`). A line that reaches 8192 bytes without ending —
+  RFC 9112 recommends supporting at least 8000 — is left unrecognised.
+- **Anything else is `unrecognised`**, which claims nothing: SSH, SMTP, Noise on 443.
+- **It keeps no bytes.** It is a state machine that advances one byte at a time; one exists per
+  TCP flow inside an extension with a memory budget. Once decided it stays decided and looks at
+  nothing more.
+
+The hookup. The relay creates one scanner per TCP flow when it has someone to tell, and feeds it
+where the state machine hands over the device's bytes (`.sendToServer`) — the one point every
+byte passes exactly once, whether it is then sent to the server, held for an inspection
+candidate or handed to a termination. It is separate from `readHandshake` on purpose: that one
+exists only on 443 and decides whether a flow is inspected; this one runs on every port and only
+records. The reading leaves through `StreamOpeningObserving`, once per flow, and the flow table
+stores it and raises a `plaintext` flow to `encrypted` when it is a TLS handshake
+(`FlowTable.setStreamOpening`). Schema `v14` ([`persistence.md`](persistence.md)).
+
+Three counters in `RelayStats`: `streamOpeningsTLS`, `streamOpeningsHTTP`,
+`streamOpeningsUnrecognised`. Against `tcpFlowsOpened` they say how many flows closed before
+sending enough to decide.
+
+It decrypts nothing and reads only what the owner's device sent in the clear; ADR 0003 is not
+involved.
+
+**What it does not read:** the server's side (a protocol where the server speaks first is
+`unrecognised` or has no reading), a connection upgraded later (`STARTTLS`), and UDP — a datagram
+that is not QUIC is not looked at.
+
+`StreamOpeningScannerTests` (15) — the ClientHello record on every minor version and at its
+length limits; what is a record but not a ClientHello; the request line in its forms, including
+absolute-form, `CONNECT`, `OPTIONS *` and the HTTP/2 preface; nothing decided before the end of
+the line; nine things that only look like a request line; other protocols; the ceiling; every
+split of three streams; and that it stays decided. `RelayStreamOpeningTests` (9) — HTTP on 80,
+TLS on 5223, 8443, 993 and 443, the unrecognised on any port, a line split across segments read
+once, the stream to the server unchanged, a flow that sends nothing, no scanner without an
+observer, and a candidate for inspection whose bytes are held.
+
 ## Tests
 
 - Leaf minting produces a valid chain under the local CA (verify with `Security`).

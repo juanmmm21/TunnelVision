@@ -10,4 +10,9 @@ cipher suite in the ServerHello (`ServerTLSObserving`) — followed, when that v
 by the certificate chain the server presents behind it, through the same seam. What the server says
 is only ever read from the real server — never from a termination of our own.
 
+And on **every** TCP port, not only 443, it reads how the device opened the stream
+(`StreamOpeningScanner`, out through `StreamOpeningObserving`): a TLS handshake, an HTTP request in
+the clear, or neither. It is what lets a flow say something about its encryption other than its
+port number.
+
 **Spec:** [`../../docs/spec/relay-and-tls.md`](../../docs/spec/relay-and-tls.md) · **Milestone:** M8

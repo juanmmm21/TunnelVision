@@ -31,6 +31,11 @@ are known to encrypt, and it is what lets a UDP flow be called `encrypted`. Spec
 [`../../docs/spec/packet-parsing.md`](../../docs/spec/packet-parsing.md) § *Above L4: the QUIC long
 header*.
 
+`StreamOpening.swift` is what a TCP stream opened with — a TLS handshake, an HTTP request in the
+clear, or neither — on any port. It exists because `TLSInspectionStatus` on TCP comes from the
+port. Spec: [`../../docs/spec/relay-and-tls.md`](../../docs/spec/relay-and-tls.md) § *How a stream
+opened*.
+
 `TunnelAddressing` also lives here (it moved out of the extension in M9): the tunnel's own IPs are
 knowledge of *both* processes — the extension announces them to NetworkExtension and compares against
 them to resolve direction, and the app needs them to tell which endpoint of a canonical `FlowKey` is
