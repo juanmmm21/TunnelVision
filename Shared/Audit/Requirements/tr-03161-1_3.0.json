@@ -1,0 +1,104 @@
+{
+  "formatVersion": 1,
+  "identifier": "tr-03161-1_3.0",
+  "source": {
+    "document": "BSI TR-03161-1",
+    "title": "Anforderungen an Anwendungen im Gesundheitswesen – Teil 1: Mobile Anwendungen",
+    "version": "3.0",
+    "date": "2024-03-25",
+    "sha256": "f8837fbee1710ad3555bbe333f4a50e83c0c66b24724ab3be5cc634a80beb001"
+  },
+  "tls": {
+    "minimumVersion": "1.2",
+    "source": {
+      "document": "BSI TR-02102-2",
+      "title": "Kryptographische Verfahren: Empfehlungen und Schlüssellängen – Teil 2: Verwendung von Transport Layer Security (TLS)",
+      "version": "2026-01",
+      "date": "2026-01-27",
+      "sha256": "eed80d1a38ec0d7d8908765c3a09ea6f17a7ca729bef95b0d358d5d129af3f1f"
+    }
+  },
+  "requirements": [
+    {
+      "id": "O.Purp_3",
+      "aspect": { "number": 1, "name": "Anwendungszweck" },
+      "title": "Einholung einer Einwilligungserklärung des Nutzers.",
+      "testDepth": "CHECK",
+      "rule": "contraryFindings",
+      "contraryKinds": ["activityBeforeConsent"],
+      "toolCoverage": "Compares when each connection opened with the consent markers placed during the session. A connection opened before consent is network activity, not proof that personal data was processed, and the tunnel cannot tell which app opened it."
+    },
+    {
+      "id": "O.Purp_8",
+      "aspect": { "number": 1, "name": "Anwendungszweck" },
+      "title": "Weitergabe von sensiblen Daten nur für den primären oder rechtmäßigen Zweck.",
+      "testDepth": "CHECK",
+      "rule": "contraryFindings",
+      "contraryKinds": ["hostNotInAllowlist", "unnamedFlow"],
+      "toolCoverage": "Compares the host of each connection with the project's allowlist, and lists the connections that had no name to compare. A host outside the allowlist is a connection to an unlisted party; whether sensitive data was sent to it, and whether the user agreed, is not observed."
+    },
+    {
+      "id": "O.Ntwk_1",
+      "aspect": { "number": 9, "name": "Netzwerkkommunikation" },
+      "title": "Netzwerkkommunikation durchgängig mit gegenseitiger Authentisierung verschlüsselt.",
+      "testDepth": "EXAMINE",
+      "rule": "contraryFindings",
+      "contraryKinds": ["cleartextTraffic"],
+      "toolCoverage": "Raised only by an HTTP request that was seen in the clear. Mutual authentication is not observed: a connection seen to be encrypted says nothing about a client certificate."
+    },
+    {
+      "id": "O.Ntwk_2",
+      "aspect": { "number": 9, "name": "Netzwerkkommunikation" },
+      "title": "Konfiguration der verschlüsselten Verbindung gemäß aktuellem Stand der Technik.",
+      "testDepth": "EXAMINE",
+      "rule": "contraryFindings",
+      "contraryKinds": ["weakTLSVersion"],
+      "toolCoverage": "Compares the negotiated TLS version with the lowest one TR-02102-2 recommends. Cipher suites, key agreement groups and signature algorithms are not compared with its tables."
+    },
+    {
+      "id": "O.Ntwk_3",
+      "aspect": { "number": 9, "name": "Netzwerkkommunikation" },
+      "title": "Sichere Kommunikationskanäle nur mit Betriebssystem-Funktionen oder sicherheitsüberprüfter Drittsoftware.",
+      "testDepth": "EXAMINE",
+      "rule": "outsideToolScope"
+    },
+    {
+      "id": "O.Ntwk_4",
+      "aspect": { "number": 9, "name": "Netzwerkkommunikation" },
+      "title": "Unterstützung von Zertifikats-Pinning.",
+      "testDepth": "EXAMINE",
+      "rule": "contraryAndSupportingFindings",
+      "contraryKinds": ["pinningAbsent"],
+      "supportingKinds": ["pinningObserved"],
+      "toolCoverage": "Reads, per host, whether connections accepted or refused a certificate issued by the local inspection CA, and only in a session recorded with inspection on and that CA trusted. A refusal does not tell pinning apart from refusing every user-installed root, it may predate the session, and nothing is bypassed to find out more."
+    },
+    {
+      "id": "O.Ntwk_5",
+      "aspect": { "number": 9, "name": "Netzwerkkommunikation" },
+      "title": "Validierung des Server-Zertifikats des Hintergrundsystems.",
+      "testDepth": "EXAMINE",
+      "rule": "outsideToolScope"
+    },
+    {
+      "id": "O.Ntwk_6",
+      "aspect": { "number": 9, "name": "Netzwerkkommunikation" },
+      "title": "Validierung der Integrität und Authentizität der Antworten des Hintergrundsystems.",
+      "testDepth": "EXAMINE",
+      "rule": "outsideToolScope"
+    },
+    {
+      "id": "O.Ntwk_7",
+      "aspect": { "number": 9, "name": "Netzwerkkommunikation" },
+      "title": "Verwendung plattformspezifischer Optionen.",
+      "testDepth": "EXAMINE",
+      "rule": "outsideToolScope"
+    },
+    {
+      "id": "O.Ntwk_8",
+      "aspect": { "number": 9, "name": "Netzwerkkommunikation" },
+      "title": "Vorhaltung von vollständigen Log-Dateien für alle aufgebauten Verbindungen.",
+      "testDepth": "CHECK",
+      "rule": "outsideToolScope"
+    }
+  ]
+}
