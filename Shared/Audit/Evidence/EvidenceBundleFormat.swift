@@ -15,12 +15,15 @@ public enum EvidenceBundleFormat {
     public static let sessionIdentifier = "tunnelvision.evidence.session"
     public static let flowsIdentifier = "tunnelvision.evidence.flows"
     public static let findingsIdentifier = "tunnelvision.evidence.findings"
+    public static let captureIdentifier = "tunnelvision.evidence.capture"
     public static let manifestIdentifier = "tunnelvision.evidence.manifest"
 
     public static let sessionFileName = "session.json"
     public static let flowsFileName = "flows.json"
     public static let flowsCSVFileName = "flows.csv"
     public static let findingsFileName = "findings.json"
+    public static let captureFileName = "capture.pcapng"
+    public static let captureDocumentFileName = "capture.json"
     public static let manifestFileName = "manifest.json"
 
     // ISO-8601 con fracción de segundo y en UTC, como el export de conexiones: el paquete se lee

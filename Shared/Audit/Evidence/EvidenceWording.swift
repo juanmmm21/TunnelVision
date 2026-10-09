@@ -15,6 +15,28 @@ public enum EvidenceWording {
         + "No verdict states that a requirement is met, and a requirement with no applicable "
         + "observation is not assessed by this tool."
 
+    /// Va al principio de `capture.json`: qué es la captura y qué significa cada recuento. Dice
+    /// también lo que un lector no debe suponer de un `.pcapng` dentro de un paquete que promete
+    /// no llevar contenido descifrado: lo que viajó en claro se lee.
+    public static let captureContentsNote =
+        "The packets of this session's flows whose bytes were still on the device when the bundle "
+        + "was exported, as raw IP datagrams in the order they were captured. Each packet is "
+        + "written as it crossed the tunnel: what was encrypted on the wire is encrypted here, and "
+        + "what was sent in the clear is readable here. A packet counted under withoutBytes is in "
+        + "the history and not in the capture: notCaptured was never written to a capture file, "
+        + "captureFileMissing was in a capture file that is no longer on the device, and "
+        + "recordUnreadable could not be read back from its file. A flow belongs to the session "
+        + "when it carried traffic while the session was open, so its packets from before or "
+        + "after are included too, and counted under writtenOutsideSession."
+
+    /// Va en `capture.json`: cómo se lee el comentario de cada paquete.
+    public static let capturePacketCommentsNote =
+        "Every packet carries a comment, \"flow=<id>\" or \"flow=<id> findings=<id>,<id>\": the "
+        + "flow it belongs to, as listed in flows.json, and the findings of findings.json which "
+        + "that flow is evidence of. It also carries its direction as seen from the device. In "
+        + "Wireshark, frame.comment matches \"flow=12( |$)\" shows one flow, and frame.comment "
+        + "matches \"F3(,|$)\" the packets behind one finding."
+
     public static func statement(of verdict: RequirementVerdict) -> String {
         switch verdict {
         case .contradicted:
