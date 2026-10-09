@@ -2,8 +2,9 @@
 
 The data model of the TR-03161 network evidence workflow: what is audited, each recording of it, and
 the instants marked inside a recording, the classifier that turns a recording's flows into
-findings (§ *Findings*), and the comparison of two recordings of the same project (§ *Release
-diff*). Scope and attribution method:
+findings (§ *Findings*), the comparison of two recordings of the same project (§ *Release
+diff*), and the catalogue that ties findings to the requirements of a document (§ *Requirement
+catalogue*). Scope and attribution method:
 [`../decisions/0008-tr03161-audit-workflow-scope.md`](../decisions/0008-tr03161-audit-workflow-scope.md).
 
 The value types live in `Shared/Audit`; their storage is the audit half of `FlowStore`
@@ -796,8 +797,192 @@ flow's version belongs to a connection whose domain is not known. The version of
 - **No threshold enters.** Whether the later floor is acceptable is the classifier's question,
   asked of the later session.
 
+## Requirement catalogue
+
+A catalogue is one version of a requirements document, written as a JSON resource: for each
+requirement, its identifier and title as the document gives them, and what this tool can say about
+it. `RequirementCatalogue` (`Shared/Audit`) reads one and refuses a miswritten one **when it is
+loaded**; `SessionAssessment` classifies a session with the catalogue's thresholds and gives, per
+requirement, what the session shows.
+
+```swift
+public struct RequirementCatalogue: Sendable, Hashable {
+    public static let formatVersion = 1
+    public let identifier: String             // the resource name: AuditProject.catalogueVersion
+    public let source: CatalogueSource        // document, title, version, date, sha256 of the PDF
+    public let tlsSource: CatalogueSource     // where the TLS minimum comes from
+    public let policy: FindingsPolicy
+    public let requirements: [Requirement]    // in the catalogue's order, which is the document's
+    public init(data: Data) throws            // RequirementCatalogueError
+}
+
+public struct Requirement: Sendable, Hashable, Identifiable {
+    public let id: String                     // "O.Ntwk_1", as in the document
+    public let aspect: RequirementAspect      // number and name of its Prüfaspekt
+    public let title: String                  // the document's own short form, in its language
+    public let testDepth: TestDepth           // CHECK / EXAMINE
+    public let rule: RequirementRule
+    public let toolCoverage: String?          // what the tool looks at for it, and what it does not
+}
+
+public enum RequirementRule: Sendable, Hashable {
+    case outsideToolScope
+    case contraryFindings([FindingKind])
+    case contraryAndSupportingFindings(contrary: [FindingKind], supporting: [FindingKind])
+    public var check: FindingsCheck? { get }
+}
+
+public enum RequirementVerdict: Sendable, Hashable {
+    case contradicted
+    case observedWithoutContradiction
+    case notAssessed(NotAssessedReason)       // .outsideToolScope / .nothingObserved
+}
+
+public struct RequirementAssessment: Sendable, Hashable {
+    public let requirement: Requirement
+    public let verdict: RequirementVerdict
+    public let contraryFindings: [Finding]
+    public let supportingFindings: [Finding]
+    public let coverage: CheckCoverageSummary?   // of the check behind the rule
+}
+
+public struct SessionAssessment: Sendable, Hashable {
+    public let catalogue: RequirementCatalogue
+    public let findings: SessionFindings
+    public let requirements: [RequirementAssessment]
+    public init(catalogue:flows:project:session:markers:)
+}
+
+public enum RequirementCatalogueLibrary {
+    public static let defaultIdentifier = "tr-03161-1_3.0"
+    public static func catalogue(for project: AuditProject) throws -> RequirementCatalogue
+    public static func catalogue(identifier: String) throws -> RequirementCatalogue
+}
+```
+
+### The verdict is not the test result
+
+TR-03161-1 gives a test four possible results — `PASS`, `INCONCLUSIVE`, `FAIL`, `N/A` (table 3) —
+and has the assessor justify each. None of them is this tool's to give. What it gives is what the
+traffic showed:
+
+| What the session shows | Verdict |
+|---|---|
+| The rule reads no finding kind | `notAssessed(.outsideToolScope)` |
+| A finding of a contrary kind | `contradicted`, whatever else was seen |
+| No contrary finding, and the rule's check has satisfied flows or a supporting finding exists | `observedWithoutContradiction` |
+| Anything else | `notAssessed(.nothingObserved)` |
+
+- **There is no case that says *passed*.** `observedWithoutContradiction` is bounded by the
+  requirement's `toolCoverage`, which the report prints beside it: nothing contradicting `O.Ntwk_1`
+  means no HTTP request was seen in the clear, not that mutual authentication was shown.
+- **No findings is not enough to say anything.** Without a contrary finding the verdict needs flows
+  the check could actually look at (`CheckCoverage.satisfiedFlowIDs`); a session where nothing was
+  readable is *not assessed*. A consent requirement in a session nobody marked, or in a baseline,
+  lands there too, and the coverage says how many flows were unassessed or not applicable.
+- **Pinning has its own rule** because its check never has satisfied flows (§ *Whether the app
+  pins*): `pinningAbsent` contradicts, `pinningObserved` supports. Supporting findings are returned
+  even when the verdict is `contradicted` — a host that refused the local CA still did.
+- **A rule reads one check.** Every finding kind belongs to one of the classifier's five checks
+  (`FindingKind.check`; that map is code, not JSON), and a rule whose kinds span two is refused:
+  there would be no single coverage to say how much was looked at.
+- **The findings and the requirements cannot come from two catalogues.** `SessionAssessment`
+  classifies with the catalogue's own `policy`. `Requirement.assess(_:)` is public for the tests
+  and for a caller that already holds the findings, and says what it assumes.
+- **The release diff enters no requirement.** TR-03161-1 has no aspect about what changed between
+  two versions, and `ReleaseDiff` produces no `Finding`. It is a section of the report.
+
+### The format
+
+```json
+{
+  "formatVersion": 1,
+  "identifier": "tr-03161-1_3.0",
+  "source": { "document": "…", "title": "…", "version": "3.0", "date": "2024-03-25", "sha256": "…" },
+  "tls": { "minimumVersion": "1.2", "source": { … } },
+  "requirements": [
+    { "id": "O.Ntwk_4",
+      "aspect": { "number": 9, "name": "Netzwerkkommunikation" },
+      "title": "Unterstützung von Zertifikats-Pinning.",
+      "testDepth": "EXAMINE",
+      "rule": "contraryAndSupportingFindings",
+      "contraryKinds": ["pinningAbsent"],
+      "supportingKinds": ["pinningObserved"],
+      "toolCoverage": "…" }
+  ]
+}
+```
+
+Refused on loading, each with the requirement it is in: another `formatVersion`; an empty
+identifier, title or source field; a date that is not `yyyy-MM-dd`; a digest that is not 64 lower
+case hex digits; a TLS minimum other than `"1.0"`–`"1.3"`; no requirements, or one repeated; an
+unknown test depth, rule or finding kind (the raw values of `FindingKind` are format); a rule whose
+kinds do not fit it — missing, unexpected, repeated, or of several checks; and a rule that reads
+findings without a `toolCoverage`.
+
+- **The TLS minimum is written as the document writes it** (`"1.2"`), not as its wire value: a
+  catalogue is corrected by someone who assesses against the guideline.
+- **`toolCoverage` is the catalogue's text, not the document's**, and it is mandatory wherever a
+  verdict other than *not assessed* is possible.
+- **Unknown keys are ignored.** A misspelt optional key is caught by the rule's shape, not by name.
+
+### The catalogue that ships: `tr-03161-1_3.0`
+
+| | |
+|---|---|
+| Requirements | BSI TR-03161-1, *Anforderungen an Anwendungen im Gesundheitswesen – Teil 1: Mobile Anwendungen*, version 3.0 of 2024-03-25 |
+| TLS minimum | TLS 1.2, from BSI TR-02102-2 version 2026-01 of 2026-01-27, § 3.2: TLS 1.3 and 1.2 are recommended, 1.0, 1.1 and SSL are not |
+
+TR-03161-1 3.0 itself cites TR-02102-2 in its 2023-01 version; `O.Ntwk_2` asks for the current
+state of the art, so the minimum is taken from the version in force, which recommends the same two.
+
+| Requirement | Rule | Reads |
+|---|---|---|
+| `O.Purp_3` | `contraryFindings` | `activityBeforeConsent` |
+| `O.Purp_8` | `contraryFindings` | `hostNotInAllowlist`, `unnamedFlow` |
+| `O.Ntwk_1` | `contraryFindings` | `cleartextTraffic` |
+| `O.Ntwk_2` | `contraryFindings` | `weakTLSVersion` |
+| `O.Ntwk_4` | `contraryAndSupportingFindings` | `pinningAbsent` against, `pinningObserved` for |
+| `O.Ntwk_3`, `_5`, `_6`, `_7`, `_8` | `outsideToolScope` | — |
+
+- **Test aspect 9 (network communication) is listed whole**, so the report says of five of its
+  eight requirements that this tool does not assess them. Of aspect 1 only the two a network
+  observation bears on are listed; the rest of the document is not in the catalogue.
+- **Identifiers, titles and test depths are the document's**, word for word: the title is the
+  *Kurzfassung des Prüfaspekts* of the test characteristics (chapter 4.3), in German.
+  `Tools/Catalogue/verify.py` checks all three against the PDF, and that the PDF is the one the
+  catalogue cites by its SHA-256. The PDF is not in the repository.
+- **Which finding bears on which requirement is this project's reading**, not the document's, and
+  has not been reviewed by someone who assesses against TR-03161. The two that stretch furthest are
+  on aspect 1: a connection opened before consent is network activity, not shown to be a processing
+  of personal data (`O.Purp_3`), and a connection to an unlisted host is not shown to carry
+  sensitive data (`O.Purp_8`). Each `toolCoverage` says so.
+
+### Which catalogue a project is assessed against
+
+`AuditProject.catalogueVersion` is a catalogue identifier or `nil`.
+
+- **`nil` is the default catalogue**, `RequirementCatalogueLibrary.defaultIdentifier`. The
+  catalogue used travels in the `SessionAssessment`, so the report names it either way.
+- **A named catalogue that is not bundled is an error**, `notBundled`, never replaced by another:
+  the report would cite a version of the document the project does not claim to be assessed
+  against.
+- Catalogues are read from the `Shared` framework's bundle (`Shared/Audit/Requirements/*.json`),
+  never from the network. A resource whose `identifier` is not its file name is refused.
+
 ## Tests
 
+- `RequirementCatalogueTests`: a well written catalogue is read whole; each TLS version the format
+  names and each it does not; every refusal listed in § *The format*, with the requirement it is
+  in; two kinds of one check fit a rule; every finding kind belongs to one check.
+- `RequirementAssessmentTests`: every row of the verdict table; a contrary finding contradicts
+  beside satisfied flows; only the kinds of the rule count; pinning with only refusals, with both
+  outcomes and without a trusted CA; consent without a marker and in a baseline is not assessed;
+  the coverage summary is the check's own.
+- `RequirementCatalogueLibraryTests`: the bundled catalogue loads and cites its two documents;
+  what it says of each requirement; every finding kind bears on one of its requirements; a project
+  without a catalogue gets the default, one that names it gets it, and one that names another is
+  refused; a session assessed requirement by requirement, with the catalogue's own minimum.
 - `SessionDomainsTests`: every row of the domain table; the host is normalised and a name from DNS
   with no competition is the same domain as an announced one; a domain can be seen by one flow and
   a candidate of another; unnamed flows are kept apart, an empty SNI included; first-appearance

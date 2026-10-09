@@ -27,6 +27,14 @@ trusted. `ConsentAssessment` is the one behind `activityBeforeConsent`: a flow's
 against the session's `consentGiven` markers (`ConsentInterval`), with no marker meaning *not
 assessed* rather than nothing found.
 
+`RequirementCatalogue` is one version of a requirements document read from a JSON resource
+(`Requirements/`, bundled with the framework): each requirement's identifier and title as the
+document gives them, the finding kinds that bear on it and one of three closed rules. A miswritten
+catalogue is refused when it is loaded. `SessionAssessment` classifies a session with the
+catalogue's thresholds and gives a `RequirementVerdict` per requirement — contradicted, observed
+without contradiction, or not assessed. There is no verdict that says *passed*: that is the
+assessor's to give. `RequirementCatalogueLibrary` finds the catalogue of a project.
+
 An *audit* session is not the *capture* session of `FlowStore`: the latter is the instant the store was
 opened and only keeps a recycled 5-tuple from merging two connections.
 
