@@ -157,6 +157,66 @@ public enum PcapFormat {
   The app still dates a packet from the **store**, which is the row it navigates by; the record's
   timestamp exists so the exported file stands on its own outside this app.
 
+The reading itself is `PcapFileReader` (`Shared/Capture`), since it gained a second caller — the
+capture of an evidence bundle, which slices these files to one audit session
+([`audit.md`](audit.md) § *The capture*):
+
+```swift
+public final class PcapFileReader {
+    public enum ReadError: Error, Sendable, Equatable {
+        case openFailed
+        case offsetInsideFileHeader(UInt64)
+        case format(PcapFormat.FormatError)
+        case recordExceedsSnaplen(inclLen: UInt32, snaplen: UInt32)
+        case recordCutShort(expected: UInt32, actual: Int)
+        case readFailed(byteCount: Int, offset: UInt64, reason: String)
+    }
+    public let header: PcapFormat.GlobalHeader
+    public init(url: URL) throws                     // reads and validates the global header
+    public func record(at offset: UInt64) throws -> PcapRecord
+    public func close()
+}
+```
+
+One file opened once, any number of records read from it by offset. `CaptureLibrary` opens one per
+packet shown and words each failure for its screen; the slicer keeps one open per source file.
+Whoever opens a reader closes it.
+
+## pcapng, for what is exported as evidence
+
+The extension writes classic pcap and nothing here changes that. `PcapngFormat` exists for the one
+file that needs **options per packet** — the capture of an evidence bundle, where each packet
+carries a comment and its direction — and writes only the three blocks that takes:
+
+```swift
+public enum PcapngFormat {
+    public enum FormatError: Error, Sendable, Equatable {
+        case optionTooLong(code: UInt16, byteCount: Int)
+        case packetTooLong(byteCount: Int)
+    }
+    public static func sectionHeader(application: String?) throws -> Data
+    public static func interfaceDescription(snaplen: UInt32) throws -> Data
+    public static func enhancedPacket(
+        timestampMicroseconds: UInt64, originalLength: UInt32, bytes: Data,
+        direction: Direction?, comment: String?
+    ) throws -> Data
+}
+```
+
+- Little-endian throughout, as the section header's byte-order magic says. Every block is
+  `type · length · body · length` with the body padded to 32 bits; an option's length leaves its
+  padding out.
+- **The section length is written as unspecified** (`-1`): the file is streamed and never
+  revisited.
+- **One interface**: `LINKTYPE_RAW`, with `if_tsresol` 6 — microseconds, which is all a classic
+  record holds; writing more would be inventing it.
+- **A packet with neither comment nor direction has no option list at all**, not an empty one.
+- **`epb_flags`** carries the direction in its two low bits: `01` inbound, `10` outbound.
+- An option value over 65 535 bytes is refused rather than cut.
+
+It was checked against a reader this project did not write: `tcpdump -k IDC -r` prints each
+packet's instant, `in` / `out` and comment.
+
 ## Export
 
 The app shares capture files via the share sheet as `.pcap`. Provide a per-flow export too

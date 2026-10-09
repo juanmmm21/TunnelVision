@@ -38,8 +38,12 @@ assessor's to give. `RequirementCatalogueLibrary` finds the catalogue of a proje
 `Evidence/` holds the documents a closed session is exported as. `EvidenceBundle` classifies the
 session itself and gives `session.json`, `flows.json` (with `flows.csv`, its flattened view) and
 `findings.json` as values that encode to the same bytes every time; `EvidenceManifest` lists the
-SHA-256 of each file. Every sentence the bundle writes is in `EvidenceWording`. Nothing here
-touches the disk: the capture and the folder are written elsewhere.
+SHA-256 of each file. Every sentence the bundle writes is in `EvidenceWording`. None of those
+touches the disk. `EvidenceCaptureWriter` is the part that does: it slices the device's capture
+files to the packets of the session's flows and writes `capture.pcapng`, each packet commented
+with its flow and that flow's findings, hashing as it writes; `EvidenceCaptureDocument`
+(`capture.json`) counts, per flow and per reason, the packets that are not in it. The folder and
+the archive are written elsewhere.
 
 An *audit* session is not the *capture* session of `FlowStore`: the latter is the instant the store was
 opened and only keeps a recycled 5-tuple from merging two connections.

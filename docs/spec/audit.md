@@ -176,7 +176,21 @@ Capture files do not carry the session anywhere. It is **derived**:
 `captureFileSequences(inAuditSession:)` returns the files the session's packets point at. A `.pcap`
 rotates by size, not by session, so one file can hold traffic from inside and outside a session; a tag
 on the file would be the same fact said twice and wrong half of the time. Slicing a capture to the
-session is the evidence bundle's job.
+session is the evidence bundle's job (§ *The capture*), and it reads the same derivation one step
+finer:
+
+```swift
+extension FlowStore {
+    /// Per flow and per capture file (nil: never captured), how many packets the history holds.
+    public func packetCounts(inAuditSession id: Int64) throws -> [SessionPacketCount]
+    /// The session's packets whose bytes are in one file, by ascending offset.
+    public func capturedPackets(inAuditSession id: Int64, fileSequence: UInt32) throws -> [SessionCapturedPacket]
+}
+```
+
+`capturedPackets` is asked **one file at a time**: a file rotates at 64 MB, so what is held in
+memory is bounded by a file and not by how long the session ran. A packet without capture stores
+file `0` beside offset `0`, and the offset is what says so — it is never counted in file 0.
 
 ## Retention
 
@@ -976,7 +990,8 @@ state of the art, so the minimum is taken from the version in force, which recom
 What a closed session is exported as: one folder, with the structured evidence as JSON and CSV, the
 capture, and a manifest of digests. `EvidenceBundle` (`Shared/Audit/Evidence`) builds the
 **documents** and nothing else — it is pure: no history, no clock, no disk. The capture, which
-does not fit in memory, and the folder itself are written by whoever calls it.
+does not fit in memory, is written by `EvidenceCaptureWriter` (§ *The capture*); the folder itself
+is written by whoever calls both.
 
 | File | What it is |
 |---|---|
@@ -984,6 +999,8 @@ does not fit in memory, and the folder itself are written by whoever calls it.
 | `flows.json` | Every flow of the session with its names and their origin, every TLS reading with its source, and the findings it proves |
 | `flows.csv` | The same flows, one row each, flattened for a spreadsheet |
 | `findings.json` | The catalogue cited, a verdict per requirement, the findings, and how far each of the five checks got |
+| `capture.pcapng` | The packets of the session's flows, each with a comment naming its flow and that flow's findings |
+| `capture.json` | What the capture holds and, per flow and per reason, the packets it does not |
 | `manifest.json` | The SHA-256 of every other file |
 
 ```swift
@@ -1093,7 +1110,7 @@ Two exports of the same session give the same identifiers; the same host in two 
   `upstreamVersion`, `clientOffer`, `clientOfferCeiling`, `quicVersion`,
   `attributedNameAllowed`). A requirement names its check instead of repeating its coverage.
 - **Packets are not cited.** A finding points at flows; from a flow to its packets one goes through
-  the bundle's capture, which is what knows where the bytes ended up once it is sliced.
+  the bundle's capture, where every packet says which flow it belongs to (§ *The capture*).
 
 ### Wording
 
@@ -1123,6 +1140,89 @@ space, and a TLS version is written without one (`TLS1.2`, or `0x7F1C` when it h
   with `=`, `+`, `-`, `@`, a tab or a carriage return is written with an apostrophe in front. The
   untouched value is in `flows.json`.
 - A cell with a comma, a quote or a line break is quoted, and a quote inside it doubled.
+
+### The capture
+
+`capture.pcapng` is the device's rotated `.pcap` files sliced to the packets of the session's
+flows. `EvidenceCaptureWriter` writes it, and it is the one part of the bundle that reads the
+history and the disk.
+
+```swift
+public enum EvidenceCaptureWriter {
+    public static func write(
+        for bundle: EvidenceBundle, from store: FlowStore,
+        captureDirectory: URL, into folder: URL
+    ) async throws -> EvidenceCapture                 // EvidenceCaptureError, or the store's own
+}
+
+public struct EvidenceCapture: Sendable, Hashable {
+    public let document: EvidenceCaptureDocument      // capture.json
+    public let entry: EvidenceManifest.Entry          // capture.pcapng: size and SHA-256
+    public func documentFile() throws -> EvidenceFile
+}
+
+public enum EvidenceCaptureError: Error, Sendable, Hashable {
+    case flowNotInBundle(id: Int64)
+    case destinationUnavailable(String)
+    case writeFailed(String)
+}
+```
+
+- **pcapng, not classic pcap.** What the extension writes while it captures stays classic pcap
+  ([`pcap.md`](pcap.md)); the exported file is pcapng because only pcapng carries **options per
+  packet**, and the bundle needs two. `PcapngFormat` (`Shared/Capture`) writes the three blocks it
+  takes: one section header naming the tool that exported, one interface (`LINKTYPE_RAW`,
+  microsecond timestamps) and one enhanced packet block per packet. Wireshark and `tcpdump` open
+  it as they open a `.pcap`.
+- **How a finding reaches its packets: every packet carries a comment.** `flow=12`, or
+  `flow=12 findings=F1,F3` (`EvidenceCaptureComment`): the flow as listed in `flows.json` and the
+  findings of `findings.json` that flow is evidence of. Wireshark shows it and filters on it —
+  `frame.comment matches "flow=12( |$)"` for one flow, `frame.comment matches "F3(,|$)"` for the
+  packets behind one finding. It is not an index of offsets beside the capture because an offset
+  only means something in a file nobody has saved again, and a comment travels with its packet.
+- **Every packet carries its direction** (`epb_flags`: inbound or outbound, as seen from the
+  device). It is the one place the bundle says which way a packet went: `flows.json` has two
+  peers and does not know which is the device.
+- **The packets are those of the session's flows, all of them.** A flow belongs to a session when
+  it carried traffic while the session was open (§ *Which session a flow belongs to*), so it may
+  have begun before or gone on after; those packets are written too, and `capture.json` counts
+  them (`writtenOutsideSession`), comparing at the microsecond a record is stamped with.
+- **In the order they were captured**: source files by sequence, records by offset. The instant,
+  the captured bytes and the original length are the record's own, copied untouched.
+- **The interface's `snaplen` is the largest among the files that were read** — each file declares
+  its own, since changing the setting rotates — and `0` (*no limit*, in pcapng) when none was.
+  A packet cut by its file's `snaplen` keeps both lengths.
+- **A capture with no packets is still written**, as a section and an interface. The file is always
+  there and always opens; what it lacks is in `capture.json`.
+- **Packets of a flow the bundle does not list stop the export** (`flowNotInBundle`), before any
+  file is touched. It is the one thing `EvidenceBundle` could not check — that it was given every
+  flow — seen from the side where it shows: packets in the capture that `flows.json` cannot name.
+- **The digest is of the bytes as they are written**: the SHA-256 is fed with each chunk that goes
+  to disk and handed to the manifest as an `Entry`. On any failure the partial file is removed —
+  half a capture under the name of a whole one is worse than none.
+- **The same session gives the same bytes**, like the documents: nothing in the file is read from
+  a clock.
+
+`capture.json` exists because a capture cannot say what it lacks — a packet without bytes is a
+packet that is not there:
+
+| Key | Notes |
+|---|---|
+| `file`, `fileFormat`, `linkType`, `snaplen` | `capture.pcapng`, `pcapng`, `101`; `snaplen` absent when no source file was read |
+| `packets` | `recorded` (what the history holds), `written`, and `withoutBytes` by reason. `recorded` is always the sum of the rest: a packet is written or has a reason not to be |
+| `withoutBytes.notCaptured` | Never written to a capture file: capture was off, or its writer failed |
+| `withoutBytes.captureFileMissing` | Its file is no longer on the device. The sweep never takes evidence (§ *Retention*); deleting by hand does |
+| `withoutBytes.recordUnreadable` | Its file is there but the record could not be read back: not a capture of ours, or cut short there |
+| `writtenOutsideSession` | `beforeStart`, `afterEnd`: written packets stamped outside the session |
+| `sourceFiles` | By sequence: `read` / `missing` / `unreadable`, how many of the session's packets pointed at it and how many were written |
+| `flows` | Every flow of `flows.json`, in its order, with its own `packets` — also those with none |
+| `contents`, `packetComments` | The two notes, from `EvidenceWording` |
+
+- **`contents` says what a reader must not assume**: the packets are written as they crossed the
+  tunnel, so what was sent in the clear is readable in the capture. That is the wire, not
+  decrypted content — which stays out of the bundle (ADR 0007).
+- **A flow still alive after its session ended keeps gaining packets.** The counts are those of the
+  rows walked while writing, not of an earlier query, so they always describe the file beside them.
 
 ### The manifest
 
@@ -1158,6 +1258,23 @@ export. It does not list itself.
   pieces; an entry of a file in memory; files sorted by name; every refusal; the manifest of a
   bundle covers its documents with the digest of their bytes and what is written apart; the
   manifest as a file.
+- `EvidenceCaptureWriterTests`, against a real `FlowStore`, files written by a real `PcapWriter`
+  and a pcapng reader that shares no code with the writer: the session's packets and only those,
+  in capture order across a rotation, each with its bytes, instant, direction and comment; the
+  entry is the digest of the bytes on disk and enters the manifest; the same session gives the
+  same bytes and replaces an earlier capture; a flow's findings in its packets' comments; a packet
+  cut by `snaplen`, and the largest `snaplen` on the interface; every reason a packet has no
+  bytes — a deleted file, a file that is not a capture, a record cut short, never captured — per
+  flow and per source file; a session with no bytes still gives a file that opens; packets from
+  before and after the session, with its first and last instant inside; packets of an unlisted
+  flow stop the export and touch nothing; a missing folder; the tally accounts for every packet;
+  `capture.json` key by key.
+- `PcapngFormatTests`: the section header and the interface byte for byte; a packet's lengths and
+  its instant above 2³²; padding for every length; the comment in UTF-8; the direction flags; an
+  option too long is refused; blocks read back as one file.
+- `AuditStoreTests` (packets of a session): counts by flow and file, with a flow from outside
+  sharing the file; a packet without capture is not counted in file 0; a file's packets in offset
+  order with their flow and direction.
 - `RequirementCatalogueTests`: a well written catalogue is read whole; each TLS version the format
   names and each it does not; every refusal listed in § *The format*, with the requirement it is
   in; two kinds of one check fit a rule; every finding kind belongs to one check.

@@ -20,4 +20,12 @@ control-channel codec and `PacketParser`/`PacketEmitter` made. The types that na
 record (`CaptureFileName`, `CaptureDirectory`, `CaptureLocation`) live in [`../Models`](../Models),
 next to the rest of the domain values.
 
+`PcapFileReader` is the reading half: one file opened once and records read from it by offset,
+with every way a record can be unreadable as its own case. It was the body of the app's
+`CaptureLibrary.record(at:)` until the evidence bundle became a second reader.
+
+`PcapngFormat` writes pcapng — a section header, one interface, enhanced packet blocks — and only
+for the capture of an evidence bundle, which needs what classic pcap cannot carry: a comment and a
+direction on each packet. The extension keeps writing classic pcap.
+
 **Spec:** [`../../docs/spec/pcap.md`](../../docs/spec/pcap.md) · **Milestones:** M6, M9, M11
