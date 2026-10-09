@@ -135,6 +135,37 @@ public struct StoredPacket: Sendable, Hashable, Identifiable {
     }
 }
 
+/// Cuántos paquetes de un flujo de una sesión de auditoría tienen sus bytes en un fichero de
+/// captura, o en ninguno.
+public struct SessionPacketCount: Sendable, Hashable {
+    public let flowID: Int64
+
+    /// `nil`: paquetes que el historial guarda sin bytes (la captura estaba apagada, o falló).
+    public let fileSequence: UInt32?
+
+    public let packetCount: Int
+
+    public init(flowID: Int64, fileSequence: UInt32?, packetCount: Int) {
+        self.flowID = flowID
+        self.fileSequence = fileSequence
+        self.packetCount = packetCount
+    }
+}
+
+/// Un paquete de una sesión de auditoría con bytes en un fichero de captura: de qué flujo es,
+/// dónde está su registro dentro de ese fichero y en qué sentido viajó.
+public struct SessionCapturedPacket: Sendable, Hashable {
+    public let flowID: Int64
+    public let recordOffset: UInt64
+    public let direction: Direction
+
+    public init(flowID: Int64, recordOffset: UInt64, direction: Direction) {
+        self.flowID = flowID
+        self.recordOffset = recordOffset
+        self.direction = direction
+    }
+}
+
 /// Un trozo de contenido descifrado guardado, con su instante ya fechado y su fila identificada.
 ///
 /// Lleva **dónde** están los bytes, no los bytes: leerlos es abrir el fichero que señala y validar

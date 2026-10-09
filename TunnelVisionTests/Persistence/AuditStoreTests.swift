@@ -589,6 +589,103 @@ final class AuditStoreTests: XCTestCase {
         XCTAssertEqual(count, 2)
     }
 
+    // MARK: - Paquetes de una sesión
+
+    /// Dos flujos de la sesión repartidos en dos ficheros, con paquetes sin captura, y un flujo de
+    /// fuera cuyos paquetes comparten fichero con ella.
+    private func seedSessionPackets(_ store: FlowStore) async throws -> (session: AuditSession, first: Int64, second: Int64) {
+        let project = try await makeProject(store)
+
+        let outsideKey = PersistenceFixtures.key(remote: ModelFixtures.v4(9, 9, 9, 9))
+        let outside = try await upsert(store, remote: ModelFixtures.v4(9, 9, 9, 9), firstSeen: 1, lastSeen: 2)
+        try await store.appendPackets(
+            [PersistenceFixtures.packet(timestamp: 1, key: outsideKey, capture: CaptureLocation(fileSequence: 4, recordOffset: 24))],
+            flowID: outside
+        )
+
+        let session = try await store.startAuditSession(sessionDraft(project: project.id), at: PersistenceFixtures.date(10))
+        let firstKey = PersistenceFixtures.key(remote: ModelFixtures.v4(1, 1, 1, 1))
+        let first = try await upsert(store, remote: ModelFixtures.v4(1, 1, 1, 1), firstSeen: 12, lastSeen: 20)
+        try await store.appendPackets(
+            [
+                // Escritos fuera de orden: lo que manda al leer es el offset, no la fila.
+                PersistenceFixtures.packet(timestamp: 13, key: firstKey, direction: .inbound, capture: CaptureLocation(fileSequence: 4, recordOffset: 300)),
+                PersistenceFixtures.packet(timestamp: 12, key: firstKey, capture: CaptureLocation(fileSequence: 4, recordOffset: 96)),
+                PersistenceFixtures.packet(timestamp: 14, key: firstKey, capture: CaptureLocation(fileSequence: 5, recordOffset: 24)),
+                PersistenceFixtures.packet(timestamp: 15, key: firstKey, capture: nil),
+                PersistenceFixtures.packet(timestamp: 16, key: firstKey, capture: nil),
+            ],
+            flowID: first
+        )
+        let secondKey = PersistenceFixtures.key(remote: ModelFixtures.v4(2, 2, 2, 2))
+        let second = try await upsert(store, remote: ModelFixtures.v4(2, 2, 2, 2), firstSeen: 13, lastSeen: 21)
+        try await store.appendPackets(
+            [PersistenceFixtures.packet(timestamp: 13, key: secondKey, direction: .inbound, capture: CaptureLocation(fileSequence: 4, recordOffset: 200))],
+            flowID: second
+        )
+        return (session, first, second)
+    }
+
+    func testPacketCountsOfASessionAreByFlowAndByTheFileThatHoldsTheirBytes() async throws {
+        let store = try makeStore()
+        let seeded = try await seedSessionPackets(store)
+
+        let counts = try await store.packetCounts(inAuditSession: seeded.session.id)
+
+        // Por flujo, y dentro de cada uno los que no tienen fichero primero. El paquete del flujo
+        // de fuera no cuenta aunque esté en el fichero 4.
+        XCTAssertEqual(counts, [
+            SessionPacketCount(flowID: seeded.first, fileSequence: nil, packetCount: 2),
+            SessionPacketCount(flowID: seeded.first, fileSequence: 4, packetCount: 2),
+            SessionPacketCount(flowID: seeded.first, fileSequence: 5, packetCount: 1),
+            SessionPacketCount(flowID: seeded.second, fileSequence: 4, packetCount: 1),
+        ])
+        let none = try await store.packetCounts(inAuditSession: 99)
+        XCTAssertEqual(none, [])
+    }
+
+    /// Un paquete sin captura guarda `pcap_file = 0`, que no es el fichero 0: no se cuenta con él.
+    func testPacketsWithoutCaptureAreNotCountedInFileZero() async throws {
+        let store = try makeStore()
+        let project = try await makeProject(store)
+        let session = try await store.startAuditSession(sessionDraft(project: project.id), at: PersistenceFixtures.date(10))
+        let key = PersistenceFixtures.key(remote: ModelFixtures.v4(1, 1, 1, 1))
+        let flow = try await upsert(store, remote: ModelFixtures.v4(1, 1, 1, 1), firstSeen: 12, lastSeen: 20)
+        try await store.appendPackets(
+            [
+                PersistenceFixtures.packet(timestamp: 12, key: key, capture: CaptureLocation(fileSequence: 0, recordOffset: 24)),
+                PersistenceFixtures.packet(timestamp: 13, key: key, capture: nil),
+            ],
+            flowID: flow
+        )
+
+        let counts = try await store.packetCounts(inAuditSession: session.id)
+        XCTAssertEqual(counts, [
+            SessionPacketCount(flowID: flow, fileSequence: nil, packetCount: 1),
+            SessionPacketCount(flowID: flow, fileSequence: 0, packetCount: 1),
+        ])
+        let inFileZero = try await store.capturedPackets(inAuditSession: session.id, fileSequence: 0)
+        XCTAssertEqual(inFileZero, [SessionCapturedPacket(flowID: flow, recordOffset: 24, direction: .outbound)])
+    }
+
+    func testCapturedPacketsOfAFileComeInOffsetOrderWithTheirFlowAndDirection() async throws {
+        let store = try makeStore()
+        let seeded = try await seedSessionPackets(store)
+
+        let inFour = try await store.capturedPackets(inAuditSession: seeded.session.id, fileSequence: 4)
+        XCTAssertEqual(inFour, [
+            SessionCapturedPacket(flowID: seeded.first, recordOffset: 96, direction: .outbound),
+            SessionCapturedPacket(flowID: seeded.second, recordOffset: 200, direction: .inbound),
+            SessionCapturedPacket(flowID: seeded.first, recordOffset: 300, direction: .inbound),
+        ])
+        let inFive = try await store.capturedPackets(inAuditSession: seeded.session.id, fileSequence: 5)
+        XCTAssertEqual(inFive, [SessionCapturedPacket(flowID: seeded.first, recordOffset: 24, direction: .outbound)])
+        let elsewhere = try await store.capturedPackets(inAuditSession: seeded.session.id, fileSequence: 6)
+        XCTAssertEqual(elsewhere, [])
+        let ofAnother = try await store.capturedPackets(inAuditSession: 99, fileSequence: 4)
+        XCTAssertEqual(ofAnother, [])
+    }
+
     func testASessionWithoutCapturedPacketsHasNoCaptureFiles() async throws {
         let store = try makeStore()
         let project = try await makeProject(store)

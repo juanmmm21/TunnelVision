@@ -550,15 +550,79 @@ public actor FlowStore {
         }
     }
 
-    private static func fileSequences(from values: [Int64]) throws -> Set<UInt32> {
-        var sequences: Set<UInt32> = []
-        for value in values {
-            guard let sequence = UInt32(exactly: value) else {
-                throw StoreError.corruptRow("pcap_file fuera de rango: \(value)")
+    /// Cuántos paquetes guarda el historial de una sesión de auditoría, por flujo y por el fichero
+    /// de captura en el que están sus bytes (`nil`: no se capturaron).
+    ///
+    /// Es lo que le deja decir al paquete de evidencia cuántos paquetes de la sesión **no** llevan
+    /// bytes y por qué, sin traerse una fila por paquete: los que nunca se capturaron salen de
+    /// aquí, y los de un fichero que ya no está, de cruzar esto con el directorio.
+    public func packetCounts(inAuditSession id: Int64) throws -> [SessionPacketCount] {
+        try dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT p.flow_id AS flow_id,
+                       CASE WHEN p.pcap_offset = 0 THEN NULL ELSE p.pcap_file END AS file,
+                       COUNT(*) AS packets
+                FROM packets p
+                JOIN flows f ON f.id = p.flow_id
+                WHERE f.audit_session_id = ?
+                GROUP BY p.flow_id, file
+                ORDER BY p.flow_id ASC, file ASC
+                """,
+                arguments: [id]
+            )
+            return try rows.map { row in
+                let file: Int64? = row["file"]
+                return SessionPacketCount(
+                    flowID: row["flow_id"],
+                    fileSequence: try file.map(Self.fileSequence(from:)),
+                    packetCount: row["packets"]
+                )
             }
-            sequences.insert(sequence)
         }
-        return sequences
+    }
+
+    /// Los paquetes de una sesión de auditoría cuyos bytes están en un fichero de captura, por
+    /// offset ascendente — que dentro de un fichero es el orden en que se capturaron.
+    ///
+    /// Se piden **fichero a fichero** y no la sesión entera: un fichero rota a los 64 MB, así que
+    /// lo que se tiene en memoria a la vez está acotado por él y no por lo que dure la sesión.
+    public func capturedPackets(
+        inAuditSession id: Int64,
+        fileSequence: UInt32
+    ) throws -> [SessionCapturedPacket] {
+        try dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT p.flow_id, p.pcap_offset, p.direction
+                FROM packets p
+                JOIN flows f ON f.id = p.flow_id
+                WHERE f.audit_session_id = ? AND p.pcap_file = ? AND p.pcap_offset != 0
+                ORDER BY p.pcap_offset ASC, p.id ASC
+                """,
+                arguments: [id, Int64(fileSequence)]
+            )
+            return try rows.map { row in
+                SessionCapturedPacket(
+                    flowID: row["flow_id"],
+                    recordOffset: Serialization.uint64(row["pcap_offset"]),
+                    direction: try Serialization.direction(from: row["direction"])
+                )
+            }
+        }
+    }
+
+    private static func fileSequences(from values: [Int64]) throws -> Set<UInt32> {
+        try Set(values.map(fileSequence(from:)))
+    }
+
+    private static func fileSequence(from value: Int64) throws -> UInt32 {
+        guard let sequence = UInt32(exactly: value) else {
+            throw StoreError.corruptRow("pcap_file fuera de rango: \(value)")
+        }
+        return sequence
     }
 
     /// Mayor secuencia de fichero de captura que el historial referencia, o `nil` si ningún paquete
