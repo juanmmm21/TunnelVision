@@ -8,9 +8,12 @@ public struct EvidenceSessionDocument: Encodable, Sendable, Hashable {
 
     /// Lo que el paquete dice de sí mismo, para que quien lo abra sepa qué **no** hay dentro sin
     /// deducirlo de la ausencia de un fichero.
+    ///
+    /// Nombra la captura porque va en la misma carpeta: «solo metadatos» al lado de un `.pcapng`
+    /// sería falso, y lo que viajó en claro se lee en él (lo dice `capture.json`).
     public static let contentsNote =
-        "Connection metadata and what it shows against a requirement catalogue. "
-        + "Decrypted content is not part of this bundle."
+        "Connection metadata, what it shows against a requirement catalogue, and a capture of the "
+        + "session's packets as they crossed the tunnel. Decrypted content is not part of this bundle."
 
     /// El método de atribución, que el informe está obligado a decir (ADR 0008): el túnel ve
     /// paquetes, no procesos.
