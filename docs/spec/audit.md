@@ -990,8 +990,8 @@ state of the art, so the minimum is taken from the version in force, which recom
 What a closed session is exported as: one folder, with the structured evidence as JSON and CSV, the
 capture, and a manifest of digests. `EvidenceBundle` (`Shared/Audit/Evidence`) builds the
 **documents** and nothing else — it is pure: no history, no clock, no disk. The capture, which
-does not fit in memory, is written by `EvidenceCaptureWriter` (§ *The capture*); the folder itself
-is written by whoever calls both.
+does not fit in memory, is written by `EvidenceCaptureWriter` (§ *The capture*); the folder and
+its archive are written by the app's `EvidenceExporter`, which calls both (§ *The exporter*).
 
 | File | What it is |
 |---|---|
@@ -1238,8 +1238,96 @@ export. It does not list itself.
 - **Refused**: no files; a name that is not a plain file name (empty, `.`, `..`, or with a `/`); a
   name twice; `manifest.json` itself; a digest that is not 64 lower case hex digits.
 
+### The exporter
+
+`EvidenceExporter` (`TunnelVision/Services`) is the app's half: it reads a closed session out of the
+history, has the two pieces above write its folder, and compresses it.
+
+```swift
+public actor EvidenceExporter {
+    public init(appGroupID: String = AppGroup.identifier)
+    public func export(
+        sessionID: Int64, exportedWith: String, now: Date = Date()
+    ) async throws -> EvidenceExportResult             // EvidenceExportError
+}
+
+public struct EvidenceExportResult: Sendable, Equatable {
+    public let url: URL                                // the .zip
+    public let byteCount: UInt64
+    public let fileNames: [String]                     // the seven files, by name
+    public let flowCount: Int
+    public let findingCount: Int
+    public let capture: EvidenceCaptureDocument        // capture.json, as written
+}
+
+public enum EvidenceExportError: Error, Sendable, Equatable {
+    case sessionNotFound
+    case sessionStillOpen
+    case catalogueNotBundled(identifier: String)
+    case catalogueUnusable(identifier: String)
+    case historyUnreadable(HistoryError)
+    case historyChangedWhileExporting
+    case captureDirectoryUnavailable(String)
+    case writeFailed(String)
+}
+```
+
+- **The order of writing is the order of trust.** The four documents are encoded, the capture is
+  written and hashed, `capture.json` is encoded, and **`manifest.json` goes last**, over the very
+  bytes that were written. Then the folder is compressed.
+- **One archive, with one folder inside.** `tunnelvision-evidence-session-<id>-<yyyyMMdd-HHmmss>.zip`
+  (the instant in UTC) holds a folder of the same name with the seven files. The name carries the
+  session's identifier and neither the project's name nor the release: both are free text typed by
+  the assessor, and which session it is, is what `session.json` says.
+- **Compressed by the system**, with `NSFileCoordinator`'s `.forUploading` — no dependency. The
+  archive it hands over exists only inside its block, so it is moved out before returning.
+- **In the app's temporary directory**, like the connections export and for more reason: the
+  capture holds, readable, whatever was sent in the clear, and from a medical app that can be
+  health data. There is **at most one bundle on disk** — every export first removes whatever an
+  earlier one left, whole or interrupted, and only what carries its own prefix — and the
+  uncompressed folder does not outlive the export: what is left is the archive.
+- **A failure leaves nothing.** Neither the half-written folder nor an archive. A bundle that lacks
+  a file, or whose manifest does not cover what lies beside it, does not read as an error to whoever
+  receives it: it reads as evidence.
+- **Every flow, with no limit.** `flows(inAuditSession:limit:)` is asked for all of them: a bundle
+  lists every flow of its session or is not evidence of it, and a closed session gains no more.
+  Should the capture still find packets of a flow that was not read, the export stops as
+  `historyChangedWhileExporting` — repeating it is the remedy, which is why it is its own case.
+- **An open session is refused before any flow is read**, and a project naming a catalogue this
+  build does not carry is **not exported with another** (`catalogueNotBundled`).
+- **The result carries `capture.json`.** How many packets have no bytes, and why, is what an
+  assessor does not see by opening the archive, so whoever offers it to be shared has it in hand.
+- **Whoever calls passes the tool's version** (`exportedWith`, written as
+  `AuditRecordingConditions.toolVersion` writes it) **and the instant**: the exporter reads no
+  clock of its own beyond the default argument.
+
+**Measured** on a Simulator (`EvidenceExporterMeasurementTests`, which runs only when asked: it
+seeds hundreds of megabytes). A session of 400 000 packets and 229 MB of capture in four source
+files:
+
+| Flows | Time | Memory footprint, before → peak |
+|---|---|---|
+| 20 000 | 4.8 s | 38 MB → 143 MB |
+| 2 000 | 3.2 s | 38 MB → 85 MB |
+
+Memory follows the **number of flows** — about 3 kB each, the documents held whole in memory (§
+*Evidence bundle*) — over some 45 MB that go with the packets. While it runs, the disk holds the
+folder and the archive at once: up to twice the capture. The archive sizes of that run say nothing:
+the seeded payload is one repeated byte.
+
 ## Tests
 
+- `EvidenceExporterTests`, against a real `FlowStore`, files written by a real `PcapWriter` and a
+  zip reader that shares no code with anything: the archive holds the seven files in one folder;
+  the manifest inside it is the size and digest of every other file inside it; the documents are
+  the session's, with its markers and the exporting tool; the capture holds the session's packets;
+  `session.json` names the capture beside it; the result carries what the capture lacks, as
+  `capture.json` in the archive says it; a session with no traffic still gives a whole bundle;
+  every flow is listed however many there are; only the archive is left on disk; an export takes
+  the previous one, and an interrupted one, and nothing else; two exports of a session at the same
+  instant carry the same files; an open session, a session that is gone, a catalogue that is not
+  bundled, a history that does not open, a capture directory that does not resolve and a
+  destination that cannot be created, each as its own case; the names.
 - `EvidenceBundleTests`: the three refusals; a session with no flows still gives every document;
   what `session.json` says of an audit and of a baseline; markers are the session's own, by
   instant, and another session's does not date the flows; findings are numbered in order and each
