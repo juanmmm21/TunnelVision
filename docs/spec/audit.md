@@ -3,8 +3,9 @@
 The data model of the TR-03161 network evidence workflow: what is audited, each recording of it, and
 the instants marked inside a recording, the classifier that turns a recording's flows into
 findings (§ *Findings*), the comparison of two recordings of the same project (§ *Release
-diff*), and the catalogue that ties findings to the requirements of a document (§ *Requirement
-catalogue*). Scope and attribution method:
+diff*), the catalogue that ties findings to the requirements of a document (§ *Requirement
+catalogue*), and the documents of the bundle a session is exported as (§ *Evidence bundle*). Scope
+and attribution method:
 [`../decisions/0008-tr03161-audit-workflow-scope.md`](../decisions/0008-tr03161-audit-workflow-scope.md).
 
 The value types live in `Shared/Audit`; their storage is the audit half of `FlowStore`
@@ -970,8 +971,193 @@ state of the art, so the minimum is taken from the version in force, which recom
 - Catalogues are read from the `Shared` framework's bundle (`Shared/Audit/Requirements/*.json`),
   never from the network. A resource whose `identifier` is not its file name is refused.
 
+## Evidence bundle
+
+What a closed session is exported as: one folder, with the structured evidence as JSON and CSV, the
+capture, and a manifest of digests. `EvidenceBundle` (`Shared/Audit/Evidence`) builds the
+**documents** and nothing else — it is pure: no history, no clock, no disk. The capture, which
+does not fit in memory, and the folder itself are written by whoever calls it.
+
+| File | What it is |
+|---|---|
+| `session.json` | The project with its allowlist, the session with its release, device, inspection conditions and markers, and the two things a reader must be told: what is not inside, and how traffic is attributed |
+| `flows.json` | Every flow of the session with its names and their origin, every TLS reading with its source, and the findings it proves |
+| `flows.csv` | The same flows, one row each, flattened for a spreadsheet |
+| `findings.json` | The catalogue cited, a verdict per requirement, the findings, and how far each of the five checks got |
+| `manifest.json` | The SHA-256 of every other file |
+
+```swift
+public struct EvidenceBundle: Sendable, Hashable {
+    public let assessment: SessionAssessment          // what the documents were built from
+    public let session: EvidenceSessionDocument
+    public let flows: EvidenceFlowsDocument
+    public let findings: EvidenceFindingsDocument
+
+    public init(
+        project: AuditProject, session: AuditSession, markers: [SessionMarker],
+        flows: [StoredFlow], catalogue: RequirementCatalogue,
+        exportedWith: String, exportedAt: Date
+    ) throws                                          // EvidenceBundleError
+
+    public func documentFiles() throws -> [EvidenceFile]      // the four documents, encoded
+    public func manifest(
+        of files: [EvidenceFile], adding extra: [EvidenceManifest.Entry]
+    ) throws -> EvidenceManifest
+}
+
+public enum EvidenceBundleError: Error, Sendable, Hashable {
+    case sessionOfAnotherProject(sessionProjectID: Int64, projectID: Int64)
+    case sessionStillOpen
+    case duplicateFlow(id: Int64)
+}
+
+public struct EvidenceManifest: Encodable, Sendable, Hashable {
+    public struct Entry { name, byteCount, sha256 }   // init(_: EvidenceFile) hashes the bytes
+    public init(sessionID: Int64, exportedAt: Date, entries: [Entry]) throws   // EvidenceManifestError
+    public func file() throws -> EvidenceFile
+    public static func sha256(of data: Data) -> String
+    public static func hex(_ digest: SHA256.Digest) -> String
+}
+```
+
+- **The bundle classifies; it is not handed an assessment.** It builds the `SessionAssessment`
+  itself from the flows it is given, so the flows listed in `flows.json` and the flows the findings
+  of `findings.json` point at cannot come from two lists. The assessment is kept, for the report.
+- **It must be given every flow of the session**, in the history's order, and it cannot check that
+  it was: a flow left out is neither assessed nor listed. A flow given twice is refused.
+- **An open session is not exported.** Its flows are still changing, and `endedAt` is not optional
+  in `session.json`. A session of another project is refused too: it would be judged against
+  somebody else's allowlist. Markers of another session are ignored, in the classification and in
+  the document.
+- **A baseline is exported like any other session**, with `kind` `baseline` and no `release`.
+- **One format version for the whole bundle** (`EvidenceBundleFormat.version`, `1`), written in
+  every document beside its own `format` identifier (`tunnelvision.evidence.session`, `.flows`,
+  `.findings`, `.manifest`). The documents are read together; one of them at another version is
+  not a bundle.
+- **The same session gives the same bytes.** Keys are sorted and instants are ISO 8601 in UTC with
+  fractional seconds, in JSON and in CSV alike. `exportedAt` is given, not read from a clock.
+- **An absent key is a reading that was not made.** Optional values are left out rather than
+  written as `null`. The one exception by design is `serverCertificate`, which is always present
+  and says why when there is no chain (§ below).
+- **Decrypted content is not in the bundle** ([ADR 0007](../decisions/0007-decrypted-content-retention.md)),
+  and `session.json` says so. Nor is the release diff: a bundle is one session.
+- **Two tool versions.** `session.environment.toolVersion` recorded the session; `exportedWith`
+  wrote the bundle. They can differ, and the wording of a finding is the exporter's.
+
+### Finding identifiers
+
+Each finding gets `F1`, `F2`… in the order of `SessionFindings.findings` — the order things
+happened. The identifier means something **only inside one bundle**: it is how a flow
+(`findingIDs`) and a requirement (`contraryFindingIDs`, `supportingFindingIDs`) point at a finding.
+Two exports of the same session give the same identifiers; the same host in two sessions does not.
+
+### What a flow carries
+
+| Key | Notes |
+|---|---|
+| `id`, `protocol`, `firstSeen`, `lastSeen`, `durationSeconds`, `bytesOut`, `bytesIn`, `packetCount` | `protocol` is `tcp` / `udp` / `icmp` / `icmpv6` / `other` |
+| `peers` | The two endpoints **as stored**, not split into local and remote: the canonical 5-tuple does not know which is the device. The direction is in the byte counts |
+| `tlsStatus` | `plaintext` / `encrypted` / `inspected` / `notInspectable`. On TCP the first two come from the port; what was observed is in `streamOpening` and the TLS readings |
+| `name` | `{ text, origin }`, origin `sni` or `dns`: the name the flow was judged by (`FlowName`) |
+| `sni`, `dnsName`, `dnsOtherNames` | The two fields as stored. A flow could have been any of `dnsOtherNames` |
+| `streamOpening` | `tlsHandshake` / `httpRequest` / `unrecognised` |
+| `clientTLS` | `versionsForm` is `listed` (the exact list) or `upTo` (then `versions` holds one entry, the **ceiling**); ALPN, how many identifiers were dropped, and the ECH mark |
+| `serverTLS` | `answer` `negotiated` — version, cipher suite, `fromHelloRetryRequest`, and **`source`** (`serverHello` / `upstreamConnection`) — or `refused` with the alert code |
+| `quic` | The version and the end it was read from; `client` is a proposed version |
+| `serverCertificate` | `visibility`: `presented` (with `chain` and `chainIsComplete`), `notSent` (with `absence`), `encryptedInHandshake`, `replacedByInspection`, `noNegotiation`, `notRead` |
+| `findingIDs` | The findings this flow proves |
+
+- **A TLS version is written as `{ wireValue, name }`**, the name absent when the value is not one
+  of the five published versions. A cipher suite and a QUIC version are `{ wireValue, hex }`
+  (`0xC02F`, `0x00000001`) with no name: a name table is presentation, and the code is what was sent.
+- **Nothing about a certificate was validated**, and `flows.json` says so in its own `contents`
+  note, together with what `upstreamConnection` means.
+
+### What `findings.json` says
+
+- **`verdicts`**, a note at the top: a verdict states what the traffic showed within the
+  requirement's `toolCoverage`; it is not a test result, and none says a requirement is met.
+- **`catalogue`**: the identifier, the two source documents with version, date and the SHA-256 of
+  the PDF the catalogue was verified against, and the TLS minimum it classified with.
+- **`requirements`**, one per requirement of the catalogue in its order: identifier, aspect, title
+  and test depth as the document gives them; `rule`; `verdict` — `contradicted`,
+  `observedWithoutContradiction` or `notAssessed`, the last with `notAssessedReason`
+  (`outsideToolScope` / `nothingObserved`); `verdictStatement`; **`toolCoverage`**, present
+  whenever the rule reads findings; the finding identifiers against and for; and `check`, the
+  name of the check whose coverage backs the rule.
+- **`findings`**: `id`, `kind` (the raw value of `FindingKind`), `statement`, the flows, and what
+  is stated in a field of its own — `host`, `tlsVersion` (version, `basis`, and
+  `fromHelloRetryRequest` or `quicVersion`), `cleartextProtocol`, `unnamedReason`.
+- **`checks`**, always all five: `satisfiedFlowIDs`, `notApplicableFlowIDs`, and `unassessed` —
+  a `reason` with the flows it holds and the details of that reason (`alert`, `tlsVersion`,
+  `upstreamVersion`, `clientOffer`, `clientOfferCeiling`, `quicVersion`,
+  `attributedNameAllowed`). A requirement names its check instead of repeating its coverage.
+- **Packets are not cited.** A finding points at flows; from a flow to its packets one goes through
+  the bundle's capture, which is what knows where the bytes ended up once it is sliced.
+
+### Wording
+
+`EvidenceWording` holds every sentence the bundle writes, in one place, because each is a limit
+that an earlier check set:
+
+| | Wording |
+|---|---|
+| `cleartextTraffic` | *An HTTP request was observed in the clear.* — a request that was seen, not a port |
+| `pinningObserved` | *A connection to this host refused the local CA's certificate.* — about the host, with the reason it may predate the session; never *the app pins* |
+| `pinningAbsent` | *…accepted a certificate issued by the local CA: for this host, a user-installed root is trusted.* |
+| `weakTLSVersion` | Names the catalogue's minimum, and says so when the version is the one the server negotiated *with the tunnel's own connection* |
+| `notAssessed(.outsideToolScope)` | *Not assessed by this tool.* |
+
+A statement carries no data: the host and the version are in their own fields. No sentence says
+*passed*, *compliant* or *fulfilled*, and a test holds that.
+
+### `flows.csv`
+
+One row per flow, in the same order, UTF-8 with CRLF (RFC 4180); `EvidenceFlowsCSV.headers` is the
+header row. It is a **flattened** view and `flows.json` is the one that counts: of a certificate
+chain only the server's own certificate is there, several values in one cell are separated by a
+space, and a TLS version is written without one (`TLS1.2`, or `0x7F1C` when it has no name).
+
+- **A cell that a spreadsheet would run is neutralised.** Almost everything in this file was chosen
+  by the other end — an SNI, an ALPN identifier, a certificate subject — and a cell that begins
+  with `=`, `+`, `-`, `@`, a tab or a carriage return is written with an apostrophe in front. The
+  untouched value is in `flows.json`.
+- A cell with a comma, a quote or a line break is quoted, and a quote inside it doubled.
+
+### The manifest
+
+`manifest.json` lists every other file by name with its size and SHA-256 in lower case hex (what
+`shasum -a 256` prints), sorted by name, so that the evidence can be shown to be unaltered after
+export. It does not list itself.
+
+- **The digest is of the bytes that are written.** `manifest(of:adding:)` takes the encoded files
+  rather than encoding again.
+- **The capture enters with a digest computed elsewhere.** It does not fit in memory, so whoever
+  writes it hashes it as it goes (`SHA256` fed in pieces, `EvidenceManifest.hex`) and hands in an
+  `Entry`.
+- **Refused**: no files; a name that is not a plain file name (empty, `.`, `..`, or with a `/`); a
+  name twice; `manifest.json` itself; a digest that is not 64 lower case hex digits.
+
 ## Tests
 
+- `EvidenceBundleTests`: the three refusals; a session with no flows still gives every document;
+  what `session.json` says of an audit and of a baseline; markers are the session's own, by
+  instant, and another session's does not date the flows; findings are numbered in order and each
+  flow cites its own; a finding carries what it states in its own fields, and a weak upstream
+  reading says whose connection it was; a requirement cites the findings behind its verdict, for
+  every verdict; every requirement that can get a verdict prints its coverage; the catalogue is
+  cited with its documents; every reason a check could not look, with its details; every flow
+  lands once in each check; a flow with every reading, a ceiling, a refusal, a name from DNS and
+  each certificate visibility; the encoded documents are the same bytes every time and readable
+  as plain JSON; no wording says *passed*; pinning is worded about the host.
+- `EvidenceFlowsCSVTests`: the headers are unique and an empty document is only the header; every
+  row has the header's columns; a flow's readings flattened; a reading that was not made is an
+  empty cell; rows keep the order given; quoting; the four leading characters that are neutralised,
+  and an ordinary name left alone.
+- `EvidenceManifestTests`: the digest against the FIPS 180-2 vectors, in one piece and fed in
+  pieces; an entry of a file in memory; files sorted by name; every refusal; the manifest of a
+  bundle covers its documents with the digest of their bytes and what is written apart; the
+  manifest as a file.
 - `RequirementCatalogueTests`: a well written catalogue is read whole; each TLS version the format
   names and each it does not; every refusal listed in § *The format*, with the requirement it is
   in; two kinds of one check fit a rule; every finding kind belongs to one check.

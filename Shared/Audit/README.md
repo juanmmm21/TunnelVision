@@ -35,6 +35,12 @@ catalogue's thresholds and gives a `RequirementVerdict` per requirement — cont
 without contradiction, or not assessed. There is no verdict that says *passed*: that is the
 assessor's to give. `RequirementCatalogueLibrary` finds the catalogue of a project.
 
+`Evidence/` holds the documents a closed session is exported as. `EvidenceBundle` classifies the
+session itself and gives `session.json`, `flows.json` (with `flows.csv`, its flattened view) and
+`findings.json` as values that encode to the same bytes every time; `EvidenceManifest` lists the
+SHA-256 of each file. Every sentence the bundle writes is in `EvidenceWording`. Nothing here
+touches the disk: the capture and the folder are written elsewhere.
+
 An *audit* session is not the *capture* session of `FlowStore`: the latter is the instant the store was
 opened and only keeps a recycled 5-tuple from merging two connections.
 
