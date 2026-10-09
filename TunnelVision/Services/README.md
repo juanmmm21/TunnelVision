@@ -107,6 +107,14 @@ markers over the shared `FlowStore`; it opens the store per operation and types 
 device, system, tool version, inspection state — from the device instead of asking for it. Spec:
 `docs/spec/audit.md`; screens: `docs/ux/audit.md`.
 
+**Evidence export (TR-03161 workflow).** `EvidenceExporter` writes a closed audit session as an
+evidence bundle: it has `Shared`'s `EvidenceBundle` and `EvidenceCaptureWriter` fill a folder in the
+app's temporary directory, writes `manifest.json` last, and compresses the folder into one archive
+with `NSFileCoordinator`. At most one bundle is on disk, and a failure leaves none. It is called
+from the session screen through `AuditViewModel`, which shows what the bundle holds before anything
+is shared. Spec: `docs/spec/audit.md` § *The exporter*; screen: `docs/ux/audit.md` § *Exporting a
+session*.
+
 **Flow export (M9, done).** `FlowExporter` writes the connection list as JSON for the Captures
 screen's share sheet, over `HistoryReader.flowPage(limit:after:)` — a page read that carries its own
 cursor and touches none of the Timeline's paging state, so exporting cannot move the list the user has

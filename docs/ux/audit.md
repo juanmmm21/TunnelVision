@@ -7,7 +7,7 @@ plus a baseline) and the **markers** placed inside a session. The model undernea
 [ADR 0008](../decisions/0008-tr03161-audit-workflow-scope.md).
 
 ```
-Audit (tab) ──▶ Project ──▶ Session
+Audit (tab) ──▶ Project ──▶ Session ──▶ Evidence bundle (sheet, once the session has ended)
    │              │  └─ Start session (sheet)
    │              └─ Edit project (sheet)
    └─ New project (sheet)
@@ -68,6 +68,8 @@ Ordered by what the screen is opened for:
 2. **Mark now** (only while recording) — *Consent given*, *Logged in*, *Logged out* and *Other…*.
    Above the list of markers already placed, because while recording this is what the screen is
    opened to do. A marker is stamped with the instant of the **tap**.
+   Once the session has ended this place is taken by **Evidence bundle**, for the same reason: it is
+   what the screen is opened for in that state (§ *Exporting a session*).
 3. **Markers** — as they happened, to the second. A closed session takes no more and says why: a
    marker placed after looking at the traffic is no longer an observation.
 4. **Certificate pinning** — what this session can say about it, decided by `PinningEvidence`
@@ -79,10 +81,63 @@ Ordered by what the screen is opened for:
    ([ADR 0003](../decisions/0003-no-third-party-pinning-bypass.md)).
 5. **Recorded on** — device model, iOS, TunnelVision version.
 6. **Notes**, only if any were written.
-7. **End session** and **Delete session**, both confirmed. Ending is irreversible in the two ways
+7. **End session** (while recording) and **Delete session**, both confirmed. Ending is irreversible in the two ways
    the prompt names: tagging stops and no marker can be added. Deleting says what is *not* lost —
    the connections stay in the history — and what changes for them: they stop being evidence and
    expire with the storage limits.
+
+## Exporting a session
+
+A session that has **ended** offers one row, *Export evidence*, under its status. A recording one
+does not: a bundle is closed evidence ([`../spec/audit.md`](../spec/audit.md) § *Evidence bundle*).
+
+Tapping the row **shares nothing**. It writes the bundle — the row shows progress and every other
+row that writes is disabled meanwhile — and then opens a sheet that says what was written. Sharing
+is the button at the bottom of that sheet. The order is the one the connections export already has
+in Captures, and it matters more here: what leaves the device is a capture.
+
+The sheet, top to bottom, and why each line is there:
+
+1. **What it is**: *Evidence bundle ready to share*, its size, `ZIP`, how many files.
+2. **What the bundle says of itself**, in the bundle's own words (`session.json`'s `contents`):
+   connection metadata, what it shows against a requirement catalogue, a capture — and that
+   decrypted content is not part of it.
+3. **Connections** and **Findings**, as counts, and under them what `findings.json` says of its
+   verdicts, again in its own words: a verdict is not a test result, and none states that a
+   requirement is met.
+4. **Capture** — the part nobody can see by opening the archive. Decided by
+   `EvidenceCaptureStanding` (pure, no default), which has three cases and not a tally with three
+   zeroes:
+   - every recorded packet is in the capture — one neutral sentence;
+   - some are missing — a warning headline, *4,842 of 4,895 recorded packets are in the capture*,
+     and **one sentence per reason that has packets**: never written to a capture file, in a
+     capture file that is no longer on this device, could not be read back;
+   - the session recorded no packets — said as that, not as a complete capture.
+
+   Then, if any, the packets that *are* in the capture but fall outside the session's time window,
+   with why they are there (their connection was also active during the session): without the
+   sentence they read as traffic that should not be in the file. And always, last: **anything that
+   was sent unencrypted can be read in the capture**. "No decrypted content" is easily read as "no
+   content", and from a medical app what travelled in the clear can be health data.
+5. The **file name**, in the `literal` role, and **Share**.
+
+**The bundle's own sentences are quoted, not reworded.** Items 2 and 3 show
+`EvidenceSessionDocument.contentsNote` and `EvidenceWording.verdictsNote` as they are written into
+the files. They are limits that were costly to settle, and a second wording on the screen would
+sooner or later say something else than the file the user is about to send. The cost is visible: the
+verdict note names `toolCoverage`, a key of `findings.json`. The sentences about the capture are the
+screen's own, from the string catalog, because they carry this export's numbers; each reason is
+worded as `capture.json` defines it.
+
+**An export that fails is a notice at the top of the session screen**, never a sheet, and each of
+the eight ways it can fail has a sentence of its own (`AuditPresentation.evidenceExportFailed`). A
+catalogue this version does not include is **named**, and the sentence says no other was used
+instead; a history that changed under the export says to export again; a failed write says nothing
+was left behind and names the one cause a user can act on, free space. The section sits second on
+the screen so that the notice appears where the row was tapped.
+
+Closing the sheet does not delete the archive: the system share sheet may still be reading it. The
+next export does — there is at most one bundle on disk, in the app's temporary directory.
 
 ## The two forms
 
@@ -153,3 +208,12 @@ From `idb ui describe-all` on an iPhone 17, and what each measurement changed:
   The label takes `neutral` while disabled.
 - At the largest accessibility size, in dark, every fact row stacks its label over its value and
   nothing truncates.
+- **The export row measures 51 pt** at the default size and 155 pt at the largest, where its label
+  wraps instead of truncating.
+- **The evidence sheet ends at 681 pt of an 874 pt screen at the default size** — it fits with
+  *Share* in view, which is why it opens at the large detent and not the medium one of the
+  connections export: at medium the capture's sentences would sit under the fold with the button
+  above them. **At the largest accessibility size it is about 3,800 pt**, over four screens, of
+  which the quoted verdict note alone takes 937 pt. Nothing truncates and the bar stays opaque over
+  what slides under it, but *Share* is a long way down. That is the price of quoting the bundle in
+  full, and it is the one thing here that was measured and left as it is.

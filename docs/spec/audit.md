@@ -1301,6 +1301,39 @@ public enum EvidenceExportError: Error, Sendable, Equatable {
   `AuditRecordingConditions.toolVersion` writes it) **and the instant**: the exporter reads no
   clock of its own beyond the default argument.
 
+**From the screen.** `AppEnvironment` builds one `EvidenceExporter` and hands it to `AuditViewModel`
+as a closure, `(sessionID, instant) -> EvidenceExportResult`, so that every failure can be scripted
+in a test; the tool's version is read there, with `AuditRecordingConditions.environment()`, the same
+way a session reads it when it starts. `AuditViewModel.exportEvidence(ofSession:)` passes the instant
+of the tap, holds `isWorking` for as long as the bundle is being written — a second export, or any
+other write, is ignored meanwhile — and leaves either `pendingEvidence`, an `EvidenceExportSummary`
+for the sheet, or a notice. A failure does not take away a summary already on screen. When the
+exporter finds the session gone or still open, the view model re-reads: what is drawn is no longer
+what there is. What the sheet says is decided in `AuditPresentation` (`EvidenceExportPresentation.swift`)
+and described in [`../ux/audit.md`](../ux/audit.md) § *Exporting a session*:
+
+```swift
+public enum EvidenceCaptureStanding: Sendable, Equatable {
+    case nothingRecorded
+    case complete(packets: Int)
+    case incomplete(written: Int, recorded: Int, missing: [EvidenceMissingPackets])
+    public init(_ tally: EvidencePacketTally)          // only the reasons that have packets
+}
+
+extension AuditPresentation {
+    public static func evidenceExportPrepared(_ result: EvidenceExportResult) -> EvidenceExportSummary
+    public static func evidenceCapture(_ document: EvidenceCaptureDocument) -> EvidenceCaptureDisplay
+    public static func evidenceExportFailed(_ error: EvidenceExportError) -> AuditNotice
+}
+```
+
+**Opened outside the tests** (2026-10-09). The session seeded by `-TVSeedFixture` was exported from
+the app on a Simulator and the archive taken out of its container: `unzip -t` reports no errors in
+the seven files; each of the six files the manifest lists has the size and the SHA-256 it states
+(`hashlib`, not our code); the capture holds exactly the 4,842 packet blocks `capture.json` counts
+as written, of 4,895 recorded, with 53 never captured and one from before the session; and
+`tcpdump -k IDC -r` prints each packet's direction and comment (`out, flow=7 findings=F1,F2`).
+
 **Measured** on a Simulator (`EvidenceExporterMeasurementTests`, which runs only when asked: it
 seeds hundreds of megabytes). A session of 400 000 packets and 229 MB of capture in four source
 files:
@@ -1328,6 +1361,14 @@ the seeded payload is one repeated byte.
   instant carry the same files; an open session, a session that is gone, a catalogue that is not
   bundled, a history that does not open, a capture directory that does not resolve and a
   destination that cannot be created, each as its own case; the names.
+- `EvidenceExportPresentationTests`: a session with no packets is not a complete capture; a capture
+  with nothing written is incomplete, not empty; only the reasons that have packets are listed, in
+  the order of `capture.json`; a complete capture is one sentence and shows no zeroes; every
+  sentence in its singular and its plural; packets from outside the session are counted together,
+  explained, and come after what is missing; what the summary holds; the summary quotes the bundle
+  rather than rewording it; nothing on the sheet says *passed*; each of the eight failures has a
+  sentence of its own, a catalogue that is not bundled is named and not replaced, a changed history
+  says to export again, and the technical detail travels apart.
 - `EvidenceBundleTests`: the three refusals; a session with no flows still gives every document;
   what `session.json` says of an audit and of a baseline; markers are the session's own, by
   instant, and another session's does not date the flows; findings are numbered in order and each
@@ -1443,7 +1484,12 @@ the seeded payload is one repeated byte.
   the intent marks consent by default and never opens the app; the exact copy of the confirmation
   and of the two errors.
 - `AuditViewModelTests`: coming back to the foreground shows a marker placed from outside, and a
-  session deleted meanwhile is gone.
+  session deleted meanwhile is gone. Exporting leaves the bundle to be shown before it is shared,
+  with the instant of the tap; every failure of the export is a notice and never a sheet, an untyped
+  one included; a failed export does not take away a bundle already shown; a session deleted
+  elsewhere closes its screen when the export finds out; while a bundle is being written nothing
+  else writes and a second export is ignored; and, against the real `EvidenceExporter`, a closed
+  session gives an archive on disk and an open one is refused in a sentence.
 - `RetentionPlannerTests`, `CaptureHeadroomTests`, `StorageManagerTests`: evidence is skipped by both
   limits, the cause of an unmet size limit is told apart, and a cleanup that cannot read the evidence
   deletes nothing.
