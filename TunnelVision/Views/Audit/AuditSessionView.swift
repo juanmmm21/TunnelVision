@@ -2,7 +2,8 @@ import Shared
 import SwiftUI
 
 /// La pantalla de una sesión de auditoría (`docs/ux/audit.md`): si está grabando, qué lleva, qué se
-/// podrá leer de ella sobre pinning, sus marcadores, y las dos salidas — cerrarla y borrarla.
+/// podrá leer de ella sobre pinning, sus marcadores, y sus salidas — cerrarla, exportarla ya
+/// cerrada como paquete de evidencia, y borrarla.
 struct AuditSessionView: View {
 
     let viewModel: AuditViewModel
@@ -48,6 +49,8 @@ struct AuditSessionView: View {
             statusSection(display)
             if display.isRecording {
                 addMarkerSection(display)
+            } else {
+                evidenceSection(display)
             }
             markersSection(display)
             pinningSection(display)
@@ -100,6 +103,9 @@ struct AuditSessionView: View {
         } message: { _ in
             Text(AuditPresentation.deleteSessionPrompt)
         }
+        .sheet(item: evidenceSheet) { summary in
+            EvidenceExportSheet(summary: summary) { viewModel.dismissEvidenceExport() }
+        }
         .alert(AuditPresentation.customMarkerDialogTitle, isPresented: $isNamingMarker) {
             TextField(AuditPresentation.customMarkerFieldPrompt, text: $customMarkerLabel)
             Button(AuditPresentation.customMarkerConfirmTitle) {
@@ -110,6 +116,15 @@ struct AuditSessionView: View {
             .disabled(customMarkerLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button(CommonCopy.cancel, role: .cancel) { customMarkerLabel = "" }
         }
+    }
+
+    private var evidenceSheet: Binding<EvidenceExportSummary?> {
+        Binding(
+            get: { viewModel.pendingEvidence },
+            set: { summary in
+                if summary == nil { viewModel.dismissEvidenceExport() }
+            }
+        )
     }
 
     // MARK: - Secciones
@@ -157,6 +172,31 @@ struct AuditSessionView: View {
             }
         } header: {
             SectionHeader(AuditPresentation.addMarkerSectionTitle)
+        }
+        .disabled(viewModel.isWorking)
+        .listRowBackground(Color(.surface))
+    }
+
+    /// El paquete de evidencia. Ocupa el sitio de *Mark now* cuando la sesión ya está cerrada, por
+    /// lo mismo: es a lo que se viene a esta pantalla en ese estado. Y arriba, junto al aviso: si la
+    /// exportación no sale, la frase que lo dice aparece a la vista de quien tocó la fila.
+    private func evidenceSection(_ display: AuditSessionDisplay) -> some View {
+        Section {
+            Button {
+                Task { await viewModel.exportEvidence(ofSession: display.id) }
+            } label: {
+                HStack {
+                    Label(AuditPresentation.exportEvidenceActionTitle, systemImage: "shippingbox")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if viewModel.isExportingEvidence {
+                        ProgressView()
+                    }
+                }
+            }
+        } header: {
+            SectionHeader(AuditPresentation.exportEvidenceSectionTitle)
+        } footer: {
+            AuditSectionFooter(AuditPresentation.exportEvidenceFooter)
         }
         .disabled(viewModel.isWorking)
         .listRowBackground(Color(.surface))
