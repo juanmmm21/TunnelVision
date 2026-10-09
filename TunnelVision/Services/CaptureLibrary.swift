@@ -148,66 +148,47 @@ public actor CaptureLibrary {
         guard let url = CaptureDirectory.url(forSequence: location.fileSequence, in: directory) else {
             throw CaptureLibraryError.notFound(location.fileSequence)
         }
-        // Un offset dentro de la cabecera global no puede ser el de ningún registro. Se comprueba
-        // antes de abrir nada: es la propiedad que hace de `recordOffset == 0` un centinela seguro.
-        guard location.recordOffset >= UInt64(PcapFormat.globalHeaderSize) else {
-            throw CaptureLibraryError.recordUnreadable(
-                "Offset \(location.recordOffset) falls inside the file header."
-            )
+        let reader: PcapFileReader
+        do {
+            reader = try PcapFileReader(url: url)
+        } catch let error as PcapFileReader.ReadError {
+            throw CaptureLibraryError.recordUnreadable(Self.detail(of: error))
         }
-
-        guard let handle = try? FileHandle(forReadingFrom: url) else {
-            throw CaptureLibraryError.recordUnreadable("The capture file couldn't be opened.")
-        }
-        // El handle se cierra pase lo que pase: cada registro que se abre en la pantalla es un
+        // El lector se cierra pase lo que pase: cada registro que se abre en la pantalla es un
         // descriptor, y dejarlos a merced del recolector agotaría el límite del proceso.
-        defer { try? handle.close() }
+        defer { reader.close() }
 
         do {
-            let global = try PcapFormat.globalHeader(
-                parsing: try read(handle, count: PcapFormat.globalHeaderSize, from: 0)
-            )
-            let header = try PcapFormat.recordHeader(
-                parsing: try read(handle, count: PcapFormat.recordHeaderSize, from: location.recordOffset)
-            )
-            guard header.inclLen <= global.snaplen else {
-                throw CaptureLibraryError.recordUnreadable(
-                    "Record claims \(header.inclLen) bytes, more than the file's \(global.snaplen)."
-                )
-            }
-
-            let payloadOffset = location.recordOffset + UInt64(PcapFormat.recordHeaderSize)
-            let bytes = try read(handle, count: Int(header.inclLen), from: payloadOffset)
-            guard bytes.count == Int(header.inclLen) else {
-                throw CaptureLibraryError.recordUnreadable(
-                    "Record is cut short: \(bytes.count) of \(header.inclLen) bytes are on disk."
-                )
-            }
-
+            let record = try reader.record(at: location.recordOffset)
             return CaptureRecord(
                 location: location,
-                bytes: bytes,
-                originalLength: header.origLen,
-                timestampMicroseconds: UInt64(header.tsSec) * 1_000_000 + UInt64(header.tsUsec)
+                bytes: record.bytes,
+                originalLength: record.header.origLen,
+                timestampMicroseconds: record.timestampMicroseconds
             )
-        } catch let error as PcapFormat.FormatError {
-            throw CaptureLibraryError.recordUnreadable(String(describing: error))
+        } catch let error as PcapFileReader.ReadError {
+            throw CaptureLibraryError.recordUnreadable(Self.detail(of: error))
         }
     }
 
     // MARK: - Interno
 
-    /// Lee hasta `count` bytes desde un offset concreto. Devuelve lo que haya: quien llama decide si
-    /// quedarse corto es un fallo (para el paquete lo es; para una cabecera lo dice el parser).
-    private func read(_ handle: FileHandle, count: Int, from offset: UInt64) throws -> Data {
-        guard count > 0 else { return Data() }
-        do {
-            try handle.seek(toOffset: offset)
-            return try handle.read(upToCount: count) ?? Data()
-        } catch {
-            throw CaptureLibraryError.recordUnreadable(
-                "Couldn't read \(count) bytes at offset \(offset): \(error.localizedDescription)"
-            )
+    /// El detalle de diagnóstico de un registro que no se pudo leer. La validación es de
+    /// `PcapFileReader` (la comparte el recorte de la captura de una sesión); la frase es de aquí.
+    private static func detail(of error: PcapFileReader.ReadError) -> String {
+        switch error {
+        case .openFailed:
+            return "The capture file couldn't be opened."
+        case .offsetInsideFileHeader(let offset):
+            return "Offset \(offset) falls inside the file header."
+        case .format(let error):
+            return String(describing: error)
+        case .recordExceedsSnaplen(let inclLen, let snaplen):
+            return "Record claims \(inclLen) bytes, more than the file's \(snaplen)."
+        case .recordCutShort(let expected, let actual):
+            return "Record is cut short: \(actual) of \(expected) bytes are on disk."
+        case .readFailed(let byteCount, let offset, let reason):
+            return "Couldn't read \(byteCount) bytes at offset \(offset): \(reason)"
         }
     }
 }
