@@ -109,6 +109,366 @@
         }
       }
     },
+    "audit.evidence.capture.cleartext" : {
+      "comment" : "Caution on the evidence bundle sheet, shown before sharing. The bundle carries no decrypted content, but its packet capture does carry, readable, whatever an app sent without encryption — from a medical app that can be health data.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The capture holds each packet as it crossed the tunnel. Anything that was sent unencrypted can be read in it."
+          }
+        }
+      }
+    },
+    "audit.evidence.capture.complete.one" : {
+      "comment" : "Headline about the capture of an evidence bundle when the session recorded exactly one packet and it is in the capture. See the plural form in the sibling key.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The 1 recorded packet is in the capture."
+          }
+        }
+      }
+    },
+    "audit.evidence.capture.complete.other" : {
+      "comment" : "Headline about the capture of an evidence bundle when every packet the history holds for the session is in the capture with its bytes. The placeholder is how many.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "All %@ recorded packets are in the capture."
+          }
+        }
+      }
+    },
+    "audit.evidence.capture.empty" : {
+      "comment" : "Headline about the capture of an evidence bundle when the history holds no packet of the session. The capture file exists and opens; it has no packets.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This session recorded no packets, so the capture is empty."
+          }
+        }
+      }
+    },
+    "audit.evidence.capture.fileMissing.one" : {
+      "comment" : "Why one packet of an audit session is not in the bundle's capture: the capture file that held it was deleted. See the plural form in the sibling key.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "1 packet was in a capture file that is no longer on this device."
+          }
+        }
+      }
+    },
+    "audit.evidence.capture.fileMissing.other" : {
+      "comment" : "Why some packets of an audit session are not in the bundle's capture: the capture files that held them were deleted. The placeholder is how many.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%@ packets were in capture files that are no longer on this device."
+          }
+        }
+      }
+    },
+    "audit.evidence.capture.incomplete.one" : {
+      "comment" : "Headline about the capture of an evidence bundle when the session recorded exactly one packet and its bytes are not in the capture. See the plural form in the sibling key.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The 1 recorded packet is not in the capture."
+          }
+        }
+      }
+    },
+    "audit.evidence.capture.incomplete.other" : {
+      "comment" : "Headline about the capture of an evidence bundle when some packets the history holds are not in it. The first placeholder is how many are in the capture, the second how many the session recorded.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ of %2$@ recorded packets are in the capture."
+          }
+        }
+      }
+    },
+    "audit.evidence.capture.notCaptured.one" : {
+      "comment" : "Why one packet of an audit session is not in the bundle's capture: capturing was off, or its writer failed. See the plural form in the sibling key.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "1 packet was never written to a capture file."
+          }
+        }
+      }
+    },
+    "audit.evidence.capture.notCaptured.other" : {
+      "comment" : "Why some packets of an audit session are not in the bundle's capture: capturing was off, or its writer failed. The placeholder is how many.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%@ packets were never written to a capture file."
+          }
+        }
+      }
+    },
+    "audit.evidence.capture.outside.one" : {
+      "comment" : "Note on the evidence bundle sheet when one captured packet falls outside the session's time window. See the plural form in the sibling key.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "1 packet in the capture is from before the session started or after it ended: it belongs to a connection that was also active during the session."
+          }
+        }
+      }
+    },
+    "audit.evidence.capture.outside.other" : {
+      "comment" : "Note on the evidence bundle sheet when captured packets fall outside the session's time window. It is not an error: a connection belongs to the session when it carried traffic while the session was open. The placeholder is how many packets.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%@ packets in the capture are from before the session started or after it ended: they belong to connections that were also active during the session."
+          }
+        }
+      }
+    },
+    "audit.evidence.capture.section" : {
+      "comment" : "Heading, on the evidence bundle sheet, over what the bundle's packet capture holds and what it lacks.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Capture"
+          }
+        }
+      }
+    },
+    "audit.evidence.capture.unreadable.one" : {
+      "comment" : "Why one packet of an audit session is not in the bundle's capture: its capture file is there but the record could not be read. See the plural form in the sibling key.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "1 packet could not be read back from its capture file."
+          }
+        }
+      }
+    },
+    "audit.evidence.capture.unreadable.other" : {
+      "comment" : "Why some packets of an audit session are not in the bundle's capture: their capture files are there but the records could not be read. The placeholder is how many.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%@ packets could not be read back from their capture files."
+          }
+        }
+      }
+    },
+    "audit.evidence.connections.label" : {
+      "comment" : "Label of the number of connections an evidence bundle lists.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Connections"
+          }
+        }
+      }
+    },
+    "audit.evidence.failed.captures" : {
+      "comment" : "Notice when exporting an audit session failed because the folder holding the device's capture files could not be resolved. The technical detail travels apart, as a diagnostic.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The captures on this device couldn't be reached, so nothing was exported."
+          }
+        }
+      }
+    },
+    "audit.evidence.failed.catalogueNotBundled" : {
+      "comment" : "Notice when exporting an audit session was refused because the project names a requirement catalogue this build does not carry. The placeholder is the catalogue's identifier, shown as written. It must say that no other catalogue was used instead.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This project is assessed against the requirement catalogue “%@”, which this version of TunnelVision doesn't include. Nothing was exported: a bundle is never written against a different catalogue."
+          }
+        }
+      }
+    },
+    "audit.evidence.failed.catalogueUnusable" : {
+      "comment" : "Notice when exporting an audit session failed because the bundled requirement catalogue could not be loaded. The placeholder is the catalogue's identifier, shown as written.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The requirement catalogue “%@” couldn't be read, so nothing was exported."
+          }
+        }
+      }
+    },
+    "audit.evidence.failed.changed" : {
+      "comment" : "Notice when exporting an audit session was stopped because the history changed between two reads. Repeating the export is the remedy, and the sentence must say so.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The history changed while the bundle was being written, so it was discarded. Export it again."
+          }
+        }
+      }
+    },
+    "audit.evidence.failed.gone" : {
+      "comment" : "Notice when exporting an audit session failed because the session, or its project, was deleted meanwhile.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This session no longer exists, so there is nothing to export."
+          }
+        }
+      }
+    },
+    "audit.evidence.failed.history" : {
+      "comment" : "Notice when exporting an audit session failed because the history database could not be read. The technical detail travels apart, as a diagnostic.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Your history didn't answer, so nothing was exported."
+          }
+        }
+      }
+    },
+    "audit.evidence.failed.stillOpen" : {
+      "comment" : "Notice when exporting an audit session was refused because it is still open. Evidence is exported from a closed session only.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This session is still recording. End it before exporting its evidence."
+          }
+        }
+      }
+    },
+    "audit.evidence.failed.write" : {
+      "comment" : "Notice when exporting an audit session failed while writing the bundle or its archive. It must say that no partial bundle remains, and names the one cause the user can act on: free storage. The technical detail travels apart, as a diagnostic.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The bundle couldn't be written, and nothing was left behind. Writing it needs free space for up to twice the session's capture."
+          }
+        }
+      }
+    },
+    "audit.evidence.findings.label" : {
+      "comment" : "Label of the number of findings an evidence bundle holds. A finding is an observation about the recorded traffic, not a failed test.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Findings"
+          }
+        }
+      }
+    },
+    "audit.evidence.share" : {
+      "comment" : "Button that hands the evidence bundle to the system share sheet. It must read as 'send this somewhere', not as 'save': this is the moment it leaves the device.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Share"
+          }
+        }
+      }
+    },
+    "audit.evidence.sheet.title" : {
+      "comment" : "Title of the sheet that shows a written evidence bundle before it is shared.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Evidence bundle"
+          }
+        }
+      }
+    },
+    "audit.evidence.summary.detail.one" : {
+      "comment" : "Secondary line of the evidence bundle sheet when the archive holds exactly one file. See the plural form in the sibling key.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%@ · ZIP · 1 file"
+          }
+        }
+      }
+    },
+    "audit.evidence.summary.detail.other" : {
+      "comment" : "Secondary line of the evidence bundle sheet: how big the archive is, its format and how many files it holds. 'ZIP' is a format name and stays as is. The order and the separators are translatable.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · ZIP · %2$@ files"
+          }
+        }
+      }
+    },
+    "audit.evidence.summary.title" : {
+      "comment" : "Headline of the sheet that shows a written evidence bundle.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Evidence bundle ready to share"
+          }
+        }
+      }
+    },
     "audit.failure.message" : {
       "comment" : "Message of the card shown when the audit projects could not be loaded. It reassures that this is a read failure, not data loss.",
       "extractionState" : "extracted_with_value",
@@ -1113,6 +1473,42 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Recorded on"
+          }
+        }
+      }
+    },
+    "audit.session.evidence.action" : {
+      "comment" : "Row that writes the evidence bundle of a closed audit session. It does not share anything yet: a sheet first shows what the bundle holds.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Export evidence"
+          }
+        }
+      }
+    },
+    "audit.session.evidence.footer" : {
+      "comment" : "Note under the row that exports an audit session. It must say that nothing leaves the device by tapping the row: sharing is a second, separate step.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Writes this session's connections, findings and capture into one archive, with a checksum of every file. You see what it holds before anything is shared."
+          }
+        }
+      }
+    },
+    "audit.session.evidence.section" : {
+      "comment" : "Heading over the row that exports a closed audit session as an evidence bundle.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Evidence bundle"
           }
         }
       }
