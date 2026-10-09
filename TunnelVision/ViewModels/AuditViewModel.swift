@@ -49,9 +49,24 @@ public final class AuditViewModel {
     /// navegación solo enseña una; al entrar en otra se sustituye.
     public private(set) var sessionDisplay: AuditSessionDisplay?
 
+    // MARK: - El paquete de evidencia
+
+    /// El paquete recién escrito, resumido para enseñarlo **antes** de compartirlo. Es estado del
+    /// view model y no de la vista porque hay un fichero de por medio: mientras esto no sea `nil`,
+    /// hay un zip en el temporal que alguien preparó a propósito.
+    public private(set) var pendingEvidence: EvidenceExportSummary?
+
+    /// Si se está escribiendo un paquete. Va aparte de `isWorking` —que también se enciende— para
+    /// que la fila que lo pidió pueda decir que es ella la que trabaja.
+    public private(set) var isExportingEvidence = false
+
     // MARK: - Dependencias
 
+    /// Exporta una sesión cerrada con el instante que se le da como el de la exportación.
+    public typealias EvidenceExport = @Sendable (Int64, Date) async throws -> EvidenceExportResult
+
     private let library: AuditLibrary
+    private let exportEvidence: EvidenceExport
     private let environment: @MainActor @Sendable () -> AuditEnvironment
     private let inspection: @Sendable () async -> InspectionConditions
     private let now: @Sendable () -> Date
@@ -60,9 +75,11 @@ public final class AuditViewModel {
         library: AuditLibrary,
         environment: @escaping @MainActor @Sendable () -> AuditEnvironment,
         inspection: @escaping @Sendable () async -> InspectionConditions,
+        exportEvidence: @escaping EvidenceExport,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.library = library
+        self.exportEvidence = exportEvidence
         self.environment = environment
         self.inspection = inspection
         self.now = now
@@ -223,6 +240,45 @@ public final class AuditViewModel {
         } catch {
             notice = AuditPresentation.refreshFailed(AuditLibraryError.classifying(error))
         }
+    }
+
+    // MARK: - Exportar
+
+    /// Escribe el paquete de evidencia de una sesión cerrada y lo deja preparado para compartir.
+    ///
+    /// No comparte nada por su cuenta, igual que el export de conexiones: deja el resumen en
+    /// `pendingEvidence` para que la pantalla diga **qué** lleva —y sobre todo qué le falta a la
+    /// captura— antes de que el usuario decida sacarlo del dispositivo.
+    public func exportEvidence(ofSession id: Int64) async {
+        guard !isWorking else { return }
+        isWorking = true
+        isExportingEvidence = true
+        defer {
+            isWorking = false
+            isExportingEvidence = false
+        }
+
+        do {
+            let result = try await exportEvidence(id, now())
+            notice = nil
+            pendingEvidence = AuditPresentation.evidenceExportPrepared(result)
+        } catch let error as EvidenceExportError {
+            notice = AuditPresentation.evidenceExportFailed(error)
+            // Lo que se ve ya no es lo que hay: la sesión se borró o sigue abierta en otro sitio.
+            if error == .sessionNotFound || error == .sessionStillOpen {
+                await refresh()
+                await loadSession(id: id)
+            }
+        } catch {
+            notice = AuditPresentation.evidenceExportFailed(.writeFailed(String(describing: error)))
+        }
+    }
+
+    /// El usuario cierra la hoja del paquete. El zip se queda en el temporal hasta la siguiente
+    /// exportación, que se lleva el anterior: borrarlo aquí correría con la hoja del sistema, que
+    /// puede seguir leyéndolo mientras se comparte.
+    public func dismissEvidenceExport() {
+        pendingEvidence = nil
     }
 
     // MARK: - Interno

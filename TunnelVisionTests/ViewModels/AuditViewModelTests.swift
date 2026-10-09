@@ -51,9 +51,15 @@ final class AuditViewModelTests: XCTestCase {
         deviceModel: "iPhone18,3", osVersion: "26.5", toolVersion: "1.0.0 (1)"
     )
 
+    /// Una exportación sin guion: un test que no exporta no debería llegar a pedirla.
+    private static let noExport: AuditViewModel.EvidenceExport = { _, _ in
+        throw EvidenceExportError.writeFailed("este test no exporta")
+    }
+
     private func makeViewModel(
         storeAvailable: Bool = true,
-        conditions: Conditions = Conditions(InspectionConditions(inspectionEnabled: true, caTrusted: true))
+        conditions: Conditions = Conditions(InspectionConditions(inspectionEnabled: true, caTrusted: true)),
+        export: @escaping AuditViewModel.EvidenceExport = AuditViewModelTests.noExport
     ) -> AuditViewModel {
         let url = dbURL!
         let clock = Clock()
@@ -64,6 +70,7 @@ final class AuditViewModelTests: XCTestCase {
             }),
             environment: { Self.environment },
             inspection: { conditions.get() },
+            exportEvidence: export,
             now: { clock.now() }
         )
     }
@@ -345,7 +352,8 @@ final class AuditViewModelTests: XCTestCase {
                 return try FlowStore(databaseURL: url, anchor: PersistenceFixtures.anchor)
             }),
             environment: { Self.environment },
-            inspection: { InspectionConditions(inspectionEnabled: false, caTrusted: false) }
+            inspection: { InspectionConditions(inspectionEnabled: false, caTrusted: false) },
+            exportEvidence: Self.noExport
         )
         try await makeProject(viewModel)
 
@@ -355,5 +363,243 @@ final class AuditViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.content, .list)
         XCTAssertEqual(viewModel.projectRows.count, 1)
         XCTAssertEqual(viewModel.notice?.role, .warning)
+    }
+
+    // MARK: - El paquete de evidencia
+
+    /// Lo que se le pidió a la exportación.
+    private final class ExportScript: @unchecked Sendable {
+        private let lock = NSLock()
+        private var requests: [(sessionID: Int64, date: Date)] = []
+
+        /// Apunta la petición y devuelve cuántas van con ella.
+        @discardableResult
+        func record(_ sessionID: Int64, _ date: Date) -> Int {
+            lock.lock(); defer { lock.unlock() }
+            requests.append((sessionID, date))
+            return requests.count
+        }
+
+        var asked: [(sessionID: Int64, date: Date)] {
+            lock.lock(); defer { lock.unlock() }; return requests
+        }
+    }
+
+    private nonisolated static func exportResult(
+        sessionID: Int64,
+        lost: [EvidencePacketLoss: Int] = [:]
+    ) -> EvidenceExportResult {
+        EvidenceExportResult(
+            url: URL(fileURLWithPath: "/tmp/tunnelvision-evidence-session-\(sessionID)-20261009-203000.zip"),
+            byteCount: 2_048,
+            fileNames: ["capture.json", "capture.pcapng", "manifest.json"],
+            flowCount: 3,
+            findingCount: 1,
+            capture: EvidenceCaptureDocument(
+                sessionID: sessionID,
+                snaplen: nil,
+                flows: [.init(id: 1, packets: EvidencePacketTally(written: 9, lost: lost))],
+                sourceFiles: [],
+                writtenOutsideSession: .init(beforeStart: 0, afterEnd: 0)
+            )
+        )
+    }
+
+    /// Un proyecto con una sesión de auditoría ya cerrada, y su pantalla abierta.
+    private func closedSession(_ viewModel: AuditViewModel) async throws -> AuditSession {
+        let id = try await makeProject(viewModel)
+        _ = await viewModel.startSession(auditForm(), projectID: id)
+        let session = try XCTUnwrap(viewModel.overview.recording?.session)
+        await viewModel.endSession(id: session.id)
+        return session
+    }
+
+    /// El exportador de verdad sobre el historial del test y un temporal propio.
+    private func realExporter(in root: URL) -> EvidenceExporter {
+        let url = dbURL!
+        return EvidenceExporter(
+            directory: root.appendingPathComponent("EvidenceExports", isDirectory: true),
+            captureDirectory: root.appendingPathComponent("Captures", isDirectory: true),
+            openingStore: { try FlowStore(databaseURL: url, anchor: PersistenceFixtures.anchor) }
+        )
+    }
+
+    private func temporaryRoot() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("audit-view-model-tests-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    func testExportingLeavesTheBundleToBeShownBeforeItIsShared() async throws {
+        let script = ExportScript()
+        let viewModel = makeViewModel(export: { sessionID, date in
+            script.record(sessionID, date)
+            return Self.exportResult(sessionID: sessionID, lost: [.notCaptured: 2])
+        })
+        let session = try await closedSession(viewModel)
+
+        await viewModel.exportEvidence(ofSession: session.id)
+
+        let summary = try XCTUnwrap(viewModel.pendingEvidence)
+        XCTAssertEqual(summary.fileName, "tunnelvision-evidence-session-\(session.id)-20261009-203000.zip")
+        XCTAssertEqual(summary.capture.headline, "9 of 11 recorded packets are in the capture.")
+        XCTAssertNil(viewModel.notice)
+        XCTAssertFalse(viewModel.isWorking)
+        XCTAssertFalse(viewModel.isExportingEvidence)
+
+        XCTAssertEqual(script.asked.map(\.sessionID), [session.id])
+        let endedAt = try XCTUnwrap(viewModel.overview.projects.first?.sessions.first?.endedAt)
+        XCTAssertGreaterThan(try XCTUnwrap(script.asked.first?.date), endedAt, "el instante es el del toque")
+
+        viewModel.dismissEvidenceExport()
+        XCTAssertNil(viewModel.pendingEvidence)
+    }
+
+    func testEveryExportFailureIsANoticeAndNeverASheet() async throws {
+        let failures: [EvidenceExportError] = [
+            .catalogueNotBundled(identifier: "tr-03161-1_9.9"),
+            .catalogueUnusable(identifier: "tr-03161-1_3.0"),
+            .historyUnreadable(.queryFailed("database is locked")),
+            .historyChangedWhileExporting,
+            .captureDirectoryUnavailable("containerUnavailable"),
+            .writeFailed("No space left on device"),
+            .sessionStillOpen,
+            .sessionNotFound,
+        ]
+        let script = ExportScript()
+        let viewModel = makeViewModel(export: { sessionID, date in
+            throw failures[script.record(sessionID, date) - 1]
+        })
+        let session = try await closedSession(viewModel)
+
+        for failure in failures {
+            await viewModel.exportEvidence(ofSession: session.id)
+
+            XCTAssertEqual(viewModel.notice, AuditPresentation.evidenceExportFailed(failure), "\(failure)")
+            XCTAssertNil(viewModel.pendingEvidence, "\(failure)")
+            XCTAssertFalse(viewModel.isWorking, "\(failure)")
+        }
+    }
+
+    func testAnUntypedExportErrorIsStillSaid() async throws {
+        let viewModel = makeViewModel(export: { _, _ in throw StoreUnavailable() })
+        let session = try await closedSession(viewModel)
+
+        await viewModel.exportEvidence(ofSession: session.id)
+
+        XCTAssertEqual(
+            viewModel.notice?.message,
+            AuditPresentation.evidenceExportFailed(.writeFailed("")).message
+        )
+        XCTAssertNil(viewModel.pendingEvidence)
+    }
+
+    func testAFailedExportDoesNotTakeAwayABundleAlreadyShown() async throws {
+        let script = ExportScript()
+        let viewModel = makeViewModel(export: { sessionID, date in
+            guard script.record(sessionID, date) == 1 else {
+                throw EvidenceExportError.historyChangedWhileExporting
+            }
+            return Self.exportResult(sessionID: sessionID)
+        })
+        let session = try await closedSession(viewModel)
+        await viewModel.exportEvidence(ofSession: session.id)
+        let shown = try XCTUnwrap(viewModel.pendingEvidence)
+
+        await viewModel.exportEvidence(ofSession: session.id)
+
+        XCTAssertEqual(viewModel.pendingEvidence, shown)
+        XCTAssertEqual(viewModel.notice, AuditPresentation.evidenceExportFailed(.historyChangedWhileExporting))
+    }
+
+    func testASessionDeletedElsewhereClosesItsScreenWhenExportFindsOut() async throws {
+        let url = dbURL!
+        let viewModel = makeViewModel(export: { sessionID, _ in
+            // Otro gesto la borra entre el toque y la lectura.
+            let other = try FlowStore(databaseURL: url, anchor: PersistenceFixtures.anchor)
+            try await other.deleteAuditSession(id: sessionID)
+            throw EvidenceExportError.sessionNotFound
+        })
+        let session = try await closedSession(viewModel)
+        XCTAssertEqual(viewModel.sessionDisplay?.id, session.id)
+
+        await viewModel.exportEvidence(ofSession: session.id)
+
+        XCTAssertNil(viewModel.sessionDisplay)
+        XCTAssertEqual(viewModel.notice, AuditPresentation.evidenceExportFailed(.sessionNotFound))
+        XCTAssertEqual(viewModel.overview.projects.first?.sessions.count, 0)
+    }
+
+    func testWhileABundleIsBeingWrittenNothingElseWritesAndASecondExportIsIgnored() async throws {
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        let script = ExportScript()
+        let viewModel = makeViewModel(export: { sessionID, date in
+            script.record(sessionID, date)
+            for await _ in gate { break }
+            return Self.exportResult(sessionID: sessionID)
+        })
+        let session = try await closedSession(viewModel)
+
+        let running = Task { await viewModel.exportEvidence(ofSession: session.id) }
+        while script.asked.isEmpty { await Task.yield() }
+
+        XCTAssertTrue(viewModel.isWorking)
+        XCTAssertTrue(viewModel.isExportingEvidence)
+        XCTAssertNil(viewModel.pendingEvidence)
+
+        await viewModel.exportEvidence(ofSession: session.id)
+        await viewModel.deleteSession(id: session.id)
+        XCTAssertEqual(script.asked.count, 1)
+
+        release.yield()
+        await running.value
+
+        XCTAssertNotNil(viewModel.pendingEvidence)
+        XCTAssertFalse(viewModel.isWorking)
+        XCTAssertFalse(viewModel.isExportingEvidence)
+        XCTAssertEqual(viewModel.overview.projects.first?.sessions.count, 1, "el borrado no llegó a hacerse")
+    }
+
+    /// El acoplamiento de verdad: el exportador real sobre el mismo historial, y un zip en disco.
+    func testTheRealExporterWritesAnArchiveForAClosedSession() async throws {
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let exporter = realExporter(in: root)
+        let viewModel = makeViewModel(export: { sessionID, date in
+            try await exporter.export(sessionID: sessionID, exportedWith: "1.1 (4)", now: date)
+        })
+        let id = try await makeProject(viewModel)
+        _ = await viewModel.startSession(auditForm(), projectID: id)
+        let session = try XCTUnwrap(viewModel.overview.recording?.session)
+        let extensionStore = try FlowStore(databaseURL: dbURL, anchor: PersistenceFixtures.anchor)
+        _ = try await extensionStore.upsertFlow(
+            PersistenceFixtures.flow(remote: ModelFixtures.v4(1, 1, 1, 1), firstSeen: 12, lastSeen: 20)
+        )
+        await viewModel.endSession(id: session.id)
+
+        await viewModel.exportEvidence(ofSession: session.id)
+
+        XCTAssertNil(viewModel.notice)
+        let summary = try XCTUnwrap(viewModel.pendingEvidence)
+        XCTAssertTrue(EvidenceExportNaming.isExportName(summary.fileName))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: summary.url.path))
+        XCTAssertEqual(summary.facts.first?.value, .text("1"))
+        XCTAssertEqual(summary.capture.headline, "This session recorded no packets, so the capture is empty.")
+    }
+
+    func testAnOpenSessionIsRefusedByTheRealExporterInASentence() async throws {
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let exporter = realExporter(in: root)
+        let viewModel = makeViewModel(export: { sessionID, date in
+            try await exporter.export(sessionID: sessionID, exportedWith: "1.1 (4)", now: date)
+        })
+        let id = try await makeProject(viewModel)
+        _ = await viewModel.startSession(auditForm(), projectID: id)
+        let session = try XCTUnwrap(viewModel.overview.recording?.session)
+
+        await viewModel.exportEvidence(ofSession: session.id)
+
+        XCTAssertEqual(viewModel.notice, AuditPresentation.evidenceExportFailed(.sessionStillOpen))
+        XCTAssertNil(viewModel.pendingEvidence)
     }
 }

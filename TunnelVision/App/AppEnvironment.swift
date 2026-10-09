@@ -80,6 +80,7 @@ public final class AppEnvironment {
         captureLibrary: CaptureLibrary,
         plaintextLibrary: PlaintextLibrary,
         flowExporter: FlowExporter,
+        evidenceExporter: EvidenceExporter,
         settingsStore: SettingsStore,
         storage: StorageManager,
         certificates: CertificateStatusReader,
@@ -122,6 +123,15 @@ public final class AppEnvironment {
                     loadSettings: { try settingsStore.load() },
                     availability: await certificates.availability()
                 )
+            },
+            // La versión que exporta se lee aquí y no dentro del exportador: es la misma que una
+            // sesión declara al abrirse, y las dos tienen que escribirse igual para poder compararse.
+            exportEvidence: { sessionID, date in
+                try await evidenceExporter.export(
+                    sessionID: sessionID,
+                    exportedWith: await AuditRecordingConditions.environment().toolVersion,
+                    now: date
+                )
             }
         )
         self.diagnostics = AppEnvironment.makeDiagnostics(controller: tunnelController)
@@ -154,6 +164,9 @@ public final class AppEnvironment {
             // El export escribe en el temporal de la app y no en el contenedor compartido: no es una
             // captura, y dejarlo entre ellas lo metería en el listado y en los planes de retención.
             flowExporter: FlowExporter(),
+            // En el temporal también, y con más motivo: la captura del paquete lleva legible lo
+            // que viajó en claro.
+            evidenceExporter: EvidenceExporter(),
             settingsStore: SettingsStore(),
             storage: StorageManager(
                 library: captureLibrary,
