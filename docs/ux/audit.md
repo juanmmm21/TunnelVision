@@ -98,7 +98,8 @@ in Captures, and it matters more here: what leaves the device is a capture.
 
 The sheet, top to bottom, and why each line is there:
 
-1. **What it is**: *Evidence bundle ready to share*, its size, `ZIP`, how many files.
+1. **What it is**: *Evidence bundle ready to share*, its size, `ZIP`, how many files — eight, the
+   report among them. The count is of the names the exporter returns, not a number of the screen's.
 2. **What the bundle says of itself**, in the bundle's own words (`session.json`'s `contents`):
    connection metadata, what it shows against a requirement catalogue, a capture — and that
    decrypted content is not part of it.

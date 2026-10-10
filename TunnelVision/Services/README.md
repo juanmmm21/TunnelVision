@@ -109,10 +109,13 @@ device, system, tool version, inspection state — from the device instead of as
 
 **Evidence export (TR-03161 workflow).** `EvidenceExporter` writes a closed audit session as an
 evidence bundle: it has `Shared`'s `EvidenceBundle` and `EvidenceCaptureWriter` fill a folder in the
-app's temporary directory, writes `manifest.json` last, and compresses the folder into one archive
-with `NSFileCoordinator`. At most one bundle is on disk, and a failure leaves none. It is called
+app's temporary directory, draws `report.pdf` from those same documents, writes `manifest.json`
+last, and compresses the folder into one archive with `NSFileCoordinator`. The report is composed
+into A4 pages by `EvidenceReportLayout` (`Models/`, pure) and drawn by `EvidenceReportPDF` with the
+fonts and inks of `EvidenceReportTypography`, which are fixed on purpose: a filed document does not
+follow the device's text size or appearance. At most one bundle is on disk, and a failure leaves none. It is called
 from the session screen through `AuditViewModel`, which shows what the bundle holds before anything
-is shared. Spec: `docs/spec/audit.md` § *The exporter*; screen: `docs/ux/audit.md` § *Exporting a
+is shared. Spec: `docs/spec/audit.md` § *The exporter* and § *Drawing the report*; screen: `docs/ux/audit.md` § *Exporting a
 session*.
 
 **Flow export (M9, done).** `FlowExporter` writes the connection list as JSON for the Captures

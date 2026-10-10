@@ -988,7 +988,7 @@ state of the art, so the minimum is taken from the version in force, which recom
 ## Evidence bundle
 
 What a closed session is exported as: one folder, with the structured evidence as JSON and CSV, the
-capture, and a manifest of digests. `EvidenceBundle` (`Shared/Audit/Evidence`) builds the
+capture, a report to be read and filed, and a manifest of digests. `EvidenceBundle` (`Shared/Audit/Evidence`) builds the
 **documents** and nothing else — it is pure: no history, no clock, no disk. The capture, which
 does not fit in memory, is written by `EvidenceCaptureWriter` (§ *The capture*); the folder and
 its archive are written by the app's `EvidenceExporter`, which calls both (§ *The exporter*).
@@ -1001,6 +1001,7 @@ its archive are written by the app's `EvidenceExporter`, which calls both (§ *T
 | `findings.json` | The catalogue cited, a verdict per requirement, the findings, and how far each of the five checks got |
 | `capture.pcapng` | The packets of the session's flows, each with a comment naming its flow and that flow's findings |
 | `capture.json` | What the capture holds and, per flow and per reason, the packets it does not |
+| `report.pdf` | What the documents above say, composed on A4 for a person to read and file (§ *The report*, § *Drawing the report*) |
 | `manifest.json` | The SHA-256 of every other file |
 
 ```swift
@@ -1254,7 +1255,7 @@ public actor EvidenceExporter {
 public struct EvidenceExportResult: Sendable, Equatable {
     public let url: URL                                // the .zip
     public let byteCount: UInt64
-    public let fileNames: [String]                     // the seven files, by name
+    public let fileNames: [String]                     // the eight files, by name
     public let flowCount: Int
     public let findingCount: Int
     public let capture: EvidenceCaptureDocument        // capture.json, as written
@@ -1273,10 +1274,11 @@ public enum EvidenceExportError: Error, Sendable, Equatable {
 ```
 
 - **The order of writing is the order of trust.** The four documents are encoded, the capture is
-  written and hashed, `capture.json` is encoded, and **`manifest.json` goes last**, over the very
-  bytes that were written. Then the folder is compressed.
+  written and hashed, `capture.json` is encoded, **`report.pdf` is drawn from those very
+  documents**, and **`manifest.json` goes last**, over the very bytes that were written. Then the
+  folder is compressed.
 - **One archive, with one folder inside.** `tunnelvision-evidence-session-<id>-<yyyyMMdd-HHmmss>.zip`
-  (the instant in UTC) holds a folder of the same name with the seven files. The name carries the
+  (the instant in UTC) holds a folder of the same name with the eight files. The name carries the
   session's identifier and neither the project's name nor the release: both are free text typed by
   the assessor, and which session it is, is what `session.json` says.
 - **Compressed by the system**, with `NSFileCoordinator`'s `.forUploading` — no dependency. The
@@ -1328,7 +1330,7 @@ extension AuditPresentation {
 }
 ```
 
-**Opened outside the tests** (2026-10-09). The session seeded by `-TVSeedFixture` was exported from
+**Opened outside the tests** (2026-10-09, before the bundle carried `report.pdf`). The session seeded by `-TVSeedFixture` was exported from
 the app on a Simulator and the archive taken out of its container: `unzip -t` reports no errors in
 the seven files; each of the six files the manifest lists has the size and the SHA-256 it states
 (`hashlib`, not our code); the capture holds exactly the 4,842 packet blocks `capture.json` counts
@@ -1353,8 +1355,8 @@ the seeded payload is one repeated byte.
 
 `report.pdf` is the piece of the bundle that is read by a person and filed. `EvidenceReport`
 (`Shared/Audit/Evidence`) is **what it says**, before anything is drawn: which sections, which rows,
-which sentence in each place. It is pure, and it is not yet written into the bundle — drawing it
-and adding the file is the exporter's.
+which sentence in each place. It is pure; composing it into pages and drawing it is § *Drawing the
+report*.
 
 ```swift
 public struct EvidenceReport: Sendable, Hashable {
@@ -1379,8 +1381,15 @@ public enum EvidenceReportBlock: Sendable, Hashable {
     case table(EvidenceReportTable)                    // columns, rows
 }
 
+public struct EvidenceReportFact: Sendable, Hashable {
+    public let label: String
+    public let value: String
+    public let staysWithNext: Bool                     // no page break between this fact and the next
+}
+
 public struct EvidenceReportLimits: Sendable, Hashable {
     public init?(flowIDsPerFinding: Int, tlsReadingRows: Int)   // nil unless both are positive
+    public static let bundled: EvidenceReportLimits             // 12 and 150: the report in the bundle
 }
 
 public enum EvidenceReportError: Error, Sendable, Hashable {
@@ -1426,23 +1435,136 @@ public enum EvidenceReportError: Error, Sendable, Hashable {
 - **Lists are bounded and say what they left out.** A finding prints up to
   `limits.flowIDsPerFinding` flow ids and the TLS table up to `limits.tlsReadingRows` rows; past
   that it states how many are not printed and which file has them all. The limits have no default:
-  one finding of a session of twenty thousand flows cites every one of them.
+  one finding of a session of twenty thousand flows cites every one of them. The report in the
+  bundle uses `EvidenceReportLimits.bundled`, chosen with the page in front (§ *Drawing the report*).
+- **What must not be parted by a page break is said by the content, not guessed by the drawing.**
+  A requirement's *Verdict* fact carries `staysWithNext` whenever a `toolCoverage` follows it: a
+  verdict at the foot of a page with its coverage overleaf reads as the whole requirement.
 - **A TLS reading is what `flows.json` holds for the flow**, the server's answer before the QUIC
   version, as `TLSVersionObservation` does. A QUIC version is printed as a QUIC version — what it
   implies about TLS is the `tlsVersion` check's to say — and one read from the client is marked as
   such. A flow the server refused with an alert, and one with no reading, are counted, not listed.
 
+### Drawing the report
+
+Three pieces, in the app (`UIGraphicsPDFRenderer` is UIKit), each knowing nothing of audits:
+
+```swift
+// TunnelVision/Models — pure: no drawing, no font
+public struct EvidenceReportLayout: Sendable, Hashable {
+    public let geometry: EvidenceReportPageGeometry
+    public let bodyFrame: CGRect                       // inside the margins, above the footer
+    public let pages: [EvidenceReportPage]             // number, body marks, footer marks
+    public init(
+        report: EvidenceReport, geometry: EvidenceReportPageGeometry,
+        measuring: some EvidenceReportTextMeasuring
+    )
+}
+
+public enum EvidenceReportMark: Sendable, Hashable {
+    case text(String, style: EvidenceReportTextStyle, origin: CGPoint)   // one line, already broken
+    case fill(CGRect, EvidenceReportFill)                                // rule, quoteBar, headerBand
+}
+
+public protocol EvidenceReportTextMeasuring {
+    func lineHeight(of style: EvidenceReportTextStyle) -> CGFloat
+    func width(of text: String, style: EvidenceReportTextStyle) -> CGFloat
+    func lines(of text: String, style: EvidenceReportTextStyle, width: CGFloat) -> [String]
+}
+
+public enum EvidenceReportColumnWidths {
+    public static func shares(natural: [CGFloat], into available: CGFloat) -> [CGFloat]
+    public static func filling(natural: [CGFloat], into available: CGFloat) -> [CGFloat]
+}
+
+// TunnelVision/Services — UIKit and CoreText
+public struct EvidenceReportTypography: EvidenceReportTextMeasuring, Sendable
+public enum EvidenceReportPDF {
+    public static func data(
+        of layout: EvidenceReportLayout, typography: EvidenceReportTypography,
+        title: String, creator: String
+    ) -> Data
+}
+```
+
+`EvidenceReportLayout` decides **where** everything goes — which is everything a page break can
+spoil — and hands over lines already broken and placed; `EvidenceReportPDF` puts each mark where it
+says and decides nothing. The layout takes whoever measures text as a parameter, so pagination is
+asserted with a measurer in which every character is five points wide, over fifty page heights,
+rather than by looking at a PDF.
+
+- **A4, with 20 mm margins, whatever the device's region.** The report goes into a German technical
+  file, and the same session must give the same report on any device.
+- **Fixed sizes and literal greys.** Neither the device's text size nor its appearance changes a
+  filed document, so the report does not go through the app's design tokens, which exist for the
+  opposite. System font, 8–20 pt; text is black or a 35 % grey.
+- **Everything is a row that can be broken at any line**: a paragraph is a row of one column, a
+  fact of two, a table row of as many as its table. Nothing is ever clipped — a fact or a quoted
+  note longer than a page goes on overleaf, and a word wider than its column (a SHA-256, a long
+  host name) is cut, not dropped.
+- **What a page break may not do.** Leave a heading, or a section title, at the foot of a page
+  without the beginning of what it heads — through a chain of headings, if one heads another;
+  leave a table's header with no row under it; split a fact or a table row that would fit whole on
+  a page; part a fact marked `staysWithNext` from the next — and when the two do not fit on one
+  page together, being together wins over being whole; leave one line of a text alone on either
+  side. A page does not open with the space that separated what came before.
+- **A table that goes on overleaf repeats its header there.**
+- **Column widths are a value, `EvidenceReportColumnWidths`.** Each column gets what its widest
+  cell asks for if that fits, and those that do not fit share what is left evenly, so a count or an
+  identifier is never broken to make room for a sentence and no wide column gets less than an even
+  share. A table takes the whole width; what is left over goes to the column that asked for most,
+  so the narrow columns of two tables with the same headings — one per kind of finding — measure
+  the same whether or not there was room to spare.
+- **One label column per section**, not per list of facts: a section chains several lists (one per
+  requirement, one per check), and with a width each the values would shift from one to the next.
+  The label takes what it asks for up to half the line.
+- **A quoted note carries a bar at its left** on every page it is on; the report's own paragraphs
+  carry none. That is how the page tells what another document of the bundle already says from what
+  only the report says.
+- **The footer of every page** says which session it is — the report's subtitle, cut short with an
+  ellipsis if it does not fit, since the first page says it whole — and *Page n of N*, worded in
+  `EvidenceWording`: a loose sheet of a file says how many it is one of.
+- **The limits of the bundled report are 12 flow ids per finding and 150 TLS rows**
+  (`EvidenceReportLimits.bundled`). Looked at on the session `-TVSeedFixture` seeds (63 flows, 62
+  findings: nine pages) and on one of 2 000 flows over the same hosts (fourteen): at 24 ids a
+  finding took five lines and a page held nine findings, for a list nobody checks on paper and that
+  was still not whole. 150 rows are five pages at most. Markers, the allowlist, requirements and
+  findings are not bounded.
+- **`report.pdf` is not the same bytes twice.** Every other file of the bundle is; a PDF written by
+  the system carries the instant it was written (`/CreationDate`, `/ModDate`) and an identifier of
+  its own (`/ID`), which no public key of the renderer sets — 62 bytes differ between two renderings
+  of one layout, and nothing else. The manifest covers the bytes that were written all the same, so
+  what was exported can still be shown unaltered; what does not hold is that exporting a session
+  twice gives the same `report.pdf`, and therefore the same `manifest.json`. The same session does
+  give the same *layout*, and the same text.
+- **The bundle format stays at version 1.** No document changed shape; a reader of the seven-file
+  bundle misses nothing in the eighth, and `manifest.json` lists what a bundle holds.
+  `session.json`'s note of what is inside is unchanged too: the report adds no kind of data, it is
+  the documents drawn.
+- **Its metadata** carries the report's title and `TunnelVision <version>`, the exporting tool.
+
+**Looked at** (2026-10-10), not only opened: both seeded sessions, every page. Looking is what
+found the label column changing width from one list to the next, a quoted note leaving a single
+line overleaf, and tables with the same headings taking different shapes. The pages can be had
+again with one command (`EvidenceReportSampleTests`, which runs only when asked).
+
+**Measured**, with the report inside (`EvidenceExporterMeasurementTests`, same session as above):
+20 000 flows, 2 000 of them a finding each — a report of some hundred pages — export in 4.95 s
+against 4.8 s, with a peak of 150 MB against 143 MB.
+
 ## Tests
 
 - `EvidenceExporterTests`, against a real `FlowStore`, files written by a real `PcapWriter` and a
-  zip reader that shares no code with anything: the archive holds the seven files in one folder;
+  zip reader that shares no code with anything: the archive holds the eight files in one folder;
   the manifest inside it is the size and digest of every other file inside it; the documents are
   the session's, with its markers and the exporting tool; the capture holds the session's packets;
   `session.json` names the capture beside it; the result carries what the capture lacks, as
   `capture.json` in the archive says it; a session with no traffic still gives a whole bundle;
   every flow is listed however many there are; only the archive is left on disk; an export takes
   the previous one, and an interrupted one, and nothing else; two exports of a session at the same
-  instant carry the same files; an open session, a session that is gone, a catalogue that is not
+  instant carry the same six documents byte for byte, a report that reads the same, and manifests
+  that agree on everything but the report; the report in the archive is a PDF of this session, on
+  A4, naming the tool that exported it, and counts the packets `capture.json` counts; an open session, a session that is gone, a catalogue that is not
   bundled, a history that does not open, a capture directory that does not resolve and a
   destination that cannot be created, each as its own case; the names.
 - `EvidenceReportTests`: a `capture.json` of another session and limits that would print nothing
@@ -1460,6 +1582,26 @@ public enum EvidenceReportError: Error, Sendable, Hashable {
   and a missing reading counted apart, an unpublished version by its wire value, a name from DNS
   marked; the three cases of the capture; the capture's note always there; nothing the report
   prints says *passed*; pinning is never worded about the app.
+- `EvidenceReportLayoutTests`, on a report made by hand and a measurer of fixed-width characters,
+  nearly all of them over fifty page heights: columns that fit get what they ask for, a wide one
+  gets what the narrow ones leave, wide ones split evenly and never get less than an even share, a
+  narrow one is not squeezed, what is left over goes to the column that asked for most, narrow
+  columns measure the same with or without room to spare; A4; an empty report is one page; the
+  body frame; **every character of the report is on some page**; every line and every fill inside
+  the body frame; no two lines on the same spot; no page opens with a gap; no line of a broken text
+  alone; no heading last on a page; a fact that stays with the next is on the page where the next
+  begins — and without the mark it is not; a row that fits a page is not split; a table repeats its
+  header on every page it goes on to; no header without a row; a rule under every row; a table as
+  wide as the text; a cell inside its column; one label column per section; a label never over half
+  the line; a quoted note with its bar on every page and a paragraph without; the footer of every
+  page; a session line too long for it; the same report composed the same way.
+- `EvidenceReportPDFTests`, with the real typography and PDFKit as the reader: breaking a text
+  into lines loses nothing but white space, in every style and width, with a 64-digit hash, a host
+  name, line breaks and non-Latin text; every line fits the width it was broken for; a label and
+  its value share a line height; every ink is a fixed grey that shows on paper in either
+  appearance; the PDF has the layout's pages, each on A4; every line of the layout can be read
+  back from its page; the title and the tool in the metadata; on A4 the real report keeps every
+  verdict with its coverage and every line inside the margins.
 - `EvidenceExportPresentationTests`: a session with no packets is not a complete capture; a capture
   with nothing written is incomplete, not empty; only the reasons that have packets are listed, in
   the order of `capture.json`; a complete capture is one sentence and shows no zeroes; every
