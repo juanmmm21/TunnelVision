@@ -371,7 +371,7 @@ public enum QUICLongHeader {
 
 Only what RFC 8999 fixes for every version: the first byte, the four bytes of version, and the two
 connection IDs with their length bytes — far enough to know they fit. Nothing is decrypted and the
-ClientHello inside the Initial is not touched; that is a different piece of work.
+ClientHello inside the Initial is not touched; that is [*Opening a QUIC Initial*](#above-l4-opening-a-quic-initial).
 
 The long header travels only on the first packets of a connection (Initial, 0-RTT, Handshake, Retry).
 Everything after uses the short header, which carries no version. **A flow whose start the tunnel did
@@ -444,3 +444,155 @@ and the four cases of `replaces`. `FlowTableTests` (*Versión de QUIC*) and `Pac
 headers leaving it alone, the server's version arriving through the reinjected path and winning, an
 unknown version recorded without the mark, a non-QUIC payload and another port left `plaintext`, the
 local port being 443 not counting, and the route staying passthrough with inspection on.
+
+## Above L4: opening a QUIC Initial
+
+`Shared/QUIC/QUICInitialKeys.swift`, `QUICInitialPacket.swift`, `QUICPacketNumber.swift` and
+`QUICVarint.swift`. The long header says which version a flow speaks; the name the client asks for
+is one layer down, in the ClientHello that the client's first packets carry. This section is the
+part that gets to those bytes: **a client Initial in, its frames out.** It is pure — no flow, no
+pipeline, no state — and nothing calls it yet. Reading the frames and naming the flow are separate
+pieces of work.
+
+```swift
+public struct QUICInitialKeys: Sendable, Equatable {          // the client's, never the server's
+    public let version: QUICVersion
+    public let key: Data                    // AEAD_AES_128_GCM, 16 bytes
+    public let iv: Data                     // 12 bytes
+    public let headerProtectionKey: Data    // AES-128-ECB, 16 bytes
+    public init?(version: QUICVersion, clientDestinationConnectionID: Data)   // nil: unknown version
+}
+
+public enum QUICHeaderProtection {
+    public static func mask(key: Data, sample: Data) throws -> Data           // 5 bytes
+}
+
+public struct QUICInitialHeader: Sendable, Equatable {        // what travels in the clear
+    public let version: QUICVersion
+    public let destinationConnectionID: Data
+    public let sourceConnectionID: Data
+    public let tokenLength: Int
+    public let packetNumberOffset: Int
+    public let packetLength: Int            // shorter than the datagram: another packet follows
+    public init(datagram: Data) throws
+}
+
+public struct QUICInitialPacket: Sendable, Equatable {
+    public let header: QUICInitialHeader
+    public let packetNumber: UInt64
+    public let frames: Data                 // decrypted payload, padding included
+    public init(datagram: Data, header: QUICInitialHeader,
+                keys: QUICInitialKeys, largestPacketNumber: UInt64?) throws
+}
+
+public enum QUICPacketNumber {
+    public static func decode(truncated: UInt64, byteCount: Int, largestProcessed: UInt64?) -> UInt64?
+}
+
+public enum QUICVarint {
+    public static func read(from data: Data, at index: inout Data.Index) -> UInt64?
+}
+
+public enum QUICInitialError: Error, Equatable, Sendable {
+    case notALongHeader, unsupportedVersion(QUICVersion), notAnInitial, connectionIDTooLong
+    case truncated, tooShortToSample, keysOfAnotherVersion, headerProtectionFailed
+    case authenticationFailed
+}
+```
+
+### Why this is not decryption of anything private
+
+Initial keys are not a secret. RFC 9001 § 5.2 derives them from a salt printed in the RFC and the
+Destination Connection ID of the client's first Initial, which travels in the clear; RFC 9000
+§ 17.2.2 says in so many words that this protection gives no confidentiality against anyone who can
+see the packets — it exists so that a middlebox that does not know the version cannot rewrite them.
+Any on-path observer can do what this code does, and Wireshark does it by default.
+[ADR 0003](../decisions/0003-no-third-party-pinning-bypass.md) is untouched, and
+[ADR 0006](../decisions/0006-udp-quic-passthrough.md) already counted the SNI of a QUIC Initial as
+metadata.
+
+The boundary is drawn in the types:
+
+- **Only the client's keys are derived.** The server's come from the same derivation with another
+  label, and nothing here wants the ServerHello.
+- **Only Initial packets are read.** The long packet type is not protected, so 0-RTT, Handshake and
+  Retry are refused (`notAnInitial`) before a key is touched. Handshake and 1-RTT packets use keys
+  from the TLS key exchange, which the tunnel does not have and must not have.
+
+### Two steps, because the keys depend on the header
+
+`QUICInitialHeader(datagram:)` needs no key and gives the version and the Destination Connection ID;
+the caller derives `QUICInitialKeys` from them and then opens the packet. They are separate so the
+keys can be derived once per connection and kept, and because **the keys are those of the client's
+first Initial, not of the packet in hand**: once the server answers, the client addresses its
+packets to the connection ID the server chose and keeps protecting them with the original keys
+(§ 5.2). Only a Retry changes them — the next Initial then derives from the connection ID the
+server put in the Retry, which is the one that packet carries. A caller that gets
+`authenticationFailed` with a connection's keys has that case to consider.
+
+### What the header read accepts
+
+- the long-header bit and the fixed bit, as `QUICLongHeader` does;
+- **version 1 or 2**, the two whose salt and labels are known. Anything else is
+  `unsupportedVersion` — a Version Negotiation (version `0`) included. The salt of another version
+  is never tried;
+- the Initial type **of that version**: `00` in version 1, `01` in version 2, which renumbered all
+  four (RFC 9369 § 3.2). The same first byte is an Initial in one and a Retry in the other;
+- connection IDs of at most 20 bytes;
+- a token and a length that fit in the datagram (`truncated` otherwise), and a length of at least 20
+  bytes — the packet number, the 16-byte sample and room to take it four bytes after the packet
+  number starts (RFC 9001 § 5.4.2 has such a packet discarded; here `tooShortToSample`).
+
+`packetLength` is what the Length field says, not the size of the datagram: a datagram may carry a
+second packet behind the first (RFC 9000 § 12.2), and the rest of the datagram is then a packet to
+read on its own.
+
+### Opening
+
+1. **Header protection** (§ 5.4): sixteen bytes of ciphertext, taken four bytes after the start of
+   the packet number, are encrypted with AES-128-ECB under the header-protection key. The first five
+   bytes are a mask: the low **four** bits of the first byte (five in a short header, which is not
+   read here) and the packet number. CryptoKit has no bare block cipher, so this one block goes
+   through CommonCrypto.
+2. **The packet number** (RFC 9000 § 17.1) travels truncated to one to four bytes and is completed
+   against the largest one already opened, with the algorithm of RFC 9000 Appendix A.3. With none
+   opened the expected number is 0, where every packet number space starts. It matters because it is
+   part of the nonce: a wrong guess does not open the packet.
+3. **The AEAD** (§ 5.3): AES-128-GCM, nonce = IV XOR packet number, associated data = the header as
+   it was before protection, first byte through packet number. A tag that does not verify is
+   `authenticationFailed` and no bytes come out — an altered packet, a packet of another connection
+   and keys from the wrong connection ID are indistinguishable, and need not be told apart.
+
+The reserved bits are not checked: the endpoint that receives the packet is the one to treat them
+as a protocol violation, and an observer that dropped the packet would only know less.
+
+### What is not here
+
+- **Frames.** `frames` is the payload as decrypted: CRYPTO frames, PADDING, sometimes PING or ACK.
+  Reassembling CRYPTO by offset, across several Initial packets, into a ClientHello is the next
+  piece.
+- **The hookup.** Nothing in the pipeline calls this; no flow gains a name from it yet.
+- **Other versions.** A version gets keys when its RFC's salt and labels are added to
+  `QUICInitialKeys`, with that RFC's sample packet as the test.
+
+### Tests
+
+The expected values are the ones the RFCs print, **copied from the documents, not computed**:
+
+- `QUICInitialKeysTests`: the client key, IV and header-protection key of RFC 9001 § A.1 and
+  RFC 9369 § A.1; no keys for an unknown version; an empty connection ID; the header-protection
+  mask of both § A.2; a key or sample of another size.
+- `QUICInitialPacketTests`: **the client Initial of RFC 9001 § A.2 and of RFC 9369 § A.2 open to
+  packet number 2 and the CRYPTO frame the RFC prints, followed by padding to 1162 bytes**
+  (`QUICRFCVectors`, whose hex was extracted from the RFC text by a script). What the RFCs do not
+  bring is written by a test fixture that really protects a packet: every packet-number length in
+  both versions, the shortest packet that can be sampled, a token and a source connection ID, keys
+  from a connection ID other than the one the packet carries, a second packet in the datagram, a
+  truncated packet number that only the largest seen completes. And what does not open: a byte
+  altered in the cleartext header, the ciphertext or the tag; keys of another connection or another
+  version; a datagram shorter than its header says. And what is not an Initial: no long header, a
+  version without known protection, the other three packet types of each version, an oversized
+  connection ID, a packet cut at every byte of its header, a token that does not fit, a packet too
+  short to sample.
+- `QUICVarintTests` and `QUICPacketNumberTests`: the samples of RFC 9000 Appendices A.1 and A.3,
+  both ends of the window, and what is refused.
