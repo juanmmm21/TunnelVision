@@ -44,6 +44,11 @@ files to the packets of the session's flows and writes `capture.pcapng`, each pa
 with its flow and that flow's findings, hashing as it writes; `EvidenceCaptureDocument`
 (`capture.json`) counts, per flow and per reason, the packets that are not in it. The folder and
 the archive are written by the app's `EvidenceExporter` (`TunnelVision/Services`).
+`EvidenceReport` is what the bundle's report says, as headings, notes, fact lists and tables read
+off those documents, with nothing drawn: what the bundle already words it quotes, and its lists
+are bounded by `EvidenceReportLimits` and say what they left out. `EvidenceCaptureStanding` is
+the one reading of `capture.json` — every packet there, none recorded, or some missing — that the
+report and the app's export sheet share.
 
 An *audit* session is not the *capture* session of `FlowStore`: the latter is the instant the store was
 opened and only keeps a recycled 5-tuple from merging two connections.

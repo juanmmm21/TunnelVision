@@ -1310,7 +1310,8 @@ other write, is ignored meanwhile — and leaves either `pendingEvidence`, an `E
 for the sheet, or a notice. A failure does not take away a summary already on screen. When the
 exporter finds the session gone or still open, the view model re-reads: what is drawn is no longer
 what there is. What the sheet says is decided in `AuditPresentation` (`EvidenceExportPresentation.swift`)
-and described in [`../ux/audit.md`](../ux/audit.md) § *Exporting a session*:
+and described in [`../ux/audit.md`](../ux/audit.md) § *Exporting a session*. `EvidenceCaptureStanding`
+itself lives in `Shared/Audit/Evidence`: the report reads the same three cases (§ *The report*).
 
 ```swift
 public enum EvidenceCaptureStanding: Sendable, Equatable {
@@ -1348,6 +1349,89 @@ Memory follows the **number of flows** — about 3 kB each, the documents held w
 folder and the archive at once: up to twice the capture. The archive sizes of that run say nothing:
 the seeded payload is one repeated byte.
 
+### The report
+
+`report.pdf` is the piece of the bundle that is read by a person and filed. `EvidenceReport`
+(`Shared/Audit/Evidence`) is **what it says**, before anything is drawn: which sections, which rows,
+which sentence in each place. It is pure, and it is not yet written into the bundle — drawing it
+and adding the file is the exporter's.
+
+```swift
+public struct EvidenceReport: Sendable, Hashable {
+    public let title: String
+    public let subtitle: String                        // project · release or "baseline" · session id
+    public let sections: [EvidenceReportSection]       // always all eight, in order
+
+    public init(
+        bundle: EvidenceBundle, capture: EvidenceCaptureDocument, limits: EvidenceReportLimits
+    ) throws                                           // EvidenceReportError
+}
+
+public enum EvidenceReportSectionKind: String, CaseIterable {
+    case session, method, catalogue, requirements, findings, checks, tlsReadings, capture
+}
+
+public enum EvidenceReportBlock: Sendable, Hashable {
+    case heading(String)
+    case paragraph(String)                             // the report's own text
+    case note(String)                                  // quoted from another document of the bundle
+    case facts([EvidenceReportFact])                   // label, value
+    case table(EvidenceReportTable)                    // columns, rows
+}
+
+public struct EvidenceReportLimits: Sendable, Hashable {
+    public init?(flowIDsPerFinding: Int, tlsReadingRows: Int)   // nil unless both are positive
+}
+
+public enum EvidenceReportError: Error, Sendable, Hashable {
+    case captureOfAnotherSession(captureSessionID: Int64, sessionID: Int64)
+}
+```
+
+- **It reads the bundle; it classifies nothing.** Everything comes from the documents of an
+  `EvidenceBundle` already built and from its `capture.json`, so the report cannot say something
+  the files beside it do not. The one thing read from `EvidenceBundle.assessment` rather than from a
+  document is *why* a check could not look at a flow: there the reason still has its type, and every
+  case gets a sentence without a `default`.
+- **The model is blocks, not audit types.** Whoever draws it walks headings, paragraphs, notes,
+  fact lists and tables and knows nothing about requirements. A `note` is text another document of
+  the bundle already carries, quoted; a `paragraph` is the report's own.
+- **What the bundle already words is quoted, not reworded**: the attribution method, how a verdict
+  is to be read, what is and is not inside, what a TLS reading means, what the capture holds and how
+  a packet's comment is read; each finding's statement and each requirement's verdict statement.
+  The sentences that only the report has are in `EvidenceWording` too (`EvidenceReportWording.swift`).
+- **The identifiers are those of the JSON** — `serverHello`, `upstreamConnection`, `consentGiven`,
+  `notCaptured`, the finding kinds, the check names in parentheses — so that a line of the report
+  can be looked up in the file it summarises.
+- **The same session gives the same report.** Instants are written as in the JSON (ISO 8601, UTC)
+  and counts carry no regional formatting. No sentence depends on a count being one or many: counts
+  are facts with a label.
+- **A `capture.json` of another session is refused.**
+
+| Section | What it says |
+|---|---|
+| `session` | Project, release, instants, device, both tool versions, the inspection conditions and — always, in a sentence — whether anything about pinning can be read from this session; the markers and the allowlist as tables, or the sentence that says there is none and what follows from that |
+| `method` | The four notes of the bundle, quoted: attribution first (ADR 0008) |
+| `catalogue` | The identifier and, for each of the two source documents, title, version, date and the SHA-256 of the PDF it was checked against; the TLS minimum |
+| `requirements` | A table of every requirement with its verdict statement, then each one: aspect, test depth, verdict, **its `toolCoverage` right after the verdict**, the findings against it and in its support, and how many connections the check behind it looked at, could not assess, and does not apply to |
+| `findings` | Findings that state the same sentence go under it once, a row each: identifier, what it is stated about (the host, or the version with where it was read), how many connections, and their flow ids |
+| `checks` | For each of the five: connections behind a finding, looked at with nothing to report, not assessed, not applicable — they add up to the session's flows — and a row per reason it could not look, as a sentence |
+| `tlsReadings` | One row per host and reading: the host and where its name comes from, the version, **where it was read**, how many connections |
+| `capture` | Which of the three cases of `EvidenceCaptureStanding` holds, the counts that have packets under the keys of `capture.json`, and the capture's two notes |
+
+- **With no findings the section says so, and says it is not "nothing wrong"**: it points at
+  `checks`, which is where a reader sees whether anything could be looked at.
+- **Pinning has no count of connections looked at.** Both of its outcomes are findings, so that
+  group is always empty, and a zero under that label would read as an observation. The check says so.
+- **Lists are bounded and say what they left out.** A finding prints up to
+  `limits.flowIDsPerFinding` flow ids and the TLS table up to `limits.tlsReadingRows` rows; past
+  that it states how many are not printed and which file has them all. The limits have no default:
+  one finding of a session of twenty thousand flows cites every one of them.
+- **A TLS reading is what `flows.json` holds for the flow**, the server's answer before the QUIC
+  version, as `TLSVersionObservation` does. A QUIC version is printed as a QUIC version — what it
+  implies about TLS is the `tlsVersion` check's to say — and one read from the client is marked as
+  such. A flow the server refused with an alert, and one with no reading, are counted, not listed.
+
 ## Tests
 
 - `EvidenceExporterTests`, against a real `FlowStore`, files written by a real `PcapWriter` and a
@@ -1361,6 +1445,21 @@ the seeded payload is one repeated byte.
   instant carry the same files; an open session, a session that is gone, a catalogue that is not
   bundled, a history that does not open, a capture directory that does not resolve and a
   destination that cannot be created, each as its own case; the names.
+- `EvidenceReportTests`: a `capture.json` of another session and limits that would print nothing
+  are refused; every section is there, in order, for a session with no flows; every row has its
+  header's columns; the same session gives the same report; the subtitle of an audit and of a
+  baseline; the session's conditions, and the sentence about pinning in both cases; markers and
+  allowlist as tables, and their absence said; the method section is the bundle's four notes; the
+  catalogue with both documents; every requirement with the verdict `findings.json` writes; the
+  `toolCoverage` right after the verdict, and none on a requirement outside the tool's scope; a
+  requirement's findings and its check's counts; findings grouped under their statement; a weak
+  version with where it was read; a list past its limit; no findings is not "nothing wrong"; every
+  connection counted once in each check, and the reasons adding up to *not assessed*; pinning
+  without a count of connections looked at; each reason as a sentence, and all twenty-four of them
+  distinct; no table of reasons where there is none; the TLS table by host and reading, a refusal
+  and a missing reading counted apart, an unpublished version by its wire value, a name from DNS
+  marked; the three cases of the capture; the capture's note always there; nothing the report
+  prints says *passed*; pinning is never worded about the app.
 - `EvidenceExportPresentationTests`: a session with no packets is not a complete capture; a capture
   with nothing written is incomplete, not empty; only the reasons that have packets are listed, in
   the order of `capture.json`; a complete capture is one sentence and shows no zeroes; every
