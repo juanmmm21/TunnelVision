@@ -14,8 +14,8 @@ import Foundation
 /// resto usa la cabecera corta, que no dice la versión. Por eso de un flujo cuyo arranque no se
 /// vio no hay nada que leer, y eso no es lo mismo que no ser QUIC.
 ///
-/// No descifra nada ni lee más allá de los dos identificadores: el nombre que el ClientHello
-/// lleva dentro del Initial es otro trabajo.
+/// No descifra nada ni lee más allá de los dos identificadores: llegar al ClientHello que lleva
+/// dentro el Initial es trabajo de `QUICInitialPacket`.
 public enum QUICLongHeader {
 
     private static let longHeaderBit: UInt8 = 0x80
