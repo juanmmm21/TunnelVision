@@ -24,6 +24,7 @@ public enum EvidenceBundleFormat {
     public static let findingsFileName = "findings.json"
     public static let captureFileName = "capture.pcapng"
     public static let captureDocumentFileName = "capture.json"
+    public static let reportFileName = "report.pdf"
     public static let manifestFileName = "manifest.json"
 
     // ISO-8601 con fracción de segundo y en UTC, como el export de conexiones: el paquete se lee

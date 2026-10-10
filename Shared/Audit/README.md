@@ -45,8 +45,9 @@ with its flow and that flow's findings, hashing as it writes; `EvidenceCaptureDo
 (`capture.json`) counts, per flow and per reason, the packets that are not in it. The folder and
 the archive are written by the app's `EvidenceExporter` (`TunnelVision/Services`).
 `EvidenceReport` is what the bundle's report says, as headings, notes, fact lists and tables read
-off those documents, with nothing drawn: what the bundle already words it quotes, and its lists
-are bounded by `EvidenceReportLimits` and say what they left out. `EvidenceCaptureStanding` is
+off those documents, with nothing drawn — composing it into pages and drawing `report.pdf` is the
+app's (`EvidenceReportLayout`, `EvidenceReportPDF`): what the bundle already words it quotes, and
+its lists are bounded by `EvidenceReportLimits` and say what they left out. `EvidenceCaptureStanding` is
 the one reading of `capture.json` — every packet there, none recorded, or some missing — that the
 report and the app's export sheet share.
 

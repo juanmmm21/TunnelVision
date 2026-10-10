@@ -317,6 +317,34 @@ final class EvidenceReportTests: XCTestCase {
         XCTAssertEqual(withCoverage, 5)
     }
 
+    /// Lo que el dibujo no puede adivinar: qué dos datos no puede separar un salto de página.
+    func testOnlyAVerdictWithACoverageAfterItIsMarkedAsStayingWithTheNextFact() throws {
+        let bundle = try variedBundle()
+        let report = try report(bundle)
+        let blocks = try section(.requirements, of: report).blocks
+
+        for requirement in bundle.findings.requirements {
+            let own = facts(try self.blocks(under: "\(requirement.id) — \(requirement.title)", in: blocks))
+            XCTAssertEqual(
+                own.filter(\.staysWithNext).map(\.label),
+                requirement.toolCoverage == nil ? [] : ["Verdict"],
+                requirement.id
+            )
+        }
+        let elsewhere = report.sections.filter { $0.kind != .requirements }.flatMap { facts($0.blocks) }
+        XCTAssertFalse(elsewhere.isEmpty)
+        XCTAssertFalse(elsewhere.contains(where: \.staysWithNext))
+    }
+
+    func testAPageSaysWhichOneItIsOfHowMany() {
+        XCTAssertEqual(EvidenceWording.reportPageLabel(3, of: 12), "Page 3 of 12")
+        XCTAssertEqual(EvidenceWording.reportPageLabel(1, of: 1), "Page 1 of 1")
+    }
+
+    func testTheLimitsOfTheBundledReportAreTheOnesTheSpecStates() {
+        XCTAssertEqual(EvidenceReportLimits.bundled, EvidenceReportLimits(flowIDsPerFinding: 12, tlsReadingRows: 150))
+    }
+
     func testARequirementCitesItsFindingsAndHowManyConnectionsItsCheckLookedAt() throws {
         let bundle = try variedBundle()
         let blocks = try section(.requirements, of: try report(bundle)).blocks

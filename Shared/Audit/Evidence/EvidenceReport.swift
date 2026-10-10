@@ -17,9 +17,15 @@ public struct EvidenceReportFact: Sendable, Hashable {
     public let label: String
     public let value: String
 
-    public init(label: String, value: String) {
+    /// Si el dato siguiente lo matiza y un salto de página no puede separarlos: un veredicto al
+    /// pie de una página, con su `toolCoverage` en la siguiente, se lee como el requisito entero.
+    /// Lo dice el contenido y no el dibujo, que no sabe qué es un veredicto.
+    public let staysWithNext: Bool
+
+    public init(label: String, value: String, staysWithNext: Bool = false) {
         self.label = label
         self.value = value
+        self.staysWithNext = staysWithNext
     }
 }
 
@@ -67,9 +73,16 @@ public struct EvidenceReportLimits: Sendable, Hashable {
     /// `nil` si alguno no es positivo: un informe que no imprime ninguno diría «0 de N» de todo.
     public init?(flowIDsPerFinding: Int, tlsReadingRows: Int) {
         guard flowIDsPerFinding > 0, tlsReadingRows > 0 else { return nil }
+        self.init(checkedFlowIDsPerFinding: flowIDsPerFinding, tlsReadingRows: tlsReadingRows)
+    }
+
+    private init(checkedFlowIDsPerFinding flowIDsPerFinding: Int, tlsReadingRows: Int) {
         self.flowIDsPerFinding = flowIDsPerFinding
         self.tlsReadingRows = tlsReadingRows
     }
+
+    /// Los del `report.pdf` que va en el paquete (`docs/spec/audit.md` § *Drawing the report*).
+    public static let bundled = EvidenceReportLimits(checkedFlowIDsPerFinding: 12, tlsReadingRows: 150)
 }
 
 public enum EvidenceReportError: Error, Sendable, Hashable {
@@ -94,6 +107,14 @@ public struct EvidenceReport: Sendable, Hashable {
 
     /// Siempre todas, en el orden de `EvidenceReportSectionKind`.
     public let sections: [EvidenceReportSection]
+
+    /// Un informe con las piezas que se le den. Solo para probar a quien lo dibuja, que recorre
+    /// piezas y no sabe de sesiones: el del paquete sale siempre del otro `init`.
+    init(title: String, subtitle: String, sections: [EvidenceReportSection]) {
+        self.title = title
+        self.subtitle = subtitle
+        self.sections = sections
+    }
 
     /// - Parameter capture: el `capture.json` de este mismo paquete, tal como se escribió.
     public init(
@@ -259,7 +280,11 @@ public struct EvidenceReport: Sendable, Hashable {
                 value: "\(requirement.aspect.number) \(requirement.aspect.name)"
             ),
             EvidenceReportFact(label: "Test depth", value: requirement.testDepth),
-            EvidenceReportFact(label: "Verdict", value: requirement.verdictStatement),
+            EvidenceReportFact(
+                label: "Verdict",
+                value: requirement.verdictStatement,
+                staysWithNext: requirement.toolCoverage != nil
+            ),
         ]
         // Pegado al veredicto: sin él, «observado sin contradicción» se lee como el requisito entero.
         if let toolCoverage = requirement.toolCoverage {

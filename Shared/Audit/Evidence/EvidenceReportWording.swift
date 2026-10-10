@@ -239,6 +239,13 @@ extension EvidenceWording {
         }
     }
 
+    // MARK: - El pie de página
+
+    /// Con el total: una hoja suelta de un expediente dice de cuántas es.
+    public static func reportPageLabel(_ number: Int, of count: Int) -> String {
+        "Page \(number) of \(count)"
+    }
+
     // MARK: - Lo que no cabe
 
     /// - Parameter what: lo que no se imprime, en plural y con mayúscula (`Connections`).
