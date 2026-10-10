@@ -293,6 +293,9 @@ public actor EvidenceExporter {
             for: bundle, from: store, captureDirectory: captureDirectory, into: folder
         )
         files.append(try capture.documentFile())
+        // Después de `capture.json`, que es de donde el informe lee qué lleva la captura, y antes
+        // del manifiesto, que lo cubre como a los demás.
+        files.append(try Self.reportFile(of: bundle, capture: capture.document))
         for file in files {
             try file.data.write(to: folder.appendingPathComponent(file.name), options: .atomic)
         }
@@ -304,6 +307,25 @@ public actor EvidenceExporter {
         return WrittenFolder(
             fileNames: (manifest.files.map(\.name) + [manifestFile.name]).sorted(),
             capture: capture.document
+        )
+    }
+
+    /// `report.pdf`: lo que dicen los documentos del paquete, compuesto en A4 y dibujado.
+    private static func reportFile(
+        of bundle: EvidenceBundle,
+        capture: EvidenceCaptureDocument
+    ) throws -> EvidenceFile {
+        let report = try EvidenceReport(bundle: bundle, capture: capture, limits: .bundled)
+        let typography = EvidenceReportTypography()
+        let layout = EvidenceReportLayout(report: report, geometry: .a4, measuring: typography)
+        return EvidenceFile(
+            name: EvidenceBundleFormat.reportFileName,
+            data: EvidenceReportPDF.data(
+                of: layout,
+                typography: typography,
+                title: report.title,
+                creator: "TunnelVision \(bundle.session.exportedWith)"
+            )
         )
     }
 
@@ -371,7 +393,7 @@ public actor EvidenceExporter {
         case EvidenceCaptureError.destinationUnavailable(let detail),
              EvidenceCaptureError.writeFailed(let detail):
             return .writeFailed(detail)
-        case is EvidenceBundleError, is EvidenceManifestError, is EncodingError:
+        case is EvidenceBundleError, is EvidenceManifestError, is EvidenceReportError, is EncodingError:
             // Ninguno puede salir de un historial sano: son las comprobaciones de `Shared` sobre
             // lo que este mismo actor le acaba de dar. Si salen, el paquete no se escribe.
             return .writeFailed(String(describing: error))

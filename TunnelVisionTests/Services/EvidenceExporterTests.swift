@@ -1,4 +1,5 @@
 import Foundation
+import PDFKit
 import XCTest
 @testable import Shared
 
@@ -38,7 +39,7 @@ final class EvidenceExporterTests: XCTestCase {
 
     private static let bundleFileNames = [
         "capture.json", "capture.pcapng", "findings.json", "flows.csv", "flows.json",
-        "manifest.json", "session.json",
+        "manifest.json", "report.pdf", "session.json",
     ]
 
     private func makeStore() throws -> FlowStore {
@@ -397,10 +398,69 @@ final class EvidenceExporterTests: XCTestCase {
         let store = try makeStore()
         let session = try await seedClosedSession(store)
 
-        let first = try files(in: try await export(store, session).url)
-        let second = try files(in: try await export(store, session).url)
+        var first = try files(in: try await export(store, session).url)
+        var second = try files(in: try await export(store, session).url)
 
+        // El PDF y el manifiesto que lo cubre son los únicos que no salen byte a byte: quien
+        // escribe el PDF es el sistema, y le pone la hora a la que lo hizo y un identificador
+        // propio. Lo que dice sí es lo mismo.
+        let reports = [first.removeValue(forKey: "report.pdf"), second.removeValue(forKey: "report.pdf")]
+        let manifests = [first.removeValue(forKey: "manifest.json"), second.removeValue(forKey: "manifest.json")]
+        XCTAssertEqual(first.count, 6)
         XCTAssertEqual(first, second)
+        XCTAssertEqual(try pageTexts(of: reports[0]), try pageTexts(of: reports[1]))
+
+        let listed = try manifests.map { manifest in
+            try XCTUnwrap(try json(manifest)["files"] as? [[String: Any]])
+                .filter { $0["name"] as? String != "report.pdf" }
+                .map { "\($0["name"] ?? "") \($0["byteCount"] ?? "") \($0["sha256"] ?? "")" }
+        }
+        XCTAssertEqual(listed[0].count, 6)
+        XCTAssertEqual(listed[0], listed[1])
+    }
+
+    // MARK: - El informe
+
+    private func pageTexts(of pdf: Data?) throws -> [String] {
+        let document = try XCTUnwrap(PDFDocument(data: try XCTUnwrap(pdf)))
+        return try (0..<document.pageCount).map { try XCTUnwrap(document.page(at: $0)?.string) }
+    }
+
+    func testTheReportInTheArchiveIsAPDFOfThisSessionOnA4() async throws {
+        let store = try makeStore()
+        let session = try await seedClosedSession(store)
+
+        let files = try files(in: try await export(store, session).url)
+
+        let document = try XCTUnwrap(PDFDocument(data: try XCTUnwrap(files["report.pdf"])))
+        XCTAssertGreaterThan(document.pageCount, 1)
+        let box = try XCTUnwrap(document.page(at: 0)).bounds(for: .mediaBox)
+        XCTAssertEqual(box.width, 595.28, accuracy: 0.01)
+        XCTAssertEqual(box.height, 841.89, accuracy: 0.01)
+
+        let text = try pageTexts(of: files["report.pdf"]).joined(separator: "\n")
+        XCTAssertTrue(text.contains("Network evidence report"))
+        XCTAssertTrue(text.contains("Example Health · 2.4.0 (187) · session \(session.id)"))
+        XCTAssertTrue(text.contains("Page 1 of \(document.pageCount)"))
+        XCTAssertEqual(
+            document.documentAttributes?[PDFDocumentAttribute.creatorAttribute] as? String,
+            "TunnelVision \(Self.toolVersion)"
+        )
+    }
+
+    /// El informe se escribe con el `capture.json` que va a su lado, no con otro recuento.
+    func testTheReportCountsThePacketsThatTheCaptureBesideItCounts() async throws {
+        let store = try makeStore()
+        let session = try await seedClosedSession(store)
+
+        let result = try await export(store, session)
+        let text = try pageTexts(of: try files(in: result.url)["report.pdf"]).joined(separator: "\n")
+
+        XCTAssertEqual(result.capture.packets.written, 3)
+        XCTAssertTrue(text.contains("Every packet the session recorded is in capture.pcapng."))
+        XCTAssertTrue(text.contains("Packets recorded 3"), text)
+        // Lo que el paquete promete no decir tampoco lo dice dibujado.
+        XCTAssertNil(text.range(of: #"\bpassed\b"#, options: [.regularExpression, .caseInsensitive]))
     }
 
     // MARK: - Lo que no se exporta

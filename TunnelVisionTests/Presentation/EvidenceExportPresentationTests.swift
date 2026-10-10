@@ -27,7 +27,7 @@ final class EvidenceExportPresentationTests: XCTestCase {
         byteCount: UInt64 = 482_000,
         fileNames: [String] = [
             "capture.json", "capture.pcapng", "findings.json", "flows.csv", "flows.json",
-            "manifest.json", "session.json",
+            "manifest.json", "report.pdf", "session.json",
         ],
         flowCount: Int = 1_250,
         findingCount: Int = 4
@@ -171,7 +171,7 @@ final class EvidenceExportPresentationTests: XCTestCase {
 
         XCTAssertEqual(summary.fileName, "tunnelvision-evidence-session-1-20261009-203000.zip")
         XCTAssertEqual(summary.title, "Evidence bundle ready to share")
-        XCTAssertEqual(summary.detail, "482 KB · ZIP · 7 files")
+        XCTAssertEqual(summary.detail, "482 KB · ZIP · 8 files")
         XCTAssertEqual(summary.facts.map(\.label), ["Connections", "Findings"])
         XCTAssertEqual(summary.facts.map(\.value), [.text("1,250"), .text("4")])
         XCTAssertEqual(summary.capture, AuditPresentation.evidenceCapture(document(written: 10)))
