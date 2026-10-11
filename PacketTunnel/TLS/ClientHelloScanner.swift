@@ -41,6 +41,15 @@ public struct ClientHelloScanner: Sendable {
         }
     }
 
+    /// Cómo viaja el mensaje de handshake dentro de los bytes que se le dan al escáner.
+    public enum Framing: Sendable, Equatable {
+        /// Envuelto en records TLS: lo que lleva un stream TCP.
+        case tlsRecords
+        /// El mensaje a pelo, sin capa de registro: lo que lleva el stream CRYPTO de QUIC, que
+        /// toma el contenido de los records de handshake y no el record (RFC 9001 § 4.1.3).
+        case handshakeMessages
+    }
+
     /// Qué se sabe del flujo tras alimentar el último trozo del stream.
     public enum Outcome: Sendable, Equatable {
         /// Aún no hay bytes suficientes para decidir. El único desenlace no definitivo.
@@ -89,6 +98,7 @@ public struct ClientHelloScanner: Sendable {
     static let maxApplicationProtocolLength = 64
 
     private let config: Config
+    private let framing: Framing
     /// Bytes del stream aún sin trocear en records.
     private var stream: [UInt8]
     /// Payload de handshake ya extraído de los records, a la espera de completar el mensaje.
@@ -104,8 +114,9 @@ public struct ClientHelloScanner: Sendable {
     /// Decir entonces «hasta `legacy_version`» sería inventarse una oferta.
     public private(set) var offer: ClientTLSOffer?
 
-    public init(config: Config = Config()) {
+    public init(config: Config = Config(), framing: Framing = .tlsRecords) {
         self.config = config
+        self.framing = framing
         self.stream = []
         self.handshake = []
         self.settled = nil
@@ -116,8 +127,14 @@ public struct ClientHelloScanner: Sendable {
     public mutating func scan(_ bytes: Data) -> Outcome {
         if let settled { return settled }
 
-        stream.append(contentsOf: bytes)
-        let outcome = advance()
+        let outcome: Outcome
+        switch framing {
+        case .tlsRecords:
+            stream.append(contentsOf: bytes)
+            outcome = advance()
+        case .handshakeMessages:
+            outcome = advanceUnframed(bytes)
+        }
         guard outcome != .needMoreBytes else { return outcome }
 
         // Definitivo: se sueltan los buffers en el acto. Un flujo TLS vive minutos y mueve
@@ -156,6 +173,14 @@ public struct ClientHelloScanner: Sendable {
             // algunos clientes y algún middlebox), así que se sigue leyendo.
             if let outcome = parseHandshakeMessage() { return outcome }
         }
+    }
+
+    /// Lo mismo sin records que trocear: los bytes son ya los del mensaje. El tope es el mismo, y
+    /// `notTLSHandshake` no puede salir de aquí porque no hay record en el que mirarlo.
+    private mutating func advanceUnframed(_ bytes: Data) -> Outcome {
+        handshake.append(contentsOf: bytes)
+        guard handshake.count <= config.maxHandshakeBytes else { return .unavailable(.tooLarge) }
+        return parseHandshakeMessage() ?? .needMoreBytes
     }
 
     /// Intenta leer el primer mensaje de handshake acumulado. `nil` = aún incompleto.

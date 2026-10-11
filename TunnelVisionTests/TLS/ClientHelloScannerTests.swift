@@ -223,6 +223,75 @@ final class ClientHelloScannerTests: XCTestCase {
         XCTAssertEqual(scanner.scan(ClientHelloFixtures.clientHello(host: Self.host)), .unavailable(.notTLSHandshake))
     }
 
+    // MARK: - Sin capa de registro (el stream CRYPTO de QUIC)
+
+    /// El mismo mensaje que `clientHello(host:)` envuelve en un record, a pelo.
+    private func unframedHello(host: String, extraExtensions: [ClientHelloFixtures.Extension] = []) -> Data {
+        let extensions = [ClientHelloFixtures.Extension.supportedVersions, .serverName(host)] + extraExtensions
+        return Data(ClientHelloFixtures.handshakeMessage(body: ClientHelloFixtures.clientHelloBody(extensions: extensions)))
+    }
+
+    func testReadsSNIFromAMessageWithoutRecords() {
+        var scanner = ClientHelloScanner(framing: .handshakeMessages)
+        XCTAssertEqual(scanner.scan(unframedHello(host: Self.host)), .found(Self.host))
+        XCTAssertEqual(scanner.offer?.versions, .listed([.tls13]))
+    }
+
+    func testReadsSNIFromAMessageWithoutRecordsWhateverTheChunkBoundaries() {
+        let hello = unframedHello(host: Self.host)
+        for split in 1..<hello.count {
+            var scanner = ClientHelloScanner(framing: .handshakeMessages)
+            XCTAssertEqual(scanner.scan(hello.prefix(split)), .needMoreBytes, "corte en \(split)")
+            XCTAssertEqual(scanner.scan(hello.dropFirst(split)), .found(Self.host), "corte en \(split)")
+        }
+    }
+
+    /// Lo que va detrás del ClientHello en el stream no cambia nada: el mensaje dice lo que mide.
+    func testIgnoresWhatFollowsAMessageWithoutRecords() {
+        var scanner = ClientHelloScanner(framing: .handshakeMessages)
+        XCTAssertEqual(scanner.scan(unframedHello(host: Self.host) + Data([0x02, 0x00, 0x00, 0x09])), .found(Self.host))
+    }
+
+    /// Los dos modos no se confunden: cada uno rechaza los bytes del otro en vez de leer mal.
+    func testEachFramingRefusesTheBytesOfTheOther() {
+        var unframed = ClientHelloScanner(framing: .handshakeMessages)
+        XCTAssertEqual(
+            unframed.scan(ClientHelloFixtures.clientHello(host: Self.host)), .unavailable(.notClientHello)
+        )
+        var framed = ClientHelloScanner(framing: .tlsRecords)
+        XCTAssertEqual(framed.scan(unframedHello(host: Self.host)), .unavailable(.notTLSHandshake))
+    }
+
+    func testAMessageWithoutRecordsThatIsNotAClientHelloIsRefused() {
+        var scanner = ClientHelloScanner(framing: .handshakeMessages)
+        let serverHello = ClientHelloFixtures.handshakeMessage(
+            type: ClientHelloFixtures.serverHelloMessageType,
+            body: ClientHelloFixtures.clientHelloBody(extensions: [.serverName(Self.host)])
+        )
+        XCTAssertEqual(scanner.scan(Data(serverHello)), .unavailable(.notClientHello))
+    }
+
+    /// El tope vale igual sin records: ni un mensaje que declara más, ni bytes que se acumulan sin
+    /// llegar a completar uno.
+    func testAMessageWithoutRecordsBeyondTheCeilingIsTooLarge() {
+        let hello = unframedHello(host: Self.host, extraExtensions: [.padding(600)])
+
+        var declared = ClientHelloScanner(config: .init(maxHandshakeBytes: 512), framing: .handshakeMessages)
+        XCTAssertEqual(declared.scan(hello.prefix(8)), .unavailable(.tooLarge))
+
+        var accumulated = ClientHelloScanner(config: .init(maxHandshakeBytes: 512), framing: .handshakeMessages)
+        XCTAssertEqual(accumulated.scan(Data([0x01, 0x00])), .needMoreBytes)
+        XCTAssertEqual(accumulated.scan(Data(repeating: 0, count: 511)), .unavailable(.tooLarge))
+    }
+
+    func testAMessageWithoutRecordsAndWithoutSNIStillSaysWhatItOffered() {
+        var scanner = ClientHelloScanner(framing: .handshakeMessages)
+        let body = ClientHelloFixtures.clientHelloBody(extensions: [.supportedVersions([0x0304, 0x0303]), .encryptedClientHello])
+        XCTAssertEqual(scanner.scan(Data(ClientHelloFixtures.handshakeMessage(body: body))), .unavailable(.noServerName))
+        XCTAssertEqual(scanner.offer?.versions, .listed([.tls13, .tls12]))
+        XCTAssertEqual(scanner.offer?.hasEncryptedClientHello, true)
+    }
+
     private func bytes(_ string: String) -> ArraySlice<UInt8> {
         [UInt8](string.utf8)[...]
     }
