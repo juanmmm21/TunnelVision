@@ -773,6 +773,11 @@ talked to instead of listing addresses.
 
 ```swift
 public struct ClientHelloScanner: Sendable {          // PacketTunnel/TLS
+    public enum Framing: Sendable, Equatable {
+        case tlsRecords                               // a TCP stream
+        case handshakeMessages                        // a QUIC CRYPTO stream: no record layer
+    }
+    public init(config: Config = Config(), framing: Framing = .tlsRecords)
     public private(set) var offer: ClientTLSOffer?    // § What the client offered, below
     public enum Outcome: Sendable, Equatable {
         case needMoreBytes

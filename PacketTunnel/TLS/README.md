@@ -57,7 +57,12 @@ Network.framework. The seam is what would make that swap cheap if it is ever nee
   outbound stream. It is what names a flow. From the same message it reads what the client
   **offered** (`offer`): the TLS versions it accepts — an exact list from `supported_versions`, or
   only a ceiling from `legacy_version` — and its ALPN, with GREASE dropped and Encrypted Client
-  Hello marked.
+  Hello marked. It reads the message wrapped in TLS records (a TCP stream) or bare
+  (`Framing.handshakeMessages`, what a QUIC CRYPTO stream carries).
+- `QUICClientHelloScanner.swift` — the same reading for a QUIC client: the decrypted payloads of
+  its Initial packets in, the name out. It walks the frames (`QUICInitialFrames`), puts the CRYPTO
+  ones in order (`QUICCryptoStream`, both in `Shared/QUIC`) and feeds the scanner above. It opens
+  no packet and holds no key, and nothing in the pipeline calls it yet.
 - `ServerHelloScanner.swift` — the TLS version and cipher suite a server chose, read incrementally
   from the inbound stream: the version from `supported_versions` when present (that is how TLS 1.3
   announces itself), an alert reported as the server refusing, a HelloRetryRequest read and marked.

@@ -569,8 +569,8 @@ as a protocol violation, and an observer that dropped the packet would only know
 ### What is not here
 
 - **Frames.** `frames` is the payload as decrypted: CRYPTO frames, PADDING, sometimes PING or ACK.
-  Reassembling CRYPTO by offset, across several Initial packets, into a ClientHello is the next
-  piece.
+  Walking them and reassembling CRYPTO by offset, across several Initial packets, into a
+  ClientHello is the next section.
 - **The hookup.** Nothing in the pipeline calls this; no flow gains a name from it yet.
 - **Other versions.** A version gets keys when its RFC's salt and labels are added to
   `QUICInitialKeys`, with that RFC's sample packet as the test.
@@ -596,3 +596,163 @@ The expected values are the ones the RFCs print, **copied from the documents, no
   short to sample.
 - `QUICVarintTests` and `QUICPacketNumberTests`: the samples of RFC 9000 Appendices A.1 and A.3,
   both ends of the window, and what is refused.
+
+## Above L4: from CRYPTO frames to a ClientHello
+
+`Shared/QUIC/QUICInitialFrames.swift` and `QUICCryptoStream.swift`, both pure, and
+`PacketTunnel/TLS/QUICClientHelloScanner.swift`, which joins them to the ClientHello reader that
+TCP flows already use. **The decrypted payloads of a client's Initial packets in, the name it
+announced out.** Still called by nothing: which Initials of a flow are opened, with which keys, and
+where the name goes are the hookup's decisions.
+
+```swift
+public struct QUICCryptoFrame: Sendable, Equatable {           // Shared/QUIC
+    public let offset: UInt64
+    public let data: Data
+}
+
+public struct QUICInitialFrames: Sendable, Equatable {         // Shared/QUIC
+    public enum Stop: Error, Sendable, Equatable {
+        case unexpectedFrameType(UInt64), truncated, cryptoBeyondStreamLimit
+    }
+    public let crypto: [QUICCryptoFrame]    // in wire order
+    public let stop: Stop?                  // nil: the whole payload was walked
+    public init(payload: Data)
+}
+
+public struct QUICCryptoStream: Sendable, Equatable {          // Shared/QUIC
+    public struct Limits: Sendable, Equatable {
+        public init(maxStreamBytes: Int, maxPendingFragments: Int)   // no defaults
+    }
+    public enum Exceeded: Sendable, Equatable { case streamBytes, pendingFragments }
+    public enum Delivery: Sendable, Equatable {
+        case delivered(Data)                // the bytes now in order; may be empty
+        case exceeded(Exceeded)             // terminal
+    }
+    public init(limits: Limits)
+    public private(set) var deliveredByteCount: Int
+    public private(set) var exceeded: Exceeded?
+    public var pendingFragmentCount: Int { get }
+    public mutating func insert(_ frame: QUICCryptoFrame) -> Delivery
+}
+
+struct QUICClientHelloScanner: Sendable {                      // PacketTunnel/TLS
+    enum Outcome: Sendable, Equatable {
+        case needMoreFrames, found(String), unavailable(Reason)
+    }
+    enum Reason: Sendable, Equatable {
+        case clientHello(ClientHelloScanner.Reason)
+        case cryptoStream(QUICCryptoStream.Exceeded)
+    }
+    var offer: ClientTLSOffer? { get }
+    init(streamLimits: QUICCryptoStream.Limits, maxHandshakeBytes: Int)
+    mutating func scan(initialPayload: Data) -> Outcome
+}
+```
+
+### Walking the frames
+
+An Initial packet can carry five kinds of frame (RFC 9000 § 12.4, Table 3), and the walker knows the
+length of each, because the CRYPTO frame may sit behind any of them — clients put padding first, and
+the Initial that retransmits a ClientHello usually opens with the ACK of the server's Initial:
+
+| Type | Frame | What is skipped (RFC 9000 § 19) |
+|---|---|---|
+| `0x00` | PADDING | the byte |
+| `0x01` | PING | the byte |
+| `0x02`, `0x03` | ACK | four varints, two more per range, and for `0x03` three ECN counts |
+| `0x06` | CRYPTO | **kept**: offset, length, data |
+| `0x1c` | CONNECTION_CLOSE | error code, frame type, and the reason phrase by its length |
+
+What had to be decided:
+
+- **Anything else stops the walk of that packet** (`unexpectedFrameType`): the frames an Initial may
+  not carry — streams, flow control, `0x1d`, HANDSHAKE_DONE — and any type not defined. Without
+  knowing a frame's length there is no finding the next one.
+- **What was read before the stop is kept, and the stop ends the packet, not the connection.** It is
+  the recipient that closes a connection over a frame that does not belong; what the client had
+  already said in the frames before it, it said all the same.
+- **A frame type in a longer encoding than necessary is accepted.** RFC 9000 § 12.4 requires the
+  shortest one and lets the recipient treat anything else as a violation — a MAY, and an observer
+  that refused the packet would only know less. Same reasoning as `QUICVarint`.
+- **No count or length chosen by the peer is walked or allocated before it is checked against the
+  payload.** An ACK's range count is refused if the bytes left cannot hold two varints per range; a
+  CRYPTO length or a reason phrase longer than what is left is `truncated`.
+- **A CRYPTO frame ending past 2^62 − 1 stops the walk** (`cryptoBeyondStreamLimit`, § 19.6).
+- **What an ACK acknowledges is not validated**, and the contents of a CONNECTION_CLOSE are not
+  kept: neither is the observer's business.
+
+### Reassembling the stream
+
+A ClientHello with a post-quantum key share does not fit in one Initial, so its CRYPTO frames arrive
+in two or three packets, and not tidily: packets overtake each other, a retransmission repeats what
+was seen, and some clients cut the ClientHello into pieces and shuffle them inside a single packet.
+`QUICCryptoStream` takes frames in arrival order and hands back the stream's bytes **in order and
+exactly once**.
+
+- **It does not keep what it has delivered.** The caller feeds the bytes to an incremental reader
+  that has its own ceiling; the stream holds only what arrived ahead of a gap, as fragments that
+  never overlap or touch — two that would are merged into one.
+- **Where two frames disagree about the same byte, the one that arrived first wins**, and they are
+  not compared: treating it as an error is the recipient's MAY (RFC 9000 § 2.2), and here it is
+  enough that a later frame cannot rewrite what was already read.
+- **Two limits, neither with a default.** `maxStreamBytes` is how far into the stream a byte is
+  accepted, and — since what is held does not overlap — also the most the stream can retain.
+  `maxPendingFragments` is how many separate fragments may wait at once, counted after merging and
+  after delivering, so a frame that arrives in order never counts. The frames are written by the
+  other end and this runs in the extension: how much memory a flow's name is worth is for the
+  hookup to say.
+- **Past either limit the stream is given up for good**: it drops what it held and every later
+  insert answers `exceeded`. A ClientHello that does not fit is not going to be read later.
+
+### Handing it to the ClientHello reader
+
+QUIC carries the TLS handshake message **without the record layer**: the content of a handshake
+record goes into CRYPTO frames, not the record (RFC 9001 § 4.1.3). So `ClientHelloScanner` gained a
+`Framing` — `.tlsRecords`, what it always read, and `.handshakeMessages`, the message as it is — and
+everything past the record layer is the same code: the name, the offer, the validation of the host
+name, the ceiling ([`relay-and-tls.md`](relay-and-tls.md) § *SNI without decryption*). A QUIC flow's
+name and offer therefore follow the same rules as a TCP flow's, Encrypted Client Hello included:
+the name read is the outer one and the offer says so.
+
+`QUICClientHelloScanner` is the join: per payload, the frames are walked, each CRYPTO frame goes
+into the stream, and whatever comes out in order goes to the reader. Like the reader, **it settles
+and stays put** — after a definitive outcome it drops what it held and looks at no further frame.
+Its `Reason` keeps apart a message that was read and gave no name (`clientHello`) from a stream
+that was given up (`cryptoStream`).
+
+It opens no packet and holds no key. The boundary of the previous section stands: the client's
+Initial packets, the ClientHello, and nothing else.
+
+### What is not here
+
+- **The hookup.** Nothing in the pipeline calls this; no flow gains a name from it yet. It owes the
+  per-flow state the opening needs (the keys of the first connection ID, the largest packet number
+  opened), the two limits, and how many Initials of a flow are looked at.
+- **A ClientHello from a real client.** The tests use the RFC's and the fixtures'; no capture from
+  Safari or Chrome has gone through this.
+
+### Tests
+
+- `QUICInitialFramesTests`: **the payload of the RFC 9001 § A.2 sample — as printed, and as opened
+  from the protected packets of both versions — is one CRYPTO frame at offset 0 with the 241 bytes
+  of the ClientHello.** CRYPTO found behind padding, PING, an ACK without ranges, with ranges and
+  with ECN counts, and a CONNECTION_CLOSE with and without a reason; several CRYPTO frames in wire
+  order; a longer encoding of the type; an eight-byte offset; a payload that is a slice of a larger
+  buffer. What stops the walk: every type from `0x00` to `0x3f` that an Initial cannot carry, a
+  multi-byte unknown type, each kind of frame cut at every byte, a range count, a CRYPTO length and
+  a reason length larger than the payload, and a CRYPTO frame one byte past the stream limit.
+- `QUICCryptoStreamTests`: in order; split at every point and delivered backwards; three pieces in
+  all six orders; delivery only up to the first gap; retransmissions; a frame straddling what was
+  delivered; fragments that overlap or touch becoming one; first bytes winning, also against what
+  was delivered; **a thousand seeded cuts of one message — shuffled, repeated, overlapping — each
+  giving the message back**; and both limits at their edge, one past it, and at zero, including an
+  offset no buffer could hold.
+- `QUICClientHelloScannerTests`: **`example.com` and the offer out of the RFC's ClientHello, from
+  the printed frame and from the protected packets of both versions**; the ClientHello spread over
+  three really protected Initials arriving out of order; split in two at every point in both
+  arrival orders; larger than one Initial; shuffled inside one packet; a retransmitted Initial; a
+  packet stopped by an unexpected frame; no server name, ECH, not a ClientHello, malformed; the
+  three limits; and the outcome staying put.
+- `ClientHelloScannerTests`: the message without records read whole and split at every byte, what
+  follows it ignored, each framing refusing the bytes of the other, and the ceiling.
