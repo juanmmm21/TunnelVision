@@ -824,7 +824,9 @@ host in a whole Timeline. It is not a defect of the parser: QUIC carries its Cli
 QUIC Initial packet, and some protocols on port 443 are not TLS at all (WhatsApp's messaging
 connection speaks Noise). The live feed cannot show names at all by construction — the IPC ring
 carries `PackedPacketMeta`, which has no SNI, so the Dashboard's top talkers are addresses on
-purpose. Widening the reach (DNS-derived names and/or QUIC Initial parsing) remains an open decision.
+purpose. The reach was widened both ways afterwards, and neither is in the relay: names deduced from
+DNS, and the ClientHello of a QUIC client read out of its Initial packets by the pipeline
+([`packet-parsing.md`](packet-parsing.md) § *Names from DNS* and § *Above L4: naming a QUIC flow*).
 
 **Tests (43, 1184 total):** the parser against hand-written golden vectors — every chunk boundary,
 byte-by-byte feeding, fragmentation across records, no-SNI/no-extensions/empty-list, non-TLS streams,
@@ -912,8 +914,10 @@ only thing that says whether the app itself would have accepted less. What had t
 The four extension codes (`server_name` 0, ALPN 16, `supported_versions` 43,
 `encrypted_client_hello` 65037) were checked against the IANA TLS ExtensionType registry.
 
-**Not read:** the cipher suites the client offered (the list is long and nothing planned needs it),
-and QUIC, whose ClientHello travels inside the Initial packet.
+**Not read:** the cipher suites the client offered (the list is long and nothing planned needs it).
+**Not read here:** the offer of a QUIC client, whose ClientHello travels inside its Initial packets —
+the pipeline reads it, with this same scanner, and writes the same field
+([`packet-parsing.md`](packet-parsing.md) § *Above L4: naming a QUIC flow*).
 
 **Tests (58):** `ClientHelloOfferTests` (31) — the list in order, the ceiling, the extension winning
 over `legacy_version`, GREASE dropped and all sixteen values recognised, a GREASE-only list, a draft

@@ -165,9 +165,10 @@ port-53 datagram cannot be read at all — is in `TunnelVision/Models/DNSPresent
 
 ## Names from DNS: the address → name map
 
-The ClientHello scanner names a flow only when it is TLS over TCP. QUIC carries its ClientHello
-inside an encrypted Initial packet, and plenty of traffic is not TLS at all, so most flows of a
-present-day phone have an address and nothing else. `ResolvedNameMap` (`Shared/DNS`) is what gives
+A ClientHello names a flow only when the tunnel sees one: TLS over TCP, or a QUIC connection whose
+first packets passed through it ([*Naming a QUIC flow*](#above-l4-naming-a-quic-flow)). Plenty of
+traffic is not TLS at all, and a connection already open when the tunnel started announces nothing
+again, so many flows of a present-day phone have an address and nothing else. `ResolvedNameMap` (`Shared/DNS`) is what gives
 them a name: it is handed the DNS messages the dissector has already read and answers *which name
 had the device asked for when it was given this address?*
 
@@ -726,11 +727,9 @@ Initial packets, the ClientHello, and nothing else.
 
 ### What is not here
 
-- **The hookup.** Nothing in the pipeline calls this; no flow gains a name from it yet. It owes the
-  per-flow state the opening needs (the keys of the first connection ID, the largest packet number
-  opened), the two limits, and how many Initials of a flow are looked at.
-- **A ClientHello from a real client.** The tests use the RFC's and the fixtures'; no capture from
-  Safari or Chrome has gone through this.
+The per-flow state the opening needs (the keys of the first connection ID, the largest packet
+number opened), the values of the limits and how many Initials of a flow are looked at: all of
+that is the hookup, [*Naming a QUIC flow*](#above-l4-naming-a-quic-flow).
 
 ### Tests
 
@@ -756,3 +755,180 @@ Initial packets, the ClientHello, and nothing else.
   three limits; and the outcome staying put.
 - `ClientHelloScannerTests`: the message without records read whole and split at every byte, what
   follows it ignored, each framing refusing the bytes of the other, and the ceiling.
+
+## Above L4: naming a QUIC flow
+
+`PacketTunnel/TLS/QUICClientHelloReader.swift`, `PacketTunnel/Pipeline/QUICNameReadLimits.swift`,
+the hookup in `PacketPipeline`, and the counters in `Shared/IPC/QUICNameStats.swift`. **The UDP
+datagrams a device sends to port 443 in, the name its QUIC client announced on the flow.** This is
+what the two previous sections were built for.
+
+```swift
+public struct QUICClientHelloReader: Sendable {                // PacketTunnel/TLS
+    public struct Limits: Sendable, Equatable {
+        public let maxInitialPackets: Int
+        public let stream: QUICCryptoStream.Limits
+        public let maxHandshakeBytes: Int
+        public init(maxInitialPackets: Int, stream: QUICCryptoStream.Limits, maxHandshakeBytes: Int)
+        public static let tunnel: Limits     // 8 Initials, 8 192 + 8 192 bytes, 32 fragments
+    }
+    enum Outcome: Sendable, Equatable {
+        case needMoreInitials, found(String), unavailable(Reason)
+    }
+    enum Reason: Sendable, Equatable {
+        case clientHello(ClientHelloScanner.Reason)
+        case cryptoStream(QUICCryptoStream.Exceeded)
+        case initialsExhausted
+    }
+    struct Reading: Sendable, Equatable {
+        var outcome: Outcome
+        var offer: ClientTLSOffer?           // only on the reading that settles the outcome
+        var opened: Int                      // Initial packets of this datagram that opened
+        var notOpened: Int
+        var restarted: Bool                  // started over with another connection ID's keys
+        var attemptedAnInitial: Bool { get }
+    }
+    init(limits: Limits)
+    mutating func read(datagram: Data) -> Reading     // the UDP payload, whole
+}
+
+public struct QUICNameReadLimits: Sendable, Equatable {        // PacketTunnel/Pipeline
+    public let perFlow: QUICClientHelloReader.Limits
+    public let maxConcurrentReads: Int
+    public init(perFlow: QUICClientHelloReader.Limits, maxConcurrentReads: Int)
+    public static let tunnel: QUICNameReadLimits      // .tunnel per flow, 64 reads at once
+}
+
+public struct QUICNameStats: Sendable, Equatable, Codable {    // Shared/IPC, in PipelineStats.quicNames
+    public var initialsOpened, initialsNotOpened, readsRestarted, initialsSkippedAtCapacity: UInt64
+    public var flowsNamed: UInt64
+    public var withoutServerName, unreadableClientHello, cryptoStreamAbandoned, initialsExhausted: UInt64
+    public var flowsLeftUnnamed: UInt64 { get }
+}
+```
+
+### The state one flow needs
+
+`QUICClientHelloReader` is what a flow keeps between its first Initial and the moment its name is
+known: the client's Initial keys, the largest packet number opened, and a `QUICClientHelloScanner`.
+It is given the UDP payloads the client sends, whole and in arrival order.
+
+- **A datagram is walked packet by packet** (RFC 9000 § 12.2) for as long as they are Initial
+  packets of a known version, each skipped by the length its header declares. The first thing that
+  is not one — a 0-RTT or Handshake packet, padding — ends the walk: nothing behind it is this
+  reader's.
+- **Keys are derived from the first Initial seen and kept**, because that is how the client uses
+  them: after the server answers, its packets are addressed to another connection ID and still
+  protected with the first one's keys.
+- **A packet the kept keys do not open is tried once with the keys of its own connection ID.** That
+  is what follows a Retry — the client starts over with the ID the server gave it — and what a new
+  connection on the same pair of ports looks like. If they open it, **the read starts over**: new
+  keys, no largest packet number, an empty CRYPTO stream. After a Retry the ClientHello is sent
+  again from offset zero, so nothing is lost; and if it was another connection, what had been
+  reassembled was not its own. A packet whose own ID is the one the keys came from is not tried
+  twice.
+- **It settles and stays put**, and on settling it drops keys and scanner. The offer is handed over
+  on the reading that settles and not again.
+- **The budget of Initials is spent by every packet an opening is attempted on, opened or not** —
+  otherwise a flow of packets that never authenticate would have the tunnel deriving keys and
+  running the AEAD without end — and the read is given up **on the packet that spends the last
+  one**, not on the next, which may never come. A datagram that carries no Initial spends nothing.
+
+### The limits, and where their values come from
+
+Until this step every limit was a parameter without a default. Their values were set against
+**what two real clients send**, captured on 2026-10-11 against a local UDP socket that never
+answers (`QUICClientCaptures` in the tests; names under `.test`):
+
+| | ClientHello | Initials | CRYPTO frames per packet |
+|---|---|---|---|
+| Apple's QUIC stack (`NWProtocolQUIC`, macOS 27) | 1 506 bytes | 2 | 1, in order |
+| Chrome 155 | 1 951 bytes | 2 | 10 and 9, shuffled; 7, 3 and 11 in its retransmissions |
+
+| Limit | Value | Why |
+|---|---|---|
+| `maxInitialPackets` | 8 | Four times the two that are needed: room for a Retry (everything is sent twice) and for a couple of retransmissions or a packet that does not open |
+| `stream.maxStreamBytes`, `maxHandshakeBytes` | 8 192 | Four times the largest ClientHello measured. A flow being read cannot hold more than this twice over |
+| `stream.maxPendingFragments` | 32 | Nearly three times the eleven frames of the most shredded packet captured, which is what would wait if none of them touched another. The captures peak at 3 |
+| `maxConcurrentReads` | 64 | A read lasts the first two datagrams of a connection, so the reads open at once are the connections being opened at that instant. 64 × 16 384 bytes is 1 MB in a worst case that only traffic written to fill it reaches |
+
+`QUICClientHelloReaderTests` asserts the measurements against the captures, so a capture replaced
+by a larger one fails the test that justifies the values.
+
+**Cost, measured:** deriving the keys, opening Chrome's two Initials and reassembling its
+ClientHello takes about **80 µs per flow** (Debug build, Simulator on an Apple-silicon Mac;
+`testCostOfReadingTheNameOfAChromeFlow`). It is paid once per QUIC connection. Every other
+datagram of the flow costs one bit test — the long-header bit — or, for the long-header packets
+that follow the Initials, one dictionary lookup.
+
+### Where it is read, and where the name goes
+
+In `PacketPipeline.observe`, **after** the flow table has seen the packet, on UDP datagrams the
+device **sends** to remote port 443 — the same port rule as the version. Not in the relay, where
+the TCP ClientHello is read: that choice was made for the reassembled stream, and QUIC brings its
+own reassembly inside the packets.
+
+- **Outbound only.** The ClientHello is the client's, and only the client's keys are derived. An
+  Initial arriving from the server is counted as a version reading and nothing more.
+- **The name goes in `sni`.** It is what the connection announced about itself, read from its own
+  ClientHello by the same reader and the same rules as a TCP flow's — not an inference. The rule
+  that keeps the DNS name out of that column is about *deduced* names
+  ([`data-model.md`](data-model.md)); this one is announced. `FlowName` therefore gives it the
+  origin `sni` and lets it win over the resolved name, which stays in its own field.
+- **The offer goes in `clientTLS`**, also when there is no name: it is what tells *announced no
+  name* (`serverNameNotAnnounced`) from *no ClientHello was read* (`noClientHelloRead`), and what
+  carries the Encrypted Client Hello mark. With ECH the name read is the outer one, as on TCP.
+- **One call to the table, with an answer** (`FlowTable.setQUICClientHello`): the record that the
+  completing packet sends to the store already carries the name, without waiting for another packet
+  of the flow.
+- **`tlsStatus`, the route and the QUIC version do not change.** QUIC is relayed untouched
+  ([ADR 0006](../decisions/0006-udp-quic-passthrough.md)); pinning on a QUIC flow is still not
+  assessed.
+- **What the pipeline keeps per flow** is `reading` (the reader) until the outcome is known and then
+  `settled`, a marker with nothing in it whose job is to keep a late retransmission of the Initial
+  from opening a second read. Both carry the `firstSeen` of the flow they belong to: a flow key is
+  recycled, and the closing record of one life can reach the flush after the next life has sent its
+  Initial. What was noted for another life is dropped on sight, and a closing record only takes
+  away what was its own.
+- **The quota counts reads in progress**, not settled flows. With it full, the Initial of a new flow
+  is not opened — no key is derived — and is counted (`initialsSkippedAtCapacity`, only datagrams
+  that start with an Initial); the flow keeps whatever name DNS gave it, and a retransmission that
+  finds room is read.
+- **Everything is counted** (`PipelineStats.quicNames`, over the control channel): packets opened
+  and not, restarts, skips, flows named, and one counter per way of ending without a name.
+
+The boundary of *Opening a QUIC Initial* stands, and the hookup adds nothing to it: the client's
+Initial packets, its ClientHello, and nothing else.
+
+### What is not here
+
+- **What reads the result.** The classifier's wording for an unnamed QUIC flow, the evidence
+  bundle, the report and *Session diagnostics* still describe a tool that could not read a QUIC
+  ClientHello.
+- **A capture from an iPhone.** The two clients were captured on a Mac. Apple's stack is the same
+  one iOS uses; Safari and Chrome for iOS have not gone through this.
+- **Connection migration and QUIC on other ports**, for the reasons the version reading gives.
+
+### Tests
+
+- `QUICClientHelloReaderTests`: **the datagrams of both real clients give their name and offer
+  with the tunnel's limits** — in order, with the first flight swapped, from retransmissions alone,
+  and the whole capture settling on its second datagram and opening nothing afterwards; the RFC
+  sample packets of both versions; a later Initial addressed to the server's ID opening with the
+  first keys; a Retry restarting the read without mixing what came before; a packet that does not
+  authenticate, also as the first of a flow; the packet number completed against the largest
+  opened; two Initials coalesced, a 0-RTT packet behind an Initial, a payload that is a slice; six
+  kinds of datagram that are not a client Initial spending nothing; no server name, ECH, not a
+  ClientHello; the budget of Initials at its edge, spent by packets that do not open and counted
+  per packet; the stream and handshake limits reaching the scanner; staying put; the tunnel's
+  values against the measurements; and the cost.
+- `PipelineQUICNameTests`: **both real captures through the pipeline leave the flow with `sni`,
+  the offer, `encrypted` and its version, two Initials opened and nothing left open**; the name
+  travelling with the packet that completes the ClientHello; the announced name winning over the
+  resolved one with both kept; every way of ending without a name on its counter; unopened packets
+  and restarts counted; inbound Initials, another port and non-Initial datagrams not read; the
+  quota skipping a new flow until there is room and not counting settled ones; a flow closed
+  mid-read releasing it; a flow born later under the same key read again; and the late closing
+  record of an earlier life leaving the new one's read alone.
+- `QUICNameStatsTests` and `ControlChannelTests`: the sum of the unnamed counters, and every
+  counter surviving the control channel.

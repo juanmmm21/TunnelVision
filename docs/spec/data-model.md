@@ -220,6 +220,11 @@ the name the device had last asked for when it was given the address the flow go
 columns, and a resolved name is never written into `sni`: a report has to be able to say which of the
 two it is asserting.
 
+A ClientHello is a ClientHello whatever carries it: on a TCP flow the relay reads it from the
+stream, and on a QUIC flow the pipeline reads it out of the client's Initial packets
+([`packet-parsing.md`](packet-parsing.md) § *Above L4: naming a QUIC flow*). Both write `sni` and
+`clientTLS`, with the same reader and the same rules.
+
 `FlowName` is what a reader uses when it needs *a* name per flow — an allowlist, a release diff, a
 report. Its rules:
 
