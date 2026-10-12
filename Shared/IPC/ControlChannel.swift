@@ -123,6 +123,10 @@ public struct PipelineStats: Sendable, Equatable, Codable {
     /// Cuenta lecturas, no flujos: un arranque de conexión lleva varias. A cero con tráfico UDP
     /// contra el 443 es que ningún arranque pasó por el túnel, o que aquello no era QUIC.
     public var quicVersionsObserved: UInt64 = 0
+    /// Lo que se hizo con los Initial de los clientes QUIC y a cuántos flujos se les leyó el
+    /// nombre. Todo a cero con versiones de QUIC observadas es que ninguna de ellas venía en un
+    /// Initial que el dispositivo mandase con una versión de las que se saben abrir.
+    public var quicNames = QUICNameStats()
 
     public init() {}
 }

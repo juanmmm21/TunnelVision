@@ -81,6 +81,15 @@ final class ControlChannelTests: XCTestCase {
         stats.dnsNames.withoutAddresses = 44
         stats.dnsNames.flowsNamed = 600
         stats.quicVersionsObserved = 77
+        stats.quicNames.initialsOpened = 140
+        stats.quicNames.initialsNotOpened = 3
+        stats.quicNames.readsRestarted = 2
+        stats.quicNames.initialsSkippedAtCapacity = 1
+        stats.quicNames.flowsNamed = 61
+        stats.quicNames.withoutServerName = 4
+        stats.quicNames.unreadableClientHello = 1
+        stats.quicNames.cryptoStreamAbandoned = 1
+        stats.quicNames.initialsExhausted = 2
 
         let sent = TunnelStats(pipeline: stats)
         let decoded = try ControlResponse(decoding: try ControlResponse.stats(sent).encoded())
