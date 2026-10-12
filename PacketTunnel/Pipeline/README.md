@@ -16,4 +16,10 @@ And it reads the QUIC version from the long header of UDP datagrams to remote po
 `encrypted` instead of leaving it as every UDP flow is born. Same spec, § *Above L4: the QUIC long
 header*.
 
+And it names QUIC flows from what their client announces: the Initial packets the device sends to
+port 443 are opened (`QUICClientHelloReader`, in `../TLS`), and once the ClientHello they carry is
+whole its name goes to `sni` and its offer to `clientTLS`, as a TCP flow's do. How much of a flow
+is looked at and how many flows at once is `QUICNameReadLimits`; what happened to each is counted
+in `PipelineStats.quicNames`. Same spec, § *Above L4: naming a QUIC flow*.
+
 **Spec:** [`../../docs/spec/tunnel-provider.md`](../../docs/spec/tunnel-provider.md) · **Milestone:** M7

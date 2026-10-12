@@ -43,6 +43,9 @@ public actor PacketPipeline {
         /// Cuánto recuerda el mapa dirección → nombre y durante cuánto. Los del túnel son `.tunnel`,
         /// con el porqué de cada número en `ResolvedNameLimits`.
         public var resolvedNameLimits: ResolvedNameLimits
+        /// Cuánto se mira de los Initial de un flujo QUIC para leerle el nombre, y de cuántos
+        /// flujos a la vez. Los del túnel son `.tunnel`, medidos sobre clientes de verdad.
+        public var quicNameLimits: QUICNameReadLimits
 
         public init(
             localIPv4: IPAddress,
@@ -53,7 +56,8 @@ public actor PacketPipeline {
             flushInterval: UInt64 = 500_000_000,
             anchor: MonotonicAnchor = .now(),
             plaintextBytesPerDirection: Int = PlaintextBudget.defaultMaxBytesPerDirection,
-            resolvedNameLimits: ResolvedNameLimits = .tunnel
+            resolvedNameLimits: ResolvedNameLimits = .tunnel,
+            quicNameLimits: QUICNameReadLimits = .tunnel
         ) {
             self.localIPv4 = localIPv4
             self.localIPv6 = localIPv6
@@ -64,6 +68,7 @@ public actor PacketPipeline {
             self.anchor = anchor
             self.plaintextBytesPerDirection = plaintextBytesPerDirection
             self.resolvedNameLimits = resolvedNameLimits
+            self.quicNameLimits = quicNameLimits
         }
     }
 
@@ -101,6 +106,12 @@ public actor PacketPipeline {
     /// han pasado. Es de este actor por lo mismo que la tabla de flujos: aquí es donde pasa cada
     /// datagrama, en los dos sentidos, y donde un flujo nace.
     private var resolvedNames: ResolvedNameMap
+    /// En qué punto está la lectura del nombre de cada flujo QUIC que ha mandado un Initial. Muere
+    /// por el mismo embudo que cierra los flujos (`merge(closed:)`).
+    private var quicNameReads: [FlowKey: QUICNameRead]
+    /// Cuántas de esas lecturas siguen a medias: son las que retienen memoria, y las que cuenta
+    /// el cupo.
+    private var openQUICNameReads: Int
 
     public private(set) var stats: PipelineStats
 
@@ -128,6 +139,8 @@ public actor PacketPipeline {
         self.plaintextFlows = [:]
         self.closedFlowKeys = []
         self.resolvedNames = ResolvedNameMap(limits: config.resolvedNameLimits)
+        self.quicNameReads = [:]
+        self.openQUICNameReads = 0
         self.stats = PipelineStats()
     }
 
@@ -195,9 +208,10 @@ public actor PacketPipeline {
         let remote = direction == .outbound ? parsed.destination.address : parsed.source.address
         let resolvedName = resolvedNames.name(for: remote, at: now).map(ResolvedFlowName.init)
 
-        let quic = quicVersion(in: packet, parsed: parsed, direction: direction)
+        let quicPayload = quicPayload(of: packet, parsed: parsed, direction: direction)
+        let quic = quicPayload.flatMap { quicVersion(in: $0, direction: direction) }
 
-        let flow = await flowTable.observe(
+        var flow = await flowTable.observe(
             parsed,
             direction: direction,
             length: length,
@@ -207,6 +221,12 @@ public actor PacketPipeline {
         // Un flujo con un solo paquete acaba de nacer: es el único momento en que recibe nombre.
         if flow.record.packetCount == 1, flow.record.resolvedName != nil {
             stats.dnsNames.flowsNamed &+= 1
+        }
+        // Después de la tabla y no antes: el nombre se le pone a un flujo que ya existe, y es la
+        // tabla quien dice a qué vida del flujo pertenece este paquete.
+        if direction == .outbound, let quicPayload,
+           let named = await readQUICName(from: quicPayload, flow: flow.record) {
+            flow.record = named
         }
 
         // La captura va antes de publicar el metadato porque este transporta dónde quedó el registro.
@@ -262,17 +282,13 @@ public actor PacketPipeline {
     /// El puerto de HTTP/3. Es el mismo 443 con el que la tabla de flujos marca el TCP.
     private static let quicPort: UInt16 = 443
 
-    /// La versión de QUIC de la cabecera larga de este datagrama, si es UDP contra el 443 **remoto**
-    /// y empieza por una.
-    ///
-    /// Se lee aquí y no en el relay, que es quien lee el handshake de TLS: aquél se eligió por el
-    /// reensamblado, y un datagrama no tiene nada que reensamblar. Aquí pasan además los dos
-    /// sentidos —lo reinyectado también—, y la versión del servidor es la que vale más.
+    /// El payload de este datagrama si es UDP contra el 443 **remoto**: lo único en lo que se
+    /// busca QUIC.
     ///
     /// Solo el 443 remoto: es donde el dispositivo es el cliente, que es lo que permite decir de
     /// qué extremo sale cada lectura por el sentido del paquete. QUIC por otro puerto existe (un
     /// `Alt-Svc` puede anunciar cualquiera) y no se lee.
-    private func quicVersion(in packet: Data, parsed: ParsedPacket, direction: Direction) -> QUICVersionReading? {
+    private func quicPayload(of packet: Data, parsed: ParsedPacket, direction: Direction) -> Data? {
         guard let udp = parsed.udp else { return nil }
         let remotePort = direction == .outbound ? udp.destinationPort : udp.sourcePort
         guard remotePort == Self.quicPort else { return nil }
@@ -281,11 +297,155 @@ public actor PacketPipeline {
         let start = packet.startIndex + udp.payloadRange.lowerBound
         let end = packet.startIndex + udp.payloadRange.upperBound
         guard start <= end, end <= packet.endIndex else { return nil }
-        guard let version = QUICLongHeader.version(in: packet[start..<end]) else { return nil }
+        return packet[start..<end]
+    }
+
+    /// La versión de QUIC de la cabecera larga con la que empieza este payload, si empieza por
+    /// una.
+    ///
+    /// Se lee aquí y no en el relay, que es quien lee el handshake de TLS: aquél se eligió por el
+    /// reensamblado, y un datagrama no tiene nada que reensamblar. Aquí pasan además los dos
+    /// sentidos —lo reinyectado también—, y la versión del servidor es la que vale más.
+    private func quicVersion(in payload: Data, direction: Direction) -> QUICVersionReading? {
+        guard let version = QUICLongHeader.version(in: payload) else { return nil }
 
         stats.quicVersionsObserved &+= 1
         return QUICVersionReading(version: version, source: direction == .outbound ? .client : .server)
     }
+
+    // MARK: - Nombre de un flujo QUIC
+
+    /// En qué punto está la lectura del nombre de un flujo QUIC. `life` es el `firstSeen` del
+    /// flujo al que pertenece: una clave se recicla, y lo apuntado de una vida no vale para la
+    /// siguiente.
+    private enum QUICNameRead {
+        /// Faltan Initial por llegar: guarda claves y lo recompuesto hasta ahora.
+        case reading(QUICClientHelloReader, life: UInt64)
+        /// Ya se sabe lo que se iba a saber. No guarda nada: está para que una retransmisión
+        /// tardía del Initial no abra una lectura nueva.
+        case settled(life: UInt64)
+
+        var life: UInt64 {
+            switch self {
+            case .reading(_, let life), .settled(let life): return life
+            }
+        }
+    }
+
+    /// El primer bit del primer byte de un paquete QUIC: a 1, cabecera larga (RFC 8999 § 5.1).
+    private static let quicLongHeaderBit: UInt8 = 0x80
+
+    /// Le da al lector de su flujo un datagrama que el dispositivo manda al 443 por UDP y, si con
+    /// él se completa el ClientHello, apunta en el flujo el nombre y la oferta. Devuelve el record
+    /// ya con ellos, o `nil` si este datagrama no cambió nada.
+    ///
+    /// **Se lee aquí, en el pipeline, y no en el relay** como el ClientHello de TCP: aquél hacía
+    /// falta por el reensamblado del stream, y QUIC trae el suyo dentro de los paquetes
+    /// (`QUICCryptoStream`). Aquí pasa cada datagrama una sola vez y está la tabla de flujos.
+    ///
+    /// Solo lo que **sale**: el ClientHello lo manda el cliente, y las claves que se derivan son
+    /// las suyas. Nada de aquí puede parar un paquete ni cambia su ruta —QUIC se relaya intacto
+    /// (ADR 0006)— y lo único que se abre son los Initial, que van protegidos con claves públicas
+    /// por diseño; de Handshake en adelante no se toca nada (ADR 0003).
+    private func readQUICName(from payload: Data, flow: FlowRecord) async -> FlowRecord? {
+        let key = flow.key
+        // Lo apuntado bajo esta clave puede ser de una vida anterior del flujo, que la tabla cerró
+        // y cuyo record de cierre aún no ha pasado por el volcado.
+        if let noted = quicNameReads[key], noted.life != flow.firstSeen {
+            forgetQUICNameRead(for: key)
+        }
+
+        // Casi todo lo que pasa por aquí son paquetes de cabecera corta de conexiones ya
+        // abiertas: se descartan mirando un bit, antes de buscar nada.
+        guard let first = payload.first, first & Self.quicLongHeaderBit != 0 else { return nil }
+
+        var reader: QUICClientHelloReader
+        let isNew: Bool
+        switch quicNameReads[key] {
+        case .settled:
+            return nil
+        case .reading(let existing, _):
+            reader = existing
+            isNew = false
+        case nil:
+            reader = QUICClientHelloReader(limits: config.quicNameLimits.perFlow)
+            isNew = true
+        }
+
+        if isNew, openQUICNameReads >= config.quicNameLimits.maxConcurrentReads {
+            // Sin sitio no se abre ni se deriva nada. Solo se cuenta lo que tenía forma de
+            // Initial, para que la cifra diga cuántas lecturas se perdieron y no cuántos
+            // datagramas de otra cosa pasaron mientras tanto.
+            if Self.startsWithInitial(payload) {
+                stats.quicNames.initialsSkippedAtCapacity &+= 1
+            }
+            return nil
+        }
+
+        let reading = reader.read(datagram: payload)
+        // Una cabecera larga que no es un Initial —Handshake, 0-RTT, otra versión— no abre una
+        // lectura ni gasta nada de la que hubiera.
+        guard reading.attemptedAnInitial else { return nil }
+
+        stats.quicNames.initialsOpened &+= UInt64(reading.opened)
+        stats.quicNames.initialsNotOpened &+= UInt64(reading.notOpened)
+        if reading.restarted {
+            stats.quicNames.readsRestarted &+= 1
+        }
+
+        let host: String?
+        switch reading.outcome {
+        case .needMoreInitials:
+            quicNameReads[key] = .reading(reader, life: flow.firstSeen)
+            if isNew { openQUICNameReads += 1 }
+            return nil
+        case .found(let name):
+            stats.quicNames.flowsNamed &+= 1
+            host = name
+        case .unavailable(.clientHello(.noServerName)):
+            stats.quicNames.withoutServerName &+= 1
+            host = nil
+        case .unavailable(.clientHello):
+            stats.quicNames.unreadableClientHello &+= 1
+            host = nil
+        case .unavailable(.cryptoStream):
+            stats.quicNames.cryptoStreamAbandoned &+= 1
+            host = nil
+        case .unavailable(.initialsExhausted):
+            stats.quicNames.initialsExhausted &+= 1
+            host = nil
+        }
+
+        // Definitivo: el lector, con sus claves y lo que tuviera recompuesto, se suelta aquí.
+        quicNameReads[key] = .settled(life: flow.firstSeen)
+        if !isNew { openQUICNameReads -= 1 }
+
+        guard host != nil || reading.offer != nil else { return nil }
+        // El nombre va donde el de un ClientHello de TCP y con sus mismas reglas: es lo que la
+        // conexión anunció de sí misma, no una deducción (`FlowName`). La oferta va también
+        // cuando no hay nombre: es lo que distingue «no anunciaba ninguno» de «no se leyó».
+        return await flowTable.setQUICClientHello(sni: host, offer: reading.offer, for: key)
+    }
+
+    /// Suelta lo apuntado para la lectura del nombre de un flujo.
+    private func forgetQUICNameRead(for key: FlowKey) {
+        if case .reading = quicNameReads.removeValue(forKey: key) {
+            openQUICNameReads -= 1
+        }
+    }
+
+    private static func startsWithInitial(_ payload: Data) -> Bool {
+        do {
+            _ = try QUICInitialHeader(datagram: payload)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Lecturas del nombre de un flujo QUIC que siguen a medias. Expuesto para verificar en tests
+    /// que un desenlace, o el cierre del flujo, las suelta.
+    public var openQUICNameReadCount: Int { openQUICNameReads }
 
     /// Resultado de registrar un datagrama, antes de decidir qué hacer con él.
     private enum Observation {
@@ -414,6 +574,11 @@ public actor PacketPipeline {
         // descifrado: su presupuesto no puede sobrevivirle, o un puerto efímero reciclado heredaría
         // el sitio ya gastado por una conexión que no es la suya.
         plaintextFlows.removeValue(forKey: record.key)
+        // Y la lectura del nombre de un flujo QUIC, si era de esta vida: el record de cierre de
+        // una vida puede llegar cuando la siguiente ya ha mandado su Initial.
+        if quicNameReads[record.key]?.life == record.firstSeen {
+            forgetQUICNameRead(for: record.key)
+        }
     }
 
     /// Claves de los flujos terminados desde la última llamada, para que el provider cierre lo que

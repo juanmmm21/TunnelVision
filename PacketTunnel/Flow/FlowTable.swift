@@ -126,6 +126,24 @@ public actor FlowTable {
         nodes[key]?.clientTLS = offer
     }
 
+    /// Anota lo leído del ClientHello que un cliente QUIC repartió por sus paquetes Initial: el
+    /// nombre que anunciaba, si anunciaba alguno, y lo que ofreció. Devuelve el record ya con
+    /// ello puesto, o `nil` si el flujo ya no está en la tabla.
+    ///
+    /// Son los mismos dos campos que rellenan `setSNI` y `setClientTLS` en un flujo TCP, y van
+    /// juntos y con respuesta porque aquí quien lee es el pipeline, en mitad del registro de un
+    /// paquete: así es un solo salto de actor y el record que ese paquete manda al historial ya
+    /// lleva el nombre, sin esperar al siguiente. Un valor `nil` no borra nada.
+    ///
+    /// Tampoco toca el estado de inspección: QUIC no se inspecciona (ADR 0006), y que vaya
+    /// cifrado ya lo dijo la versión de su cabecera.
+    public func setQUICClientHello(sni: String?, offer: ClientTLSOffer?, for key: FlowKey) -> FlowRecord? {
+        guard let node = nodes[key] else { return nil }
+        if let sni { node.sni = sni }
+        if let offer { node.clientTLS = offer }
+        return node.makeRecord()
+    }
+
     /// Anota con qué empezó el stream saliente del flujo (`Relay.readStreamOpening`) y, si fue un
     /// handshake de TLS, lo saca de `plaintext`. No-op si el flujo ya no está en la tabla.
     ///
