@@ -62,7 +62,12 @@ Network.framework. The seam is what would make that swap cheap if it is ever nee
 - `QUICClientHelloScanner.swift` — the same reading for a QUIC client: the decrypted payloads of
   its Initial packets in, the name out. It walks the frames (`QUICInitialFrames`), puts the CRYPTO
   ones in order (`QUICCryptoStream`, both in `Shared/QUIC`) and feeds the scanner above. It opens
-  no packet and holds no key, and nothing in the pipeline calls it yet.
+  no packet and holds no key.
+- `QUICClientHelloReader.swift` — what one QUIC flow keeps until its name is known: the client's
+  Initial keys, the largest packet number opened, and the scanner above. It is given the UDP
+  payloads the client sends, opens the Initial packets in them — with the keys of the first
+  connection ID, or of the packet's own after a Retry — and stops at a bounded number of them. Its
+  limits (`Limits.tunnel`) were set against captures of real clients. The pipeline calls it.
 - `ServerHelloScanner.swift` — the TLS version and cipher suite a server chose, read incrementally
   from the inbound stream: the version from `supported_versions` when present (that is how TLS 1.3
   announces itself), an alert reported as the server refusing, a HelloRetryRequest read and marked.
