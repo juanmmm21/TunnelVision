@@ -49,6 +49,12 @@ TLS 1.2, the only accepted version whose certificate travels in the clear, and c
 finding in the whole capture. The seeded certificates expire after the capture ends, so a sample
 redone another day does not show an expiry nobody decided to show.
 
+**The audit project carries two versions** (2026-10-13, `AuditFixture`): a baseline, the audited
+release and the one before it, each over a quarter of the capture's flows, all three ended. The
+earlier release exists so that the comparison screen has something to compare; it is declared as
+started before the audited one, because the quarters overlap in time and the comparison calls
+"later" whichever session started later.
+
 **The QUIC flows are noise too, and that is a limit worth knowing.** A UDP flow to port 443 is
 seeded with what the extension would have read from its opening packets — the QUIC version, and
 since 2026-10-13 the host name and the offer of its ClientHello (TLS 1.3 and `h3`, the only thing a

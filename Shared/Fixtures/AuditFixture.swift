@@ -4,8 +4,9 @@ import Foundation
 #if DEBUG
 
 /// El proyecto de auditoría que siembra `-TVSeedFixture`: una app inventada con su allowlist, una
-/// **baseline** y una sesión de auditoría ya cerradas, cada una con un tramo de los flujos de la
-/// captura sintética.
+/// **baseline** y **dos** sesiones de auditoría ya cerradas —la versión que se audita y la
+/// anterior, para que haya con qué compararla—, cada una con un tramo de los flujos de la captura
+/// sintética.
 ///
 /// Existe para que la pestaña de auditoría se pueda mirar, medir y fotografiar en el Simulator, donde
 /// la extensión no corre y por tanto nada etiqueta flujos. Las dos sesiones quedan **cerradas** a
@@ -33,9 +34,9 @@ public struct AuditFixture: Sendable {
 
     public static let projectName = "Example Health"
 
-    /// Crea el proyecto y decide qué tramo de los flujos lleva cada sesión: el primer cuarto es la
-    /// baseline y el segundo, la auditoría. La otra mitad queda sin sesión, que es lo que le pasa al
-    /// tráfico de un dispositivo fuera de una auditoría.
+    /// Crea el proyecto y decide qué tramo de los flujos lleva cada sesión: los dos primeros
+    /// cuartos son la baseline y la auditoría, y el tercero, la versión anterior. El último queda
+    /// sin sesión, que es lo que le pasa al tráfico de un dispositivo fuera de una auditoría.
     static func project(
         in store: FlowStore,
         anchor: MonotonicAnchor,
@@ -79,6 +80,15 @@ public struct AuditFixture: Sendable {
         let audit = span(auditRange)
         let auditLength = audit.end.timeIntervalSince(audit.start)
 
+        // La versión anterior es el tercer cuarto, y se declara empezada **antes** que la que se
+        // audita: la comparación llama «posterior» a la sesión que empezó después, y los tramos
+        // de la captura se solapan en el tiempo, así que sin esto la versión vieja podría salir
+        // como la nueva. Adelantar el principio solo ensancha la ventana: ningún flujo queda fuera.
+        let previousRange = (2 * quarter)...(3 * quarter - 1)
+        let previousSpan = span(previousRange)
+        let previousStart = min(previousSpan.start, audit.start.addingTimeInterval(-60))
+        let previousLength = previousSpan.end.timeIntervalSince(previousStart)
+
         return AuditFixture(sessions: [
             Session(
                 flows: baselineRange,
@@ -108,6 +118,21 @@ public struct AuditFixture: Sendable {
                     (.consentGiven, audit.start.addingTimeInterval(auditLength * 0.25)),
                     (.loggedIn, audit.start.addingTimeInterval(auditLength * 0.5)),
                     (.custom("First sync finished"), audit.start.addingTimeInterval(auditLength * 0.75)),
+                ]
+            ),
+            Session(
+                flows: previousRange,
+                draft: AuditSessionDraft(
+                    projectID: project.id,
+                    kind: .audit(AppRelease(version: "2.3.1", build: "172")),
+                    environment: environment,
+                    inspection: InspectionConditions(inspectionEnabled: true, caTrusted: true),
+                    notes: ""
+                ),
+                start: previousStart,
+                end: max(previousSpan.end, previousStart),
+                markers: [
+                    (.consentGiven, previousStart.addingTimeInterval(previousLength * 0.25)),
                 ]
             ),
         ])
