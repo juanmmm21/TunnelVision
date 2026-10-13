@@ -6,6 +6,41 @@ TunnelVision is not distributed through the App Store — see
 [`docs/APP-STORE.md`](docs/APP-STORE.md) — so releases here are source releases: build the tag
 you want. Version numbers follow the app's `MARKETING_VERSION`.
 
+## 1.1.0 — October 2026
+
+TunnelVision becomes a tool for auditing what one app sends: named sessions, findings, and an
+exportable bundle of evidence laid against the network requirements of BSI TR-03161.
+
+- **Audit projects and sessions.** A fifth tab, *Audit*: a project per app with an allowlist of the
+  domains it is expected to contact, a baseline recorded without the app, and a named session per
+  version and build. Connections and captures tagged by a session are kept as evidence, outside the
+  storage limits, until the session is deleted.
+- **Markers, from anywhere.** *Consent given*, *Logged in*, *Logged out* or one you name, placed
+  from the session screen or — with the app under test in front — from Control Center, the Action
+  Button, Shortcuts or Siri.
+- **Every connection has a name.** A connection that announces no host is named after the DNS
+  lookup that led to its address, and shown as inferred rather than announced. QUIC connections
+  announce theirs: the host is read from their opening packets, and nothing else is.
+- **How each connection was encrypted.** The TLS version the server chose and where that reading
+  comes from, what the app offered, the QUIC version, and the certificate when it travels in the
+  clear — on the connection's own screen, each with its caveat.
+- **Findings.** Each connection of a session is checked for a TLS version below the minimum, an HTTP
+  request in the clear, a host outside the allowlist or with no name to compare, whether the app
+  accepted or refused a user-installed certificate, and activity before the consent marker.
+- **A requirement catalogue.** The network requirements of TR-03161-1 version 3.0, as a versioned
+  JSON checked against the official document. A verdict states what the traffic showed and never
+  that a requirement is met; one with nothing to observe is *not assessed by this tool*.
+- **Two versions compared.** The domains a later version contacts that an earlier one did not, the
+  ones it stopped contacting, and where the TLS version changed.
+- **The evidence bundle.** One archive: session, connections (JSON and CSV), findings, a pcapng
+  capture annotated packet by packet with its flow and findings, a statement of what the capture
+  holds, a PDF report, and a manifest with a checksum of every file. The app says what is in it —
+  and what is missing — before anything is shared. Decrypted content never is.
+- **Session diagnostics speak about names.** Whether hosts are being read from TCP handshakes, from
+  QUIC and from DNS lookups, each with a sentence that says what the figures mean.
+- **Fixed: the navigation bar let rows show through it** on the connection and captures screens at
+  the largest text sizes.
+
 ## 1.0.0 — August 2026
 
 The first complete version. Submitted to App Review on 28 August 2026 and rejected under
