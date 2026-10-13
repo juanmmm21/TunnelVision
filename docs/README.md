@@ -10,6 +10,8 @@ building it, and it is published unchanged rather than rewritten into a brochure
 | [`APP-STORE.md`](APP-STORE.md) | Why TunnelVision is not on the App Store, and what that does and does not say about it |
 | [`BUILDING.md`](BUILDING.md) | From a clone to the app capturing traffic on your own iPhone |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Process model, data flow, memory strategy, IPC, security model |
+| [`spec/audit.md`](spec/audit.md) and [`ux/audit.md`](ux/audit.md) | The audit workflow: projects, sessions, findings, the release comparison, the evidence bundle and its report |
+| [`samples/evidence-report.pdf`](samples/evidence-report.pdf) | What an exported report looks like, written from the synthetic capture the tests use |
 
 ## Reference
 

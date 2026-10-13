@@ -4,6 +4,8 @@
 
 TunnelVision shows you every connection your iPhone makes: which apps reach which servers, on what ports, and how much data they move — live, as it happens. You can follow a connection all the way down to the individual packets and their raw bytes, and save any capture as a standard `.pcap` file. All of it happens on the device; there is no server behind TunnelVision and no account to create.
 
+It is also a tool for **auditing what one app sends**. Record a named session per version and build of the app you are assessing, mark the moment consent was given, and export what the network showed as a bundle of evidence — a capture, structured records, and a report laid against the network requirements of BSI TR-03161, the German technical guideline for health apps. [More on that below](#auditing-an-app).
+
 > ### Not on the App Store
 >
 > TunnelVision was finished, submitted, and reviewed on 28 August 2026 — and rejected under
@@ -21,11 +23,17 @@ TunnelVision shows you every connection your iPhone makes: which apps reach whic
 
 | ![The dashboard, with live throughput and the busiest hosts](docs/screenshots/dashboard.png) | ![The timeline of every recorded connection](docs/screenshots/timeline.png) | ![One connection, with its packets listed underneath](docs/screenshots/connection.png) |
 |:--:|:--:|:--:|
-| **Live traffic**, in and out, and who is talking most right now | **Your history**, newest first, and whether each connection was encrypted | **One connection**, packet by packet |
+| **Live traffic**, in and out, and who is talking most right now | **Your history**, newest first, and whether each connection was encrypted | **One connection**: how it was encrypted, with its packets underneath |
 
 | ![A packet screen showing a decoded DNS reply](docs/screenshots/packet.png) | ![Decrypted HTTPS shown turn by turn](docs/screenshots/decrypted.png) | ![The captures list with the room left on the device](docs/screenshots/captures.png) |
 |:--:|:--:|:--:|
 | **One packet**, headers decoded — here a DNS reply, with the name looked up and the answer | **Inside your own HTTPS**, turn by turn, when you switch it on | **Your capture files**, and whether they are going to fill your phone |
+
+And the audit side — a session of one app version, what its evidence bundle holds, and that version against the one before it:
+
+| ![An ended audit session with its markers and the row that exports its evidence](docs/screenshots/audit-session.png) | ![The sheet that says what an evidence bundle holds before it is shared](docs/screenshots/evidence-bundle.png) | ![Two versions of an app compared: the domains that are new, and whether the allowlist covers them](docs/screenshots/audit-comparison.png) |
+|:--:|:--:|:--:|
+| **An audit session**, named after the version and build it observed | **Its evidence bundle**, and what is and is not in it, before anything is shared | **Two versions compared**: what the newer one contacts that the older did not |
 
 TunnelVision follows the system appearance, so all of it comes in dark too:
 
@@ -47,10 +55,12 @@ Every one of those claims is now checkable rather than merely stated: the captur
 - **Watch traffic live.** Real-time throughput in and out, the hosts talking the most right now, and how many connections are active this session.
 - **Scroll through your history.** Every connection, newest first, with the host, ports, data moved, duration, and whether it was plaintext, encrypted, inspected, or not inspectable. Filter by host, protocol, encryption status, or time range.
 - **Jump to a moment.** A time axis above the history shows activity interval by interval; tap one to narrow the list to it, and keep tapping to zoom in.
+- **See how a connection was encrypted.** The TLS version the server chose and where that reading comes from, what the app offered, the QUIC version, and the server's certificate when it travels in the clear — each with the caveat that belongs to it, such as that nothing about a certificate was validated. QUIC connections are named too: the host is read from their opening packets, and nothing else is.
 - **Open a connection.** Every packet it carried, titled by what it meant for the connection — opened, accepted, data, delivery confirmed, finished, cut off — with the timing of each one relative to the connection's first packet.
 - **Read a single packet.** Its headers, decoded into plain terms (endpoints, protocol, sequence and acknowledgment numbers, window), plus the raw bytes as hex and ASCII, ready to copy or share. For a DNS lookup it goes one layer further and tells you the name that was queried and what answered.
 - **Look inside your own HTTPS.** Optional, off by default, and yours to switch on: a connection you inspected shows the exchange decoded, turn by turn. Apps that pin their certificates stay private.
 - **Export for later.** Save any capture as a standard `.pcap` file to open in Wireshark or `tcpdump`, or export your connection list as JSON.
+- **Audit an app.** Named sessions, an allowlist of expected domains, markers, findings, a comparison between two versions and an exportable evidence bundle with a PDF report. [Described below](#auditing-an-app).
 - **Keep storage in check.** Set how long history is kept and how large captures may grow; the limits are enforced while monitoring runs, not only while you are looking. The captures list tells you the room left against those limits and when the oldest one expires.
 
 ## Getting it on your phone
@@ -76,6 +86,30 @@ Be aware of one real cost before you start: **the packet tunnel needs a paid App
 
 You can stop monitoring at any time, and you can regenerate or remove the inspection certificate from inside the app or from iOS Settings whenever you like.
 
+## Auditing an app
+
+The *Audit* tab turns a capture into evidence about **one app**. It was built around the network part of a security assessment against BSI TR-03161 — the review a digital health app (DiGA) goes through in Germany, usually done by hand with a desktop proxy — but nothing in it is specific to health apps.
+
+1. **Create a project** for the app: its name, optionally its bundle identifier, and an **allowlist** of the domains it is expected to contact (`api.example.com`, or `*.example.com` for every subdomain).
+2. **Record a baseline** before installing the app. The tunnel sees packets, not processes, so it cannot tell which app opened a connection; the baseline is how the device's own background traffic is told apart from the app's. That is the method, and the report states it.
+3. **Record an audit session** for each version and build, using only that app while it records. Place **markers** as you go — *Consent given*, *Logged in*, *Logged out*, or one you name — from the session screen, or without leaving the app under test: from Control Center or the Action Button (iOS 18), Shortcuts or Siri.
+4. **Read what it found.** Each connection of the session is checked for five things: the TLS version against the minimum of BSI TR-02102-2, an HTTP request seen in the clear, a host outside the allowlist (or a connection with no name to compare), whether the app accepted or refused a user-installed certificate, and activity before the consent marker.
+5. **Compare two versions.** From an ended session, *Compare with* shows the domains the later version contacted and the earlier did not, the ones it stopped contacting, and where the TLS version changed — with only the new domains the allowlist does not cover marked for attention.
+6. **Export the evidence.** One archive of eight files: `session.json`, `flows.json` and `flows.csv`, `findings.json`, `capture.pcapng` with every packet annotated with its flow and findings, `capture.json` saying what the capture does and does not hold, `report.pdf`, and a `manifest.json` with a SHA-256 of each. The app shows what the bundle contains — and what is missing from the capture — before the share sheet opens.
+
+[**A sample report**](docs/samples/evidence-report.pdf), written from the synthetic capture this repository's tests use, shows what an assessor receives. One page of it:
+
+<img src="docs/screenshots/report-page.png" width="520" alt="A page of the PDF report: findings grouped by kind, each with the connections it was stated about">
+
+What it deliberately does **not** do matters as much as what it does:
+
+- **It never says a requirement is met.** A verdict states what the recorded traffic showed, within what the tool looks at for that requirement. A requirement with no applicable observation is reported as *not assessed by this tool* — never as passed. The assessment is the assessor's.
+- **It never defeats pinning to find out more.** The pinning check is *read* from what already happened: an app that refused TunnelVision's certificate pins (or rejects every user-installed root); one that accepted it trusts user-installed roots. Nothing is bypassed, for an audit or for anything else ([ADR 0003](docs/decisions/0003-no-third-party-pinning-bypass.md)).
+- **Decrypted content is not in the bundle.** The capture holds each packet as it crossed the tunnel — encrypted where it was encrypted. What travelled in the clear is readable in it, and the app says so before you share.
+- **The requirement identifiers are not written from memory.** The catalogue is a versioned JSON checked against the official documents (TR-03161-1 version 3.0 and TR-02102-2), and it records the SHA-256 of the PDFs it was checked against.
+
+The model is specified in [`docs/spec/audit.md`](docs/spec/audit.md), the screens in [`docs/ux/audit.md`](docs/ux/audit.md), and the scope in [ADR 0008](docs/decisions/0008-tr03161-audit-workflow-scope.md).
+
 ## What you need
 
 - An **iPhone running iOS 17 or later**. (iPad is not supported: every screen was designed and measured for the phone, and shipping an iPad layout nobody has looked at would be worse than not offering one.)
@@ -91,6 +125,7 @@ The interesting engineering is in doing that inside the envelope iOS gives a net
 - **A userspace TCP/IP path.** The extension only ever sees raw IP datagrams. To read or terminate a TCP stream you have to reassemble it yourself — sequence-number ordering, retransmits, out-of-order segments — in a userspace flow table, and then terminate connections in a userspace stack when inspection is on.
 - **A hard memory ceiling.** Network extensions run in a separate process with a small memory budget. Buffers are bounded, captures stream straight to disk as `pcap`, and back-pressure drops rather than grows.
 - **Cheap IPC to the UI.** The extension and the app are different processes. Packet metadata reaches the UI through a bounded ring buffer in a memory-mapped file in the shared App Group container, with a Darwin notification used only as a "data available" wakeup — never as a data channel.
+- **Reading a name out of QUIC without decrypting QUIC.** A QUIC connection's first packets are protected with keys derived from values that travel in those same packets (RFC 9001), so the host the client asks for can be read from them — and only that: the client's opening packets, its ClientHello, nothing after.
 - **Throughput-first persistence.** History goes to SQLite (via GRDB) rather than Core Data or SwiftData, because the write pattern is thousands of small append-only rows per second.
 
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) covers the whole picture, [`docs/spec/`](docs/spec/) documents each module with its actual Swift interfaces, and [`docs/decisions/`](docs/decisions/) records why the load-bearing choices were made.
@@ -101,9 +136,10 @@ The interesting engineering is in doing that inside the envelope iOS gives a net
 |---|---|
 | `TunnelVision/` | The SwiftUI app: views, view models, services |
 | `PacketTunnel/` | The `NEPacketTunnelProvider` extension: flow table, TCP reassembly, TLS termination, relay |
-| `Shared/` | Framework linked by both: models, persistence, IPC ring buffer, pcap, IP parsing, TLS primitives |
+| `AuditControls/` | The Control Center control that places an audit marker without opening the app |
+| `Shared/` | Framework linked by both: models, persistence, IPC ring buffer, pcap, IP and QUIC parsing, TLS primitives, the audit model and the evidence bundle |
 | `CTVAtomics/`, `CTVResolv/` | Small C shims — C11 atomics for the ring buffer, `<resolv.h>` for the system's DNS servers. Both exist because Swift cannot reach those APIs on iOS |
-| `TunnelVisionTests/` | The unit tests — about two thousand, all runnable on the Simulator |
+| `TunnelVisionTests/` | The unit tests — about 2,900, all runnable on the Simulator |
 | `Tools/` | Bundle-prefix script, screenshot driver, app icon renderer |
 | `docs/` | Architecture, module specs, UX specs, decision records |
 
@@ -116,6 +152,7 @@ Swift 6 with strict concurrency throughout. The Xcode project is generated from 
 - **Does my data go anywhere?** No. Everything stays on your device, and the source here is the proof.
 - **Do I really need a paid Apple account?** To run the tunnel on your phone, yes — the Network Extension entitlement is not available to free personal teams. To read the code and run the tests, no.
 - **An app's HTTPS shows "not inspectable" — is something broken?** No. That app pins its certificates, and TunnelVision intentionally leaves it alone rather than interfering with its security.
+- **Does an audit with TunnelVision certify an app against TR-03161?** No. It produces evidence about the network part of an assessment — what was contacted, how it was encrypted, when — for an assessor to judge. It covers the requirements a network capture can speak to and reports the rest as not assessed.
 - **A packet says its bytes are gone. Why?** Either the capture was set to keep headers only, which you can change in Settings, or the capture file it lived in has been deleted. The connection itself stays in your history either way.
 - **Will it drain my battery?** It is built to be light: streaming and call traffic is passed through without heavy processing, and captures are written straight to storage instead of piling up in memory.
 
