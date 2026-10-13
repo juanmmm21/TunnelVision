@@ -202,14 +202,16 @@ final class DNSNamingDiagnosticsTests: XCTestCase {
         XCTAssertFalse(sections.contains { $0.id == "names" })
     }
 
-    /// Va pegada a los nombres anunciados: es la otra mitad de la misma pregunta.
+    /// Va detrás de los nombres anunciados —los de TCP y los de QUIC—: es la otra mitad de la misma
+    /// pregunta, y su frase habla de «los hosts de arriba».
     func testTheSectionFollowsTheAnnouncedNames() throws {
         let ids = DiagnosticsPresentation
             .sections(for: TunnelStats(pipeline: pipeline(), relay: RelayStats()))
             .map(\.id)
         let names = try XCTUnwrap(ids.firstIndex(of: "names"))
 
-        XCTAssertEqual(ids.firstIndex(of: "dnsNames"), names + 1)
+        XCTAssertEqual(ids.firstIndex(of: "quicNames"), names + 1)
+        XCTAssertEqual(ids.firstIndex(of: "dnsNames"), names + 2)
     }
 
     func testBeforeAnyTrafficTheSectionHasNoSentence() throws {

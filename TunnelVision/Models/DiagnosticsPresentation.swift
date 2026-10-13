@@ -99,6 +99,33 @@ public enum DNSNamingVerdict: Sendable, Equatable {
     case naming
 }
 
+/// Qué ha podido hacer el túnel con el arranque de las conexiones QUIC para ponerles nombre.
+///
+/// Es el cuarto veredicto y va aparte del de los nombres por DNS por lo mismo que aquél va aparte del
+/// resolver: contesta otra pregunta. Un flujo QUIC puede tener el nombre que **se preguntó** por DNS
+/// y no el que **anuncia** su cliente, y lo que separa «no anunciaba ninguno» de «no se llegó a leer»
+/// y de «no hubo QUIC» está en la relación entre estos contadores, no en ninguno suelto.
+///
+/// Tampoco lleva cifras, por lo mismo que `DNSNamingVerdict`: están en las filas de su sección.
+public enum QUICNamingVerdict: Sendable, Equatable {
+    /// Aún no ha pasado un paquete: no hay nada que afirmar, ni siquiera una ausencia.
+    case noTraffic
+    /// Hay tráfico y ningún cliente ha mandado un Initial que mirar: nada habló QUIC contra el 443.
+    case nothingToRead
+    /// Se vieron Initial y **ninguno** se abrió.
+    case notOpening
+    /// Hay Initial abiertos y ningún flujo ha llegado todavía a un desenlace: el ClientHello puede
+    /// ocupar varios paquetes, así que esto es lo normal durante un instante.
+    case reading
+    /// Se abrieron Initial y ninguna lectura acabó en un ClientHello entero: no se dejó leer, o se
+    /// salió de los topes.
+    case notReadable
+    /// Se leyeron ClientHello enteros y ninguno anunciaba un nombre.
+    case nothingAnnounced
+    /// Hay flujos QUIC con el nombre que anunció su cliente.
+    case naming
+}
+
 /// El titular de la pantalla: el veredicto convertido en copia.
 public struct DiagnosticsHeadline: Sendable, Equatable {
     public let title: String
@@ -506,6 +533,92 @@ public enum DiagnosticsPresentation {
         }
     }
 
+    /// Qué dicen los contadores sobre los nombres que el túnel lee del arranque de QUIC.
+    ///
+    /// El orden **es** la decisión, como en los otros tres, y va de lo que desmiente más a lo que
+    /// desmiente menos: un flujo nombrado prueba la cadena entera; un ClientHello leído entero y sin
+    /// nombre prueba que el lector funciona y que lo que falta es el anuncio; y solo sin ninguna de
+    /// las dos cosas se mira hasta dónde se llegó — si se abrió algún Initial o ninguno.
+    ///
+    /// Los Initial saltados por cupo cuentan como vistos: con ellos delante no se puede decir que no
+    /// hubo QUIC, y «ninguno se abrió» sigue siendo cierto.
+    public static func quicNamingVerdict(for pipeline: PipelineStats) -> QUICNamingVerdict {
+        let names = pipeline.quicNames
+        if names.flowsNamed > 0 { return .naming }
+        if names.withoutServerName > 0 { return .nothingAnnounced }
+        if names.initialsOpened > 0 {
+            return names.flowsNotRead > 0 ? .notReadable : .reading
+        }
+        if names.initialsNotOpened > 0 || names.initialsSkippedAtCapacity > 0 { return .notOpening }
+        return pipeline.packetsHandled > 0 ? .nothingToRead : .noTraffic
+    }
+
+    /// La frase del veredicto, que es el pie de su sección.
+    ///
+    /// De pie y no de aviso por lo mismo que la de los nombres por DNS: ninguno de sus casos pide
+    /// nada a quien mira, porque un flujo QUIC sin nombre anunciado se reenvía igual y conserva el
+    /// que le diera el DNS. `nil` solo sin tráfico.
+    public static func quicNamingNote(for verdict: QUICNamingVerdict) -> String? {
+        switch verdict {
+        case .noTraffic:
+            return nil
+        case .nothingToRead:
+            return String(
+                localized: "diagnostics.section.quicNames.note.nothingToRead",
+                defaultValue: "No connection has started over QUIC since monitoring started, so there was no opening packet to read a host from. QUIC is what HTTP/3 runs on; connections that do not use it announce their host over TCP, and those are counted under Names.",
+                comment: """
+                    Footer under the names-from-QUIC section when traffic is flowing and no QUIC \
+                    client has sent an opening (Initial) packet. It is not a fault: nothing used QUIC.
+                    """
+            )
+        case .notOpening:
+            return String(
+                localized: "diagnostics.section.quicNames.note.notOpening",
+                defaultValue: "QUIC connections started and not one of their opening packets was opened, so none was named this way. They are forwarded untouched and keep the name a lookup gave them, if any.",
+                comment: """
+                    Footer under the names-from-QUIC section when opening packets were seen and none \
+                    could be opened. It states the fact and what it costs, without guessing a cause.
+                    """
+            )
+        case .reading:
+            return String(
+                localized: "diagnostics.section.quicNames.note.reading",
+                defaultValue: "Opening packets have been opened and no connection has got as far as its host yet: the announcement can span several packets. Refresh in a moment.",
+                comment: """
+                    Footer under the names-from-QUIC section in the brief moment when packets were \
+                    opened and no flow has reached an outcome.
+                    """
+            )
+        case .notReadable:
+            return String(
+                localized: "diagnostics.section.quicNames.note.notReadable",
+                defaultValue: "Opening packets were opened and none of them led to a host: what they carried could not be read as the start of a handshake, or it did not fit the limits this tunnel reads within. Those connections keep the name a lookup gave them, if any.",
+                comment: """
+                    Footer under the names-from-QUIC section when every read ended without a \
+                    complete ClientHello. 'Limits' are the tunnel's own bounds on what it buffers.
+                    """
+            )
+        case .nothingAnnounced:
+            return String(
+                localized: "diagnostics.section.quicNames.note.nothingAnnounced",
+                defaultValue: "The start of each QUIC handshake was read in full and none of them announced a host, so there was nothing to name those connections by. They keep the name a lookup gave them, if any.",
+                comment: """
+                    Footer under the names-from-QUIC section when ClientHellos were read whole and \
+                    none carried a server name. The reading worked; the name was not there.
+                    """
+            )
+        case .naming:
+            return String(
+                localized: "diagnostics.section.quicNames.note.naming",
+                defaultValue: "A QUIC connection announces its host inside its opening packets, which are protected with keys anyone on the path can work out. The tunnel opens those packets to read the host and nothing else: the connection itself is forwarded untouched and never decrypted.",
+                comment: """
+                    Footer under the names-from-QUIC section in the normal case. It says where the \
+                    name comes from and draws the line: only the client's opening packets are read.
+                    """
+            )
+        }
+    }
+
     /// Lo que hay que decir del DNS, o **nada** si no hay nada que decir.
     ///
     /// Devuelve `nil` cuando el túnel está anunciando resolvers y nadie los desmiente, porque esa es
@@ -832,9 +945,11 @@ public enum DiagnosticsPresentation {
             sections.append(inspectionSection(relay))
             sections.append(namesSection(relay))
         }
-        // Pegada a los nombres anunciados porque es la otra mitad de la misma pregunta —de dónde
-        // saca su nombre un flujo—, pero fuera de su `if`: estos contadores son del pipeline y están
-        // también cuando el relay no contestó.
+        // Pegadas a los nombres anunciados porque son el resto de la misma pregunta —de dónde saca
+        // su nombre un flujo—, pero fuera de su `if`: estos contadores son del pipeline y están
+        // también cuando el relay no contestó. QUIC va antes que el DNS porque su nombre también es
+        // anunciado: así lo preguntado queda debajo de todo lo anunciado, que es lo que dice su pie.
+        sections.append(quicNamesSection(stats.pipeline))
         sections.append(dnsNamesSection(stats.pipeline))
         sections.append(decryptedSection(stats.pipeline, relay: stats.relay))
         sections.append(recordingSection(stats.pipeline))
@@ -1158,6 +1273,110 @@ public enum DiagnosticsPresentation {
                 )
             ],
             note: nil
+        )
+    }
+
+    /// Lo que el túnel hizo con los paquetes Initial de los clientes QUIC.
+    ///
+    /// Los flujos van primero y los paquetes después: la pregunta es cuántas conexiones tienen
+    /// nombre, y los paquetes solo explican por qué alguna no. Las tres formas de no llegar a leer
+    /// un ClientHello entero van **sumadas** en una fila, por lo mismo que los seis motivos del DNS:
+    /// lo que hay que poder separar de un vistazo es «no anunciaba nombre» de «no se pudo leer».
+    private static func quicNamesSection(_ pipeline: PipelineStats) -> DiagnosticsSection {
+        let names = pipeline.quicNames
+        return DiagnosticsSection(
+            id: "quicNames",
+            title: String(
+                localized: "diagnostics.section.quicNames",
+                defaultValue: "Names from QUIC",
+                comment: """
+                    Section title for the hosts read from the opening packets of QUIC connections, \
+                    next to the ones TCP connections announce (the section above).
+                    """
+            ),
+            rows: [
+                DiagnosticsRow.reading(
+                    id: "quicNames.flowsNamed",
+                    label: String(
+                        localized: "diagnostics.row.quicFlowsNamed",
+                        defaultValue: "Connections named",
+                        comment: "QUIC flows whose announced host was read from their opening packets."
+                    ),
+                    value: DisplayFormat.count(names.flowsNamed)
+                ),
+                DiagnosticsRow.reading(
+                    id: "quicNames.withoutServerName",
+                    label: String(
+                        localized: "diagnostics.row.quicWithoutServerName",
+                        defaultValue: "No host announced",
+                        comment: """
+                            QUIC flows whose handshake start was read in full and named no host. Same \
+                            words as the TCP row in the section above, on purpose.
+                            """
+                    ),
+                    value: DisplayFormat.count(names.withoutServerName)
+                ),
+                // Lectura y no avería, como lo ilegible del DNS: el flujo se reenvió intacto y se
+                // grabó; lo único que no tiene es un nombre anunciado.
+                DiagnosticsRow.reading(
+                    id: "quicNames.flowsNotRead",
+                    label: String(
+                        localized: "diagnostics.row.quicFlowsNotRead",
+                        defaultValue: "Handshakes not read to the end",
+                        comment: """
+                            QUIC flows whose read ended without a complete ClientHello: it did not \
+                            parse, or it went past the tunnel's limits. Ordinary, not a fault.
+                            """
+                    ),
+                    value: DisplayFormat.count(names.flowsNotRead)
+                ),
+                DiagnosticsRow.reading(
+                    id: "quicNames.initialsOpened",
+                    label: String(
+                        localized: "diagnostics.row.quicInitialsOpened",
+                        defaultValue: "Opening packets opened",
+                        comment: "QUIC Initial packets from the device that the tunnel could open."
+                    ),
+                    value: DisplayFormat.count(names.initialsOpened)
+                ),
+                DiagnosticsRow.reading(
+                    id: "quicNames.initialsNotOpened",
+                    label: String(
+                        localized: "diagnostics.row.quicInitialsNotOpened",
+                        defaultValue: "Opening packets that did not open",
+                        comment: """
+                            QUIC Initial packets that did not authenticate with the keys of their \
+                            connection. They were forwarded like any other packet.
+                            """
+                    ),
+                    value: DisplayFormat.count(names.initialsNotOpened)
+                ),
+                DiagnosticsRow.reading(
+                    id: "quicNames.readsRestarted",
+                    label: String(
+                        localized: "diagnostics.row.quicReadsRestarted",
+                        defaultValue: "Reads started over",
+                        comment: """
+                            Times a QUIC flow's read began again with new keys, which is what happens \
+                            after the server asks the client to retry.
+                            """
+                    ),
+                    value: DisplayFormat.count(names.readsRestarted)
+                ),
+                DiagnosticsRow.reading(
+                    id: "quicNames.initialsSkippedAtCapacity",
+                    label: String(
+                        localized: "diagnostics.row.quicInitialsSkipped",
+                        defaultValue: "Skipped, too many reads at once",
+                        comment: """
+                            QUIC opening packets not looked at because the tunnel was already reading \
+                            as many connections as it allows itself. A limit at work, not a fault.
+                            """
+                    ),
+                    value: DisplayFormat.count(names.initialsSkippedAtCapacity)
+                )
+            ],
+            note: quicNamingNote(for: quicNamingVerdict(for: pipeline))
         )
     }
 

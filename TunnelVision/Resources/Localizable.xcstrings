@@ -4849,6 +4849,90 @@
         }
       }
     },
+    "diagnostics.row.quicFlowsNamed" : {
+      "comment" : "QUIC flows whose announced host was read from their opening packets.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Connections named"
+          }
+        }
+      }
+    },
+    "diagnostics.row.quicFlowsNotRead" : {
+      "comment" : "QUIC flows whose read ended without a complete ClientHello: it did not parse, or it went past the tunnel's limits. Ordinary, not a fault.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Handshakes not read to the end"
+          }
+        }
+      }
+    },
+    "diagnostics.row.quicInitialsNotOpened" : {
+      "comment" : "QUIC Initial packets that did not authenticate with the keys of their connection. They were forwarded like any other packet.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Opening packets that did not open"
+          }
+        }
+      }
+    },
+    "diagnostics.row.quicInitialsOpened" : {
+      "comment" : "QUIC Initial packets from the device that the tunnel could open.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Opening packets opened"
+          }
+        }
+      }
+    },
+    "diagnostics.row.quicInitialsSkipped" : {
+      "comment" : "QUIC opening packets not looked at because the tunnel was already reading as many connections as it allows itself. A limit at work, not a fault.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Skipped, too many reads at once"
+          }
+        }
+      }
+    },
+    "diagnostics.row.quicReadsRestarted" : {
+      "comment" : "Times a QUIC flow's read began again with new keys, which is what happens after the server asks the client to retry.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reads started over"
+          }
+        }
+      }
+    },
+    "diagnostics.row.quicWithoutServerName" : {
+      "comment" : "QUIC flows whose handshake start was read in full and named no host. Same words as the TCP row in the section above, on purpose.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No host announced"
+          }
+        }
+      }
+    },
     "diagnostics.row.reinjectedRecordsDropped" : {
       "comment" : "Replies that reached the device but did not make it into the history. The packet was delivered; what was lost is its row.",
       "extractionState" : "extracted_with_value",
@@ -5181,6 +5265,90 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Last errors"
+          }
+        }
+      }
+    },
+    "diagnostics.section.quicNames" : {
+      "comment" : "Section title for the hosts read from the opening packets of QUIC connections, next to the ones TCP connections announce (the section above).",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Names from QUIC"
+          }
+        }
+      }
+    },
+    "diagnostics.section.quicNames.note.naming" : {
+      "comment" : "Footer under the names-from-QUIC section in the normal case. It says where the name comes from and draws the line: only the client's opening packets are read.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "A QUIC connection announces its host inside its opening packets, which are protected with keys anyone on the path can work out. The tunnel opens those packets to read the host and nothing else: the connection itself is forwarded untouched and never decrypted."
+          }
+        }
+      }
+    },
+    "diagnostics.section.quicNames.note.notOpening" : {
+      "comment" : "Footer under the names-from-QUIC section when opening packets were seen and none could be opened. It states the fact and what it costs, without guessing a cause.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "QUIC connections started and not one of their opening packets was opened, so none was named this way. They are forwarded untouched and keep the name a lookup gave them, if any."
+          }
+        }
+      }
+    },
+    "diagnostics.section.quicNames.note.notReadable" : {
+      "comment" : "Footer under the names-from-QUIC section when every read ended without a complete ClientHello. 'Limits' are the tunnel's own bounds on what it buffers.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Opening packets were opened and none of them led to a host: what they carried could not be read as the start of a handshake, or it did not fit the limits this tunnel reads within. Those connections keep the name a lookup gave them, if any."
+          }
+        }
+      }
+    },
+    "diagnostics.section.quicNames.note.nothingAnnounced" : {
+      "comment" : "Footer under the names-from-QUIC section when ClientHellos were read whole and none carried a server name. The reading worked; the name was not there.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The start of each QUIC handshake was read in full and none of them announced a host, so there was nothing to name those connections by. They keep the name a lookup gave them, if any."
+          }
+        }
+      }
+    },
+    "diagnostics.section.quicNames.note.nothingToRead" : {
+      "comment" : "Footer under the names-from-QUIC section when traffic is flowing and no QUIC client has sent an opening (Initial) packet. It is not a fault: nothing used QUIC.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No connection has started over QUIC since monitoring started, so there was no opening packet to read a host from. QUIC is what HTTP/3 runs on; connections that do not use it announce their host over TCP, and those are counted under Names."
+          }
+        }
+      }
+    },
+    "diagnostics.section.quicNames.note.reading" : {
+      "comment" : "Footer under the names-from-QUIC section in the brief moment when packets were opened and no flow has reached an outcome.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Opening packets have been opened and no connection has got as far as its host yet: the announcement can span several packets. Refresh in a moment."
           }
         }
       }
