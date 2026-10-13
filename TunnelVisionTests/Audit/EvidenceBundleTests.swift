@@ -457,6 +457,33 @@ final class EvidenceBundleTests: XCTestCase {
         XCTAssertEqual(written.serverCertificate.visibility, "notRead")
     }
 
+    /// Un flujo QUIC lleva el nombre que anunció en su Initial como cualquier SNI, con su oferta,
+    /// y un hallazgo de allowlist lo cita por ese nombre aunque el DNS le diera otro.
+    func testAQUICFlowIsWrittenWithItsAnnouncedNameAndItsOffer() throws {
+        let flow = Fixtures.flow(
+            id: 1,
+            proto: .udp,
+            tlsStatus: .encrypted,
+            sni: "tracker.example.net",
+            resolvedName: ResolvedFlowName(name: "api.example.com", otherNames: []),
+            clientTLS: Fixtures.offer(.listed([.tls13])),
+            quic: QUICVersionReading(version: .v1, source: .server)
+        )
+        let bundle = try makeBundle([flow], allowlist: ["api.example.com"])
+        let written = try XCTUnwrap(bundle.flows.flows.first)
+
+        XCTAssertEqual(written.sni, "tracker.example.net")
+        XCTAssertEqual(written.name?.text, "tracker.example.net")
+        XCTAssertEqual(written.name?.origin, "sni")
+        XCTAssertEqual(written.dnsName, "api.example.com")
+        XCTAssertEqual(written.clientTLS?.hasEncryptedClientHello, false)
+        XCTAssertEqual(written.quic?.source, "server")
+
+        let finding = try XCTUnwrap(bundle.findings.findings.first { $0.kind == "hostNotInAllowlist" })
+        XCTAssertEqual(finding.host, "tracker.example.net")
+        XCTAssertEqual(written.findingIDs, [finding.id])
+    }
+
     func testThePresentedCertificateChainIsWrittenAndSaysIfItIsWhole() throws {
         let base = Fixtures.flow(id: 1, serverTLS: Fixtures.negotiated(.tls12))
         let notAfter = Fixtures.start.addingTimeInterval(86_400)
