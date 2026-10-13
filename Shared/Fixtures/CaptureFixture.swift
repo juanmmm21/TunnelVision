@@ -175,10 +175,23 @@ public struct FixtureFlow: Sendable, Equatable {
     /// 443 esté `encrypted`: sin ella la extensión lo deja como nace, `plaintext`.
     public let quic: QUICVersionReading?
 
-    /// Lo que el cliente ofreció en su ClientHello, o `nil` si no se leyó ninguno. Hoy solo lo
-    /// llevan los flujos QUIC que anuncian nombre: en ellos el nombre y la oferta salen del mismo
-    /// mensaje, así que un flujo con uno y sin la otra sería un estado que la extensión no produce.
+    /// Lo que el cliente ofreció en su ClientHello, o `nil` si no se leyó ninguno. Lo llevan los
+    /// flujos TCP que arrancan con un handshake de TLS y los QUIC que anuncian nombre: en estos
+    /// últimos el nombre y la oferta salen del mismo mensaje, así que un flujo con uno y sin la
+    /// otra sería un estado que la extensión no produce.
     public let clientTLS: ClientTLSOffer?
+
+    /// Lo que el servidor contestó a ese ClientHello, o `nil` si no se leyó: la versión y la
+    /// suite, con el origen de la lectura. De un flujo QUIC no hay: su ServerHello viaja cifrado.
+    public let serverTLS: ServerTLSAnswer?
+
+    /// La cadena de certificados que el servidor presentó en claro, que solo existe por debajo
+    /// de TLS 1.3 y solo cuando la lectura es del ServerHello de la propia conexión.
+    public let serverCertificates: ServerCertificateReading?
+
+    /// Con qué arrancó su stream TCP, o `nil` en lo que no es TCP. Es lo que le deja decir a la
+    /// comprobación de cifrado algo más que «no se leyó».
+    public let streamOpening: StreamOpening?
 
     /// En orden temporal ascendente.
     public let packets: [FixturePacket]
@@ -195,6 +208,9 @@ public struct FixtureFlow: Sendable, Equatable {
         tlsStatus: TLSInspectionStatus,
         quic: QUICVersionReading?,
         clientTLS: ClientTLSOffer?,
+        serverTLS: ServerTLSAnswer?,
+        serverCertificates: ServerCertificateReading?,
+        streamOpening: StreamOpening?,
         packets: [FixturePacket],
         plaintext: [FixturePlaintextChunk] = []
     ) {
@@ -219,12 +235,23 @@ public struct FixtureFlow: Sendable, Equatable {
             quic == nil || (sni == nil) == (clientTLS == nil),
             "en un flujo QUIC el nombre anunciado y la oferta salen del mismo ClientHello: van los dos o ninguno"
         )
+        precondition(
+            streamOpening == nil || key.proto == .tcp,
+            "el arranque de un stream solo se lee de TCP"
+        )
+        precondition(
+            serverCertificates == nil || serverTLS != nil,
+            "una cadena de certificados llega detrás de un ServerHello: sin respuesta leída no hay cadena"
+        )
         self.key = key
         self.sni = sni
         self.resolvedName = resolvedName
         self.tlsStatus = tlsStatus
         self.quic = quic
         self.clientTLS = clientTLS
+        self.serverTLS = serverTLS
+        self.serverCertificates = serverCertificates
+        self.streamOpening = streamOpening
         self.packets = packets
         self.plaintext = plaintext
     }
@@ -251,11 +278,11 @@ public struct FixtureFlow: Sendable, Equatable {
             tlsStatus: tlsStatus,
             sni: sni,
             resolvedName: resolvedName,
-            serverTLS: nil,
-            serverCertificates: nil,
+            serverTLS: serverTLS,
+            serverCertificates: serverCertificates,
             clientTLS: clientTLS,
             quic: quic,
-            streamOpening: nil
+            streamOpening: streamOpening
         )
     }
 }
@@ -427,6 +454,11 @@ private struct FlowScript {
     /// (`DNSPresentation`) y no una vista de bytes. Vacío en todos los demás, que se rellenan de
     /// ruido reproducible porque nadie mira dentro.
     var payloads: [Data] = []
+    /// La versión de TLS que el servidor eligió, en los flujos que arrancan con un handshake.
+    /// TLS 1.3 en todos menos en los dos del catálogo que existen para enseñar otra cosa: uno por
+    /// debajo del mínimo de la TR-02102-2, que es el hallazgo que una auditoría busca, y uno en
+    /// TLS 1.2, que es la única versión admitida cuyo certificado viaja en claro.
+    var negotiated: TLSProtocolVersion = .tls13
 
     /// Lo que la extensión habría leído de su arranque: todo lo que el catálogo manda por UDP
     /// contra el 443 es QUIC, y lleva la versión que contesta el servidor.
@@ -434,17 +466,94 @@ private struct FlowScript {
         proto == .udp && remotePort == 443 ? QUICVersionReading(version: .v1, source: .server) : nil
     }
 
-    /// La oferta del ClientHello que la extensión habría leído de sus paquetes Initial: la que
-    /// manda un cliente de HTTP/3, que dentro de QUIC no puede ofrecer menos que TLS 1.3
-    /// (RFC 9001 § 4.2). **Se deriva** de que el flujo sea QUIC y anuncie nombre en vez de
-    /// escribirse en cada guion: el nombre y la oferta salen del mismo mensaje.
+    /// Con qué arrancó su stream, que la extensión lee de todo flujo TCP: una petición HTTP en
+    /// claro en los que el catálogo marca sin cifrar y un handshake de TLS en los demás.
+    var streamOpening: StreamOpening? {
+        guard proto == .tcp else { return nil }
+        return tlsStatus == .plaintext ? .httpRequest : .tlsHandshake
+    }
+
+    /// La oferta del ClientHello que la extensión habría leído. **Se deriva** en vez de
+    /// escribirse en cada guion, porque sale de lo que el flujo ya es:
+    ///
+    /// - En QUIC, del ClientHello de sus paquetes Initial, y por eso solo si anuncia nombre —los
+    ///   dos salen del mismo mensaje—: la de un cliente de HTTP/3, que dentro de QUIC no puede
+    ///   ofrecer menos que TLS 1.3 (RFC 9001 § 4.2).
+    /// - En TCP, del handshake con el que arranca: la lista de un cliente actual, o —en el flujo
+    ///   que acaba por debajo de TLS 1.2— un ClientHello sin `supported_versions`, que solo dice
+    ///   hasta dónde llega. Una lista con 1.3 y 1.2 no puede acabar en TLS 1.0.
     var clientTLS: ClientTLSOffer? {
-        guard quic != nil, sni != nil else { return nil }
+        if quic != nil {
+            guard sni != nil else { return nil }
+            return ClientTLSOffer(
+                versions: .listed([.tls13]),
+                applicationProtocols: ["h3"],
+                omittedApplicationProtocols: 0,
+                hasEncryptedClientHello: false
+            )
+        }
+        guard streamOpening == .tlsHandshake else { return nil }
+        let isLegacy = negotiated.rawValue < TLSProtocolVersion.tls12.rawValue
         return ClientTLSOffer(
-            versions: .listed([.tls13]),
-            applicationProtocols: ["h3"],
+            versions: isLegacy ? .upTo(.tls12) : .listed([.tls13, .tls12]),
+            // ALPN es de HTTP: el flujo de correo (993) no la manda, ni el cliente antiguo.
+            applicationProtocols: isLegacy || !(remotePort == 443 || remotePort == 80) ? [] : ["h2", "http/1.1"],
             omittedApplicationProtocols: 0,
             hasEncryptedClientHello: false
+        )
+    }
+
+    /// Lo que el servidor contestó. El origen sigue al estado: de un flujo que pasa intacto se
+    /// lee su propio ServerHello; de uno que el túnel terminó —lo descifrara o lo rechazara la
+    /// app— solo se sabe lo que negoció la conexión de subida del túnel.
+    ///
+    /// Los códigos de suite son los del registro «TLS Cipher Suites» de IANA para
+    /// TLS_AES_128_GCM_SHA256 (RFC 8446 § B.4), TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 (RFC 5289)
+    /// y TLS_RSA_WITH_AES_128_CBC_SHA (RFC 5246 § A.5).
+    var serverTLS: ServerTLSAnswer? {
+        guard streamOpening == .tlsHandshake else { return nil }
+        let suite: UInt16
+        switch negotiated {
+        case .tls13: suite = 0x1301
+        case .tls12: suite = 0xC02F
+        default: suite = 0x002F
+        }
+        return .negotiated(
+            NegotiatedTLS(
+                version: negotiated,
+                cipherSuite: TLSCipherSuite(rawValue: suite),
+                fromHelloRetryRequest: false,
+                source: tlsStatus == .encrypted ? .serverHello : .upstreamConnection
+            )
+        )
+    }
+
+    /// La cadena que el servidor presentó, en los flujos donde se puede leer: por debajo de
+    /// TLS 1.3 y con el ServerHello de la propia conexión delante. Hoja e intermedio con nombres
+    /// inventados, y caducidades colgadas del final de la captura para que una muestra rehecha
+    /// otro día no enseñe un certificado caducado que nadie decidió.
+    func serverCertificates(endingAt: Date) -> ServerCertificateReading? {
+        guard case .negotiated(let negotiated) = serverTLS,
+              negotiated.source == .serverHello,
+              negotiated.version != .tls13
+        else {
+            return nil
+        }
+        let issuing = CertificateName(text: "CN=Example Issuing CA,O=Example Trust Services", isTruncated: false)
+        let root = CertificateName(text: "CN=Example Root CA,O=Example Trust Services", isTruncated: false)
+        let day: TimeInterval = 86_400
+        return .chain(
+            ServerCertificateChain(
+                certificates: [
+                    ServerCertificate(
+                        subject: CertificateName(text: "CN=\(sni ?? "example.com")", isTruncated: false),
+                        issuer: issuing,
+                        notAfter: endingAt.addingTimeInterval(90 * day)
+                    ),
+                    ServerCertificate(subject: issuing, issuer: root, notAfter: endingAt.addingTimeInterval(1_095 * day)),
+                ],
+                isComplete: true
+            )
         )
     }
 }
@@ -632,6 +741,9 @@ private struct FixtureBuilder {
             tlsStatus: script.tlsStatus,
             quic: script.quic,
             clientTLS: script.clientTLS,
+            serverTLS: script.serverTLS,
+            serverCertificates: script.serverCertificates(endingAt: spec.endingAt),
+            streamOpening: script.streamOpening,
             packets: packets,
             plaintext: Self.conversation(
                 script.conversation, host: script.sni ?? "example.com", within: timestamps
@@ -948,8 +1060,9 @@ extension FixtureBuilder {
             // Los cuatro estados de inspección, que son la columna vertebral de la Timeline.
             FlowScript(sni: "plain.example.org", proto: .tcp, version: .v4, remotePort: 80,
                        tlsStatus: .plaintext, packetCount: 14),
+            // El cifrado corriente, y en TLS 1.2: es el flujo cuyo certificado se llegó a leer.
             FlowScript(sni: "www.example.com", proto: .tcp, version: .v4, remotePort: 443,
-                       tlsStatus: .encrypted, packetCount: 22),
+                       tlsStatus: .encrypted, packetCount: 22, negotiated: .tls12),
             FlowScript(sni: "api.example.com", proto: .tcp, version: .v4, remotePort: 443,
                        tlsStatus: .inspected, packetCount: 30, conversation: .httpExchange),
             // El segundo inspeccionado, y existe por la pantalla del contenido: es el que enseña un
@@ -998,9 +1111,10 @@ extension FixtureBuilder {
                        tlsStatus: .plaintext, packetCount: 3),
 
             // Cortado en seco, y sin un solo byte guardado: las dos cosas que dejan a la pantalla de
-            // un paquete sin nada que enseñar.
+            // un paquete sin nada que enseñar. El cortado es además el servidor antiguo: TLS 1.0,
+            // por debajo del mínimo, que es el único hallazgo de versión de toda la captura.
             FlowScript(sni: "reset.example.org", proto: .tcp, version: .v4, remotePort: 443,
-                       tlsStatus: .encrypted, packetCount: 11, endsWithReset: true),
+                       tlsStatus: .encrypted, packetCount: 11, endsWithReset: true, negotiated: .tls10),
             FlowScript(sni: "uncaptured.example.org", proto: .tcp, version: .v4, remotePort: 443,
                        tlsStatus: .encrypted, packetCount: 12, capturesNothing: true),
 

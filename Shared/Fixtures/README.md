@@ -37,6 +37,18 @@ query→reply pairs, one for each reading a reply can have (addresses, a name, r
 broken down, and a name that does not exist), by hand for the same reason the flow catalogue is by
 hand: a state that depends on the seed cannot be asserted in a test or promised in a screenshot.
 
+**Every TCP flow carries what a device would have read from its opening** (2026-10-13): whether the
+stream began with an HTTP request or a TLS handshake and, for a handshake, both halves of it — what
+the client offered and what the server chose, with the source of that reading following who
+terminated the flow (the connection's own ServerHello when it passes through, the tunnel's upstream
+connection when it was inspected or the app refused the local certificate). All of it is derived
+from what the script already is, so no flow can state a handshake its inspection status contradicts.
+Two scripted flows exist for the readings an audit tells apart: `www.example.com` negotiates
+TLS 1.2, the only accepted version whose certificate travels in the clear, and carries a chain;
+`reset.example.org` ends at TLS 1.0 from a client that named only its ceiling — the one TLS-version
+finding in the whole capture. The seeded certificates expire after the capture ends, so a sample
+redone another day does not show an expiry nobody decided to show.
+
 **The QUIC flows are noise too, and that is a limit worth knowing.** A UDP flow to port 443 is
 seeded with what the extension would have read from its opening packets — the QUIC version, and
 since 2026-10-13 the host name and the offer of its ClientHello (TLS 1.3 and `h3`, the only thing a
