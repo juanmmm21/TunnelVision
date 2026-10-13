@@ -1494,7 +1494,7 @@ the same fact.
 
 It is **not a banner**. None of its cases asks anything of the reader — encrypted DNS is the device's
 choice, not a failure — so `dnsNamingNote(for:)` is the footer of its own section, *Names from
-lookups*, which sits after the announced names (*Names*, then *Names from QUIC*) and, unlike *Names*,
+lookups*, which sits after the announced names (*Names from TCP*, then *Names from QUIC*) and, unlike *Names from TCP*,
 is present when the relay did not answer: the counters are the pipeline's. The sentence carries no figures; they
 are in the rows above it. `.noTraffic` has no sentence. The section has five rows, all plain readings:
 the six reasons a readable reply teaches nothing are **added up in one row**, because apart they are
@@ -1528,7 +1528,7 @@ start. `QUICNameStats.flowsNotRead` is the sum of the three ways of not reaching
 (`unreadableClientHello`, `cryptoStreamAbandoned`, `initialsExhausted`), kept apart from
 `withoutServerName` because that split is what the counters exist for.
 
-It is a footer too (`quicNamingNote(for:)`), under *Names from QUIC*, which sits between *Names* and
+It is a footer too (`quicNamingNote(for:)`), under *Names from QUIC*, which sits between *Names from TCP* and
 *Names from lookups* so that everything announced is above everything asked for. No case asks
 anything of the reader: an unnamed QUIC flow is forwarded untouched
 ([ADR 0006](../decisions/0006-udp-quic-passthrough.md)) and keeps whatever name DNS gave it, and
@@ -1602,5 +1602,5 @@ sentence and every other verdict says something different; that the normal case 
 the opening packets; that every unnamed case says what the connections keep; that the sentence never
 repeats a figure of its rows; the seven rows in order, with the ways of not reading added up apart
 from the ones without a name; that nothing is marked as a fault; that the section is there without
-the relay and follows *Names* with it; and that the seeded counters fit inside the seeded UDP flows
+the relay and follows *Names from TCP* with it; and that the seeded counters fit inside the seeded UDP flows
 that are not lookups.

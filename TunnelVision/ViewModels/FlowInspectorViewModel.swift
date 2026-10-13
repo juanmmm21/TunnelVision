@@ -157,6 +157,9 @@ public final class FlowInspectorViewModel {
     /// La salvedad de una dirección compartida por varios nombres, o `nil` si no aplica.
     public var sharedAddressNote: String? { FlowInspectorPresentation.sharedAddressNote(for: flow) }
 
+    /// Lo que se leyó de su handshake, o `nil` si no negoció nada que se viera.
+    public var handshake: FlowHandshakeSection? { FlowHandshakePresentation.section(for: flow) }
+
     public var content: FlowInspectorContent {
         FlowInspectorPresentation.content(state: state, rows: rows)
     }

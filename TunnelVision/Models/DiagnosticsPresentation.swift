@@ -1246,8 +1246,12 @@ public enum DiagnosticsPresentation {
             id: "names",
             title: String(
                 localized: "diagnostics.section.names",
-                defaultValue: "Names",
-                comment: "Section title for how many connections announced the host they called."
+                defaultValue: "Names from TCP",
+                comment: """
+                    Section title for how many TCP connections announced the host they called in \
+                    their TLS handshake. Named after the transport because the section below it \
+                    counts the same thing for QUIC connections.
+                    """
             ),
             rows: [
                 DiagnosticsRow.reading(

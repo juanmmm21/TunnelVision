@@ -42,6 +42,17 @@ struct FlowInspectorView: View {
             }
             .listRowBackground(Color(.surface))
 
+            // Justo debajo de la cabecera: la insignia de arriba dice **si** iba cifrado y esto
+            // dice **cómo**, y las dos cosas se leen seguidas. Solo existe cuando hay algo leído.
+            if let handshake = viewModel.handshake {
+                Section {
+                    self.handshake(handshake)
+                } header: {
+                    SectionHeader(FlowHandshakePresentation.sectionTitle)
+                }
+                .listRowBackground(Color(.surface))
+            }
+
             // Va pegada al bloque del cifrado y por encima de los paquetes: lo que se pudo ver del
             // contenido solo se entiende debajo de la explicación de si iba cifrado, y es lo que le da
             // sentido a todo lo de abajo.
@@ -154,6 +165,22 @@ struct FlowInspectorView: View {
             // Debajo de la rejilla y no dentro: es una salvedad sobre el nombre, no un dato más, y
             // su largo no lo decide nadie (`FlowInspectorPresentation.sharedAddressNote`).
             if let note = viewModel.sharedAddressNote {
+                Text(note)
+                    .font(.supporting)
+                    .foregroundStyle(Color(.neutral))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, Spacing.tight)
+    }
+
+    /// La misma forma que la cabecera —rejilla en pares y las salvedades debajo, fuera de ella—
+    /// porque es la misma clase de cosa: datos de la conexión y lo que hay que saber para leerlos.
+    private func handshake(_ section: FlowHandshakeSection) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.row) {
+            FactGrid(facts: section.facts, layout: .pairs)
+
+            ForEach(section.notes, id: \.self) { note in
                 Text(note)
                     .font(.supporting)
                     .foregroundStyle(Color(.neutral))

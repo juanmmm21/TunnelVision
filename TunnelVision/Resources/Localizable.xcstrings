@@ -5246,13 +5246,13 @@
       }
     },
     "diagnostics.section.names" : {
-      "comment" : "Section title for how many connections announced the host they called.",
+      "comment" : "Section title for how many TCP connections announced the host they called in their TLS handshake. Named after the transport because the section below it counts the same thing for QUIC connections.",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Names"
+            "value" : "Names from TCP"
           }
         }
       }
@@ -6033,6 +6033,342 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Try again"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.fact.certificate" : {
+      "comment" : "Label of the subject of the certificate a server presented for a connection, next to a value like 'CN=www.example.com'.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Certificate"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.fact.expires" : {
+      "comment" : "Label of the date a server's certificate stops being valid, next to that date.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Expires"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.fact.offered" : {
+      "comment" : "Label of the TLS versions the app said it would accept when it opened a connection, next to a value like 'TLS 1.3, TLS 1.2'.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "App offered"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.fact.protocols" : {
+      "comment" : "Label of the application protocols (ALPN) the app offered when it opened a connection, next to a value like 'h2, http/1.1'.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Protocols offered"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.fact.quicVersion" : {
+      "comment" : "Label of the QUIC version of a connection, next to a value like 'Version 1'.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "QUIC version"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.fact.readFrom" : {
+      "comment" : "Label, in a connection's encryption facts, of where the version beside it was read: the server's own answer, the tunnel's connection, or one side's packets.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Read from"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.fact.tlsVersion" : {
+      "comment" : "Label of the TLS version the server chose for a connection, next to a value like 'TLS 1.3'.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "TLS version"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.note.answerNotRead" : {
+      "comment" : "Caveat under a connection's encryption facts when only the app's offer was read and the server's reply was not.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The server's answer was not read, so the version the two agreed on is not known."
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.note.certificate" : {
+      "comment" : "Caveat under a connection's encryption facts when the server's certificate was read. The placeholder is the issuer's name as written in the certificate ('CN=Example CA').",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Issued by %@. Shown as the server presented it; nothing about it was validated."
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.note.certificateAbsent" : {
+      "comment" : "Caveat under a connection's encryption facts when the handshake was read and had no certificate message.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The server's handshake carried no certificate."
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.note.certificateEncrypted" : {
+      "comment" : "Caveat under a connection's encryption facts for a TLS 1.3 connection: its certificate is never visible on the wire.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "TLS 1.3 sends the server's certificate encrypted, so it was not seen."
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.note.certificateReplaced" : {
+      "comment" : "Caveat under a connection's encryption facts when TunnelVision terminated the connection: the app was shown the local inspection certificate.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The certificate the app received was TunnelVision's own; the server's is not recorded."
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.note.certificateResumed" : {
+      "comment" : "Caveat under a connection's encryption facts when TLS session resumption meant no certificate was sent.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The server sent no certificate: the connection resumed an earlier session."
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.note.encryptedClientHello" : {
+      "comment" : "Caveat under a connection's encryption facts when the app's ClientHello carried the Encrypted Client Hello extension: the offer read may not be the real one.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The app's handshake carried an encrypted part. What is shown is the outer offer; the real one may be inside it and differ."
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.note.quic" : {
+      "comment" : "Caveat under a connection's encryption facts for a QUIC connection whose version the server confirmed: QUIC versions 1 and 2 always use TLS 1.3.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This QUIC version encrypts every packet with TLS 1.3. Its server's answer and certificate travel encrypted and are never read."
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.note.quicProposed" : {
+      "comment" : "Caveat under a connection's encryption facts for a QUIC connection whose version was read only from the app's packets.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This is the version the app proposed. No packet from the server was read, so the version actually in use is not known."
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.note.quicUnknown" : {
+      "comment" : "Caveat under a connection's encryption facts when its QUIC version is not one of the two standard ones: nothing is claimed about its encryption.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "TunnelVision does not know this QUIC version, so it states nothing about how it encrypts."
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.note.upstream" : {
+      "comment" : "Caveat under a connection's encryption facts when TunnelVision terminated the connection (to inspect it, or the app refused its certificate): the TLS version shown belongs to the tunnel's own connection to the server.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The version is what the server negotiated with the connection TunnelVision opened to it, not with the app. What the app would have negotiated on its own was not seen."
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.offer.none" : {
+      "comment" : "Value of 'App offered' or 'Protocols offered' when the app's handshake carried none: a statement of what was read, not a missing reading.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "None"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.offer.upTo" : {
+      "comment" : "Value of a connection's 'App offered' fact when the app's handshake named only the highest TLS version it accepts. The placeholder is that version, like 'TLS 1.2'. It must read as a ceiling, never as a list of one.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Up to %@"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.quic.v1" : {
+      "comment" : "Value of a connection's 'QUIC version' fact: QUIC version 1 (RFC 9000).",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Version 1"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.quic.v2" : {
+      "comment" : "Value of a connection's 'QUIC version' fact: QUIC version 2 (RFC 9369).",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Version 2"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.source.quicClient" : {
+      "comment" : "Value of a connection's 'Read from' fact when its QUIC version was read only from packets the app sent: it is the version proposed, and the server may not have accepted it.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "App's packets"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.source.quicServer" : {
+      "comment" : "Value of a connection's 'Read from' fact when its QUIC version was read from a packet the server sent: it is the version in use.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Server's packets"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.source.server" : {
+      "comment" : "Value of a connection's 'Read from' fact when the TLS version shown was read from the server's own reply to the app's handshake.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Server's answer"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.source.tunnel" : {
+      "comment" : "Value of a connection's 'Read from' fact when the TLS version shown is the one the server negotiated with the connection TunnelVision itself opened to inspect the traffic, not with the app. Must fit half a screen's width.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Tunnel's connection"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.title" : {
+      "comment" : "Heading of the section of a connection's screen that lists what was read from its TLS or QUIC handshake: the version, what the app offered, the certificate.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "How it was encrypted"
+          }
+        }
+      }
+    },
+    "flowInspector.handshake.version.refused" : {
+      "comment" : "Value of a connection's 'TLS version' fact when the server answered the handshake with an alert instead of negotiating. The placeholder is the TLS alert code, a number from 0 to 255.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Refused (alert %@)"
           }
         }
       }
