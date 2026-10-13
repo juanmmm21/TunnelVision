@@ -21,7 +21,8 @@ Two properties everything else rests on:
   `SystemRandomNumberGenerator` is not reproducible.
 - **Covering by construction, not by luck.** The catalogue of scripted flows is written by hand so
   that each screen state that exists is reachable: the four inspection states, the five protocols,
-  both address families, a flow with no SNI, a hostname that will not fit a line, a connection cut
+  both address families, a flow with no SNI, a QUIC flow that announces its name and one named only
+  by DNS, a hostname that will not fit a line, a connection cut
   by a reset, packets whose bytes were never written, and one flow above the Flow Inspector's packet
   limit. Bulk flows on top of that only make the list long enough to paginate.
 
@@ -35,6 +36,15 @@ they say, so `FixtureLookups` writes **real DNS messages** with `DNSMessageFixtu
 query→reply pairs, one for each reading a reply can have (addresses, a name, records that are not
 broken down, and a name that does not exist), by hand for the same reason the flow catalogue is by
 hand: a state that depends on the seed cannot be asserted in a test or promised in a screenshot.
+
+**The QUIC flows are noise too, and that is a limit worth knowing.** A UDP flow to port 443 is
+seeded with what the extension would have read from its opening packets — the QUIC version, and
+since 2026-10-13 the host name and the offer of its ClientHello (TLS 1.3 and `h3`, the only thing a
+client can offer inside QUIC) — but its datagrams are not Initial packets: the record states the
+reading, the bytes do not carry it. Every bulk QUIC flow announces its name and keeps the one DNS
+had given its address, which is the ordinary case; the scripted `quic.example.com` announces none,
+as a connection already open when the tunnel started would not, and is the one whose name is
+inferred from DNS, with two other candidates for its address.
 
 ## Writing it down
 

@@ -902,10 +902,6 @@ Initial packets, its ClientHello, and nothing else.
 
 ### What is not here
 
-- **A named QUIC flow in the seeded capture.** The audit checks and the bundle are held by tests
-  with one in front ([`audit.md`](audit.md)), and *Session diagnostics* has a section and a verdict
-  for these counters ([`app-services.md`](app-services.md) § *The fourth verdict*); `CaptureFixture`
-  still seeds its UDP/443 flows with a resolved name only.
 - **A capture from an iPhone.** The two clients were captured on a Mac. Apple's stack is the same
   one iOS uses; Safari and Chrome for iOS have not gone through this.
 - **Connection migration and QUIC on other ports**, for the reasons the version reading gives.

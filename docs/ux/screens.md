@@ -197,10 +197,13 @@ not, because a row that leads nowhere is worse than a row that does not invite t
 from one pure function, `TimelinePresentation.content`, whose first rule is that a list already drawn
 is never covered — a failure while paginating goes to the footer instead.
 
-**A row named from DNS (2026-10-05).** A connection that announced no host — QUIC, mostly — is
-headed by the name the device had looked up for its address, and its second line adds that address
-after the service (*UDP · port 443 · 203.0.113.100*). The address is the distinction: an announced
-name is the connection's own and needs nothing beside it, an inferred one is the name *of an address*.
+**A row named from DNS (2026-10-05).** A connection that announced no host is headed by the name
+the device had looked up for its address, and its second line adds that address after the service
+(*UDP · port 443 · 203.0.113.100*). The address is the distinction: an announced name is the
+connection's own and needs nothing beside it, an inferred one is the name *of an address*. When this
+was written that was every QUIC connection; since 2026-10-12 the tunnel reads the host out of their
+opening packets, so a QUIC row is an ordinary announced one and this row is what is left — a
+connection whose opening was not read.
 Measured on the Simulator with the longest case the fixture has (IPv6): one line at the default text
 size, stacked and wrapped at AX5. The search field finds a connection by its name, by the other names
 its address had, and by the address.
