@@ -21,7 +21,12 @@ import time
 
 BUNDLE_ID = "com.juanmmm21.tunnelvision"
 
-# Las cuatro pestañas, en su orden. Dónde cae cada una se calcula sobre el ancho de la barra: es el
+# El proyecto de auditoría que siembra `-TVSeedFixture` (`AuditFixture.projectName`).
+AUDIT_PROJECT = "Example Health"
+AUDITED_VERSION = "Version 2.4.0"
+PREVIOUS_VERSION = "Version 2.3.1"
+
+# Las cinco pestañas, en su orden. Dónde cae cada una se calcula sobre el ancho de la barra: es el
 # reparto de un `TabView`, y así el guion vale igual en un 6,3" que en un 6,9".
 TABS = ["dashboard", "timeline", "captures", "audit", "settings"]
 
@@ -275,6 +280,11 @@ def capture(sim: Simulator, out: pathlib.Path) -> None:
     search(sim, "api.example.com")
     sim.tap_label("api.example.com", settle=2.5)
     sim.shot(out / "03-flow-inspector.png")
+    # La fila de la conversación cae bajo la barra de pestañas desde que la ficha dice cómo se
+    # cifró la conexión: sin traerla al alcance, el toque se lo lleva la barra. Un arrastre
+    # corto y lento, no `scroll_to`: el suyo lanza la lista, y la fila —a un tercio de pantalla
+    # de su sitio— pasa de largo por arriba.
+    sim.swipe(middle, 620, middle, 420, duration=0.8, settle=1.2)
     sim.tap_label("66 KB saved", settle=2.5)
     sim.shot(out / "04-conversation.png")
     back(sim)   # de la conversación al Flow Inspector
@@ -294,24 +304,46 @@ def capture(sim: Simulator, out: pathlib.Path) -> None:
     sim.tab("captures")
     sim.shot(out / "06-captures.png")
 
+    print("  auditoría")
+    sim.tab("audit")
+    sim.shot(out / "07-audit.png")
+    sim.tap_label(AUDIT_PROJECT, settle=2.5)
+    sim.shot(out / "08-audit-project.png")
+    # La sesión de auditoría se llama por su versión y build. Se nombra la versión entera: el
+    # proyecto sembrado lleva dos, la que se audita y la anterior con la que se compara.
+    sim.tap_label(AUDITED_VERSION, exact=False, settle=2.5)
+    sim.shot(out / "09-audit-session.png")
+    # Exportar escribe el paquete antes de abrir su hoja: con la captura sembrada tarda un par de
+    # segundos, y fotografiar antes retrataría la fila con su indicador de progreso.
+    sim.tap_label("Export evidence", settle=6)
+    sim.shot(out / "10-evidence-bundle.png")
+    sim.tap_label("Done", settle=2)
+    # La comparación con la versión anterior: su fila está en la propia sesión, bajo el paquete.
+    sim.tap_label(PREVIOUS_VERSION, exact=False, settle=3)
+    sim.shot(out / "11-audit-comparison.png")
+    back(sim)   # de la comparación a la sesión
+    # Solo hasta el proyecto: su barra no publica el botón de volver en el árbol, y la pestaña
+    # siguiente se alcanza igual desde aquí.
+    back(sim)
+
     print("  ajustes y diagnóstico")
     sim.tab("settings")
-    sim.shot(out / "07-settings.png")
+    sim.shot(out / "12-settings.png")
     sim.scroll_to("Session diagnostics", exact=False, band=(200, 600))
     sim.tap_label("Session diagnostics", settle=3)
-    sim.shot(out / "08-session-diagnostics.png")
+    sim.shot(out / "13-session-diagnostics.png")
     back(sim)
 
     print("  flujo de la CA")
     reset_certificate(sim)
     sim.scroll_to("Set up secure traffic inspection", band=(200, 600))
     sim.tap_label("Set up secure traffic inspection", settle=2.5)
-    sim.shot(out / "09-certificate-setup.png")
+    sim.shot(out / "14-certificate-setup.png")
     # El flujo tiene tres etapas y la del medio —un titular y un botón— no cuenta nada que la
     # primera no diga ya, así que se atraviesa sin fotografiarla.
     sim.tap_label("Continue", settle=2.5)
     sim.tap_label("Create certificate", settle=3.5)
-    sim.shot(out / "10-certificate-install.png")
+    sim.shot(out / "15-certificate-install.png")
 
 
 def main() -> int:

@@ -1,7 +1,11 @@
 # Tools/Screenshots — las fotos, tomadas conduciendo la app
 
-`capture.py` escribe las veinte capturas de [`../../docs/screenshots`](../../docs/screenshots)
-recorriendo la app en el Simulator: instala, siembra, va pantalla por pantalla y fotografía.
+`capture.py` escribe las capturas de las que salen las de [`../../docs/screenshots`](../../docs/screenshots)
+—quince pantallas en cada apariencia— recorriendo la app en el Simulator: instala, siembra, va
+pantalla por pantalla y fotografía. Desde el 2026-10-13 el recorrido entra también en la pestaña
+*Audit*: la lista de proyectos, el proyecto sembrado, su sesión de auditoría, la hoja del paquete
+de evidencia —que se fotografía **después** de exportar porque la hoja dice lo que se escribió— y
+la comparación con la versión anterior.
 
 ```bash
 python3 Tools/Screenshots/capture.py \
