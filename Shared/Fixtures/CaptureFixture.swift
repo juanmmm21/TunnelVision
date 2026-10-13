@@ -175,6 +175,11 @@ public struct FixtureFlow: Sendable, Equatable {
     /// 443 esté `encrypted`: sin ella la extensión lo deja como nace, `plaintext`.
     public let quic: QUICVersionReading?
 
+    /// Lo que el cliente ofreció en su ClientHello, o `nil` si no se leyó ninguno. Hoy solo lo
+    /// llevan los flujos QUIC que anuncian nombre: en ellos el nombre y la oferta salen del mismo
+    /// mensaje, así que un flujo con uno y sin la otra sería un estado que la extensión no produce.
+    public let clientTLS: ClientTLSOffer?
+
     /// En orden temporal ascendente.
     public let packets: [FixturePacket]
 
@@ -189,6 +194,7 @@ public struct FixtureFlow: Sendable, Equatable {
         resolvedName: ResolvedFlowName?,
         tlsStatus: TLSInspectionStatus,
         quic: QUICVersionReading?,
+        clientTLS: ClientTLSOffer?,
         packets: [FixturePacket],
         plaintext: [FixturePlaintextChunk] = []
     ) {
@@ -209,11 +215,16 @@ public struct FixtureFlow: Sendable, Equatable {
             plaintext.isEmpty || tlsStatus == .inspected,
             "solo un flujo inspeccionado pudo dejar contenido descifrado"
         )
+        precondition(
+            quic == nil || (sni == nil) == (clientTLS == nil),
+            "en un flujo QUIC el nombre anunciado y la oferta salen del mismo ClientHello: van los dos o ninguno"
+        )
         self.key = key
         self.sni = sni
         self.resolvedName = resolvedName
         self.tlsStatus = tlsStatus
         self.quic = quic
+        self.clientTLS = clientTLS
         self.packets = packets
         self.plaintext = plaintext
     }
@@ -242,7 +253,7 @@ public struct FixtureFlow: Sendable, Equatable {
             resolvedName: resolvedName,
             serverTLS: nil,
             serverCertificates: nil,
-            clientTLS: nil,
+            clientTLS: clientTLS,
             quic: quic,
             streamOpening: nil
         )
@@ -394,8 +405,9 @@ enum FixtureLookups {
 /// pantallas pueden enseñar y que un sorteo solo cubriría por suerte.
 private struct FlowScript {
     let sni: String?
-    /// El nombre deducido del DNS. Los guiones lo llevan **en vez** del SNI y no además: es el caso
-    /// de un flujo que no anuncia a quién llama, que es donde este nombre se ve.
+    /// El nombre deducido del DNS. Donde se **ve** es en un flujo sin SNI; un flujo QUIC que anuncia
+    /// el suyo lo lleva además, porque el dispositivo preguntó por él antes de conectar y la
+    /// extensión guarda los dos, cada uno en su columna.
     var resolvedName: ResolvedFlowName?
     let proto: IPProtocolNumber
     let version: IPVersion
@@ -420,6 +432,20 @@ private struct FlowScript {
     /// contra el 443 es QUIC, y lleva la versión que contesta el servidor.
     var quic: QUICVersionReading? {
         proto == .udp && remotePort == 443 ? QUICVersionReading(version: .v1, source: .server) : nil
+    }
+
+    /// La oferta del ClientHello que la extensión habría leído de sus paquetes Initial: la que
+    /// manda un cliente de HTTP/3, que dentro de QUIC no puede ofrecer menos que TLS 1.3
+    /// (RFC 9001 § 4.2). **Se deriva** de que el flujo sea QUIC y anuncie nombre en vez de
+    /// escribirse en cada guion: el nombre y la oferta salen del mismo mensaje.
+    var clientTLS: ClientTLSOffer? {
+        guard quic != nil, sni != nil else { return nil }
+        return ClientTLSOffer(
+            versions: .listed([.tls13]),
+            applicationProtocols: ["h3"],
+            omittedApplicationProtocols: 0,
+            hasEncryptedClientHello: false
+        )
     }
 }
 
@@ -605,6 +631,7 @@ private struct FixtureBuilder {
             resolvedName: script.resolvedName,
             tlsStatus: script.tlsStatus,
             quic: script.quic,
+            clientTLS: script.clientTLS,
             packets: packets,
             plaintext: Self.conversation(
                 script.conversation, host: script.sni ?? "example.com", within: timestamps
@@ -936,9 +963,12 @@ extension FixtureBuilder {
                        tlsStatus: .notInspectable, packetCount: 8),
 
             // QUIC sobre IPv6 y DNS en claro: UDP por los dos lados de su rango de tamaños. El de
-            // QUIC **no tiene SNI** —su ClientHello va dentro del paquete Initial, donde nadie lo
-            // lee— y se llama como el DNS llamó a su dirección, que además comparte con otros dos
-            // nombres: es la fila con el segundo renglón más largo que la lista tiene que encajar.
+            // QUIC es **el que no anuncia nombre**: la extensión lee el ClientHello de los paquetes
+            // Initial, y este es el flujo cuyo arranque no vio —el túnel se encendió con la conexión
+            // ya abierta—, que es lo que los de relleno no enseñan. Se llama como el DNS llamó a su
+            // dirección, que además comparte con otros dos nombres: es la fila con el segundo
+            // renglón más largo que la lista tiene que encajar, y la única conexión cuya ficha
+            // enseña los otros candidatos.
             FlowScript(sni: nil,
                        resolvedName: ResolvedFlowName(
                            name: "quic.example.com",
@@ -993,8 +1023,10 @@ extension FixtureBuilder {
         let statuses: [TLSInspectionStatus] = [.encrypted, .encrypted, .encrypted, .inspected, .plaintext]
 
         return FlowScript(
-            // Lo que va por UDP es QUIC, que no anuncia host: su nombre es el del DNS.
-            sni: isUDP ? nil : host,
+            // Lo que va por UDP es QUIC, y anuncia su host como cualquier TLS: va en el ClientHello
+            // de sus paquetes Initial, que la extensión abre. Lleva además el nombre que el DNS
+            // había dado a su dirección —el mismo, y sin competencia—, que es lo corriente.
+            sni: host,
             resolvedName: isUDP ? ResolvedFlowName(name: host, otherNames: []) : nil,
             proto: isUDP ? .udp : .tcp,
             version: isV6 ? .v6 : .v4,
