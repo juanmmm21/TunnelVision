@@ -20,9 +20,9 @@ import Foundation
 ///
 /// Retrata **una sesión que funciona**: el túnel reenvía, resuelve nombres y descifra. Lo que no es
 /// perfecto en ella tampoco es una avería inventada, sino lo que un iPhone de verdad produce — hosts
-/// que rechazan el certificado (ADR 0003: eso es el producto cumpliendo lo que promete), flujos sin
-/// nombre porque hablan QUIC, y un fallo de captura que es justo el caso por el que esta pantalla
-/// tiene una sección de errores.
+/// que rechazan el certificado (ADR 0003: eso es el producto cumpliendo lo que promete), unos pocos
+/// flujos QUIC a los que no se les leyó el nombre, y un fallo de captura que es justo el caso por el
+/// que esta pantalla tiene una sección de errores.
 public enum TunnelStatsFixture {
 
     /// Los DNS anunciados. Documentación reservada (RFC 5737 y RFC 3849) como el resto de las
@@ -67,8 +67,9 @@ public enum TunnelStatsFixture {
         stats.tcpBytesToServer = 3_842_115
         stats.tcpResetsToDevice = 21
 
-        // Dos de cada tres flujos hacia el 443 se quedan sin nombre, que es lo que se midió en el
-        // iPhone: la mayoría del tráfico de 2026 es QUIC y su ClientHello va dentro del Initial.
+        // 214 + 122 = 336, los flujos TCP abiertos: este par es **solo de TCP**. Los que se quedan
+        // sin nombre son streams hacia el 443 sin extensión SNI o que no eran un handshake de TLS;
+        // los flujos QUIC se cuentan aparte, en `quicNames` del pipeline.
         stats.sniObserved = 214
         stats.sniUnavailable = 122
 
@@ -122,6 +123,20 @@ public enum TunnelStatsFixture {
         // De los 1620 flujos, 412 son las propias consultas; de los demás, la mayoría va a una
         // dirección que se acababa de resolver.
         stats.dnsNames.flowsNamed = 1_038
+
+        // De los 1284 flujos UDP, 412 son consultas de DNS; de los 872 restantes, 612 mandaron un
+        // Initial de QUIC al 443: 596 + 9 + 2 + 1 + 4. Dos Initial por flujo es lo que se midió en
+        // los dos clientes de verdad (la pila de Apple y Chrome), y 3 de ellos pasaron por un Retry.
+        stats.quicNames.flowsNamed = 596
+        stats.quicNames.withoutServerName = 9
+        stats.quicNames.unreadableClientHello = 2
+        stats.quicNames.cryptoStreamAbandoned = 1
+        stats.quicNames.initialsExhausted = 4
+        stats.quicNames.initialsOpened = 1_236
+        stats.quicNames.initialsNotOpened = 31
+        stats.quicNames.readsRestarted = 3
+        // El cupo de lecturas simultáneas no se llenó: 64 a la vez sobra para un teléfono.
+        stats.quicNames.initialsSkippedAtCapacity = 0
 
         // El texto de un `NSError` de verdad, con sus comillas tipográficas y su nombre de fichero:
         // es copia del sistema y no nuestra, y esta pantalla existe en parte para poder citarlo.

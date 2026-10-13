@@ -92,10 +92,11 @@ when the argument is present; the view model learns one thing from it, that the 
 Its numbers are hand-written constants rather than a generator, and that is what makes them useful:
 each has to be believable **and** consistent with the others — decrypted, pinned and failed add up to
 the terminations opened, those plus the abandons and the skips add up to the candidates, and the
-outcomes of the name map (`dnsNames`) add up to the DNS replies the relay received — because
-a table whose figures do not agree with each other is no good for judging how they read. It portrays
-a session that works, and what is imperfect in it is not invented either: hosts that refuse the
-certificate (ADR 0003), flows with no name because they speak QUIC, and one capture failure, which is
-the case the screen's error section exists for.
+outcomes of the name map (`dnsNames`) add up to the DNS replies the relay received, and the QUIC
+flows that were read (`quicNames`) fit inside the UDP flows that are not lookups, at two Initials a
+flow — because a table whose figures do not agree with each other is no good for judging how they
+read. It portrays a session that works, and what is imperfect in it is not invented either: hosts
+that refuse the certificate (ADR 0003), a handful of QUIC flows whose name was not read, and one
+capture failure, which is the case the screen's error section exists for.
 
 **Milestone:** M11
