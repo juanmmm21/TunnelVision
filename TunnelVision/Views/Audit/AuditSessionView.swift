@@ -51,6 +51,7 @@ struct AuditSessionView: View {
                 addMarkerSection(display)
             } else {
                 evidenceSection(display)
+                comparisonSection(display)
             }
             markersSection(display)
             pinningSection(display)
@@ -175,6 +176,29 @@ struct AuditSessionView: View {
         }
         .disabled(viewModel.isWorking)
         .listRowBackground(Color(.surface))
+    }
+
+    /// Con qué otra versión se puede comparar esta. Solo existe cuando hay con cuál: una sección
+    /// con su título y un «no hay ninguna» ocuparía sitio en la primera sesión de cada proyecto,
+    /// que es donde menos falta hace.
+    @ViewBuilder
+    private func comparisonSection(_ display: AuditSessionDisplay) -> some View {
+        let candidates = viewModel.comparisonCandidates(forSession: display.id)
+        if !candidates.isEmpty {
+            Section {
+                ForEach(candidates) { candidate in
+                    NavigationLink(value: AuditRoute.comparison(session: display.id, other: candidate.id)) {
+                        Text(candidate.title)
+                            .font(.cardBody)
+                    }
+                }
+            } header: {
+                SectionHeader(ReleaseComparisonPresentation.sectionTitle)
+            } footer: {
+                AuditSectionFooter(ReleaseComparisonPresentation.sectionFooter)
+            }
+            .listRowBackground(Color(.surface))
+        }
     }
 
     /// El paquete de evidencia. Ocupa el sitio de *Mark now* cuando la sesión ya está cerrada, por

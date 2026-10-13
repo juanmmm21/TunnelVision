@@ -61,6 +61,246 @@
         }
       }
     },
+    "audit.comparison.caveat.undetermined" : {
+      "comment" : "Caveat on a comparison between two audit sessions. The placeholder is an already-formatted count of domains that were only candidates for an address several names share. Worded so that the count needs no plural.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Domains that appear in a session only as another name of a shared address are in neither list, because whether they were contacted is not known: %@."
+          }
+        }
+      }
+    },
+    "audit.comparison.caveat.unnamed" : {
+      "comment" : "Caveat on a comparison between two audit sessions. Placeholders are already-formatted counts of connections that had no host name, later session first.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Connections without a name are in none of these lists: %1$@ in the later session and %2$@ in the earlier one. A new destination among them would not show here."
+          }
+        }
+      }
+    },
+    "audit.comparison.count.inBoth" : {
+      "comment" : "Label of how many domains two compared audit sessions both contacted, next to a number.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "In both"
+          }
+        }
+      }
+    },
+    "audit.comparison.direction" : {
+      "comment" : "Sentence under the summary of a comparison between two audit sessions. First placeholder is the name of the later session ('Version 2.4.0 (187)'), second the earlier one.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "What %1$@ contacted, against what %2$@ contacted. The later one is the session that started later, whatever its version number."
+          }
+        }
+      }
+    },
+    "audit.comparison.earlier" : {
+      "comment" : "Label of the earlier of two compared audit sessions, next to its name.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Earlier session"
+          }
+        }
+      }
+    },
+    "audit.comparison.failed.notComparable" : {
+      "comment" : "Shown when a comparison between two audit sessions cannot be made.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "These two sessions can no longer be compared. One of them may have been deleted."
+          }
+        }
+      }
+    },
+    "audit.comparison.gone" : {
+      "comment" : "Heading and count label for the domains the earlier of two compared sessions contacted and the later did not.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No longer contacted"
+          }
+        }
+      }
+    },
+    "audit.comparison.later" : {
+      "comment" : "Label of the later of two compared audit sessions, next to its name ('Version 2.4.0 (187)').",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Later session"
+          }
+        }
+      }
+    },
+    "audit.comparison.new" : {
+      "comment" : "Heading and count label for the domains the later of two compared sessions contacted and the earlier did not.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "New domains"
+          }
+        }
+      }
+    },
+    "audit.comparison.new.footer" : {
+      "comment" : "Footer under the list of new domains in a comparison between two audit sessions.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "A new domain is one the earlier session did not contact while it was recording. It is not attributed to the app: the tunnel sees packets, not apps."
+          }
+        }
+      }
+    },
+    "audit.comparison.new.none" : {
+      "comment" : "Shown instead of the list of new domains when there is none. 'Named' matters: connections without a name are not in this comparison.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No named domain is new in the later session."
+          }
+        }
+      }
+    },
+    "audit.comparison.section" : {
+      "comment" : "Heading, on an ended audit session's screen, of the list of the project's other sessions it can be compared with. Each row below is a session name.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Compare with"
+          }
+        }
+      }
+    },
+    "audit.comparison.section.footer" : {
+      "comment" : "Footer under the list of sessions an audit session can be compared with.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Shows the domains one version contacted and the other did not, and where the TLS version changed. A baseline is not compared: it observes no version."
+          }
+        }
+      }
+    },
+    "audit.comparison.standing.empty" : {
+      "comment" : "Second line of a domain in a comparison when the project lists no allowed domains at all.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The project has no allowlist"
+          }
+        }
+      }
+    },
+    "audit.comparison.standing.listed" : {
+      "comment" : "Second line of a domain in a comparison: the project's allowlist covers it.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "On the allowlist"
+          }
+        }
+      }
+    },
+    "audit.comparison.standing.unlisted" : {
+      "comment" : "Second line of a domain in a comparison: the project's allowlist does not cover it.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Not on the allowlist"
+          }
+        }
+      }
+    },
+    "audit.comparison.title" : {
+      "comment" : "Navigation title of the screen that compares two audit sessions of the same app.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Comparison"
+          }
+        }
+      }
+    },
+    "audit.comparison.tls" : {
+      "comment" : "Heading for the domains both compared sessions contacted, with a different TLS version in each.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "TLS version changed"
+          }
+        }
+      }
+    },
+    "audit.comparison.tls.app" : {
+      "comment" : "Second line of a domain whose TLS version differs between two audit sessions, read from the app's own connections. First placeholder is the version(s) in the later session ('TLS 1.2'), second in the earlier.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The app negotiated %1$@; earlier, %2$@."
+          }
+        }
+      }
+    },
+    "audit.comparison.tls.tunnel" : {
+      "comment" : "Second line of a domain whose TLS version differs between two audit sessions, when the reading comes from the connection TunnelVision opened to inspect the traffic. Placeholders as in the app's variant.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The server gave TunnelVision's own connection %1$@; earlier, %2$@. This is not what the app negotiated."
+          }
+        }
+      }
+    },
     "audit.control.status.idle" : {
       "comment" : "Status line of the Control Center control that places an audit marker, when no audit session is open: pressing it will record nothing.",
       "extractionState" : "extracted_with_value",

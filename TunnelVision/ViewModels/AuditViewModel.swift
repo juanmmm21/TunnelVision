@@ -49,6 +49,12 @@ public final class AuditViewModel {
     /// navegación solo enseña una; al entrar en otra se sustituye.
     public private(set) var sessionDisplay: AuditSessionDisplay?
 
+    // MARK: - La comparación entre dos sesiones
+
+    /// La comparación que la pantalla tiene abierta, con el par de sesiones al que pertenece: sin
+    /// el par, una comparación leída para otras dos se pintaría bajo este título.
+    public private(set) var comparison: (pair: Set<Int64>, state: ReleaseComparisonState)?
+
     // MARK: - El paquete de evidencia
 
     /// El paquete recién escrito, resumido para enseñarlo **antes** de compartirlo. Es estado del
@@ -239,6 +245,38 @@ public final class AuditViewModel {
             sessionDisplay = AuditPresentation.session(session, activity: activity)
         } catch {
             notice = AuditPresentation.refreshFailed(AuditLibraryError.classifying(error))
+        }
+    }
+
+    // MARK: - Comparar
+
+    /// Las sesiones con las que una se puede comparar, o ninguna si ella misma no es comparable.
+    public func comparisonCandidates(forSession id: Int64) -> [ReleaseComparisonCandidate] {
+        guard let project = overview.projects.first(where: { $0.sessions.contains { $0.id == id } }) else {
+            return []
+        }
+        return ReleaseComparisonPresentation.candidates(forSession: id, in: project)
+    }
+
+    /// El estado de la comparación entre estas dos sesiones: `loading` mientras no se haya leído
+    /// **esa**.
+    public func comparisonState(of id: Int64, with other: Int64) -> ReleaseComparisonState {
+        guard let comparison, comparison.pair == [id, other] else { return .loading }
+        return comparison.state
+    }
+
+    public func loadComparison(of id: Int64, with other: Int64) async {
+        let pair: Set<Int64> = [id, other]
+        if comparison?.pair != pair { comparison = (pair, .loading) }
+        guard let project = overview.projects.first(where: { $0.sessions.contains { $0.id == id } }) else {
+            comparison = (pair, .failed(ReleaseComparisonPresentation.failed(ReleaseComparisonError.sessionNotFound(id))))
+            return
+        }
+        do {
+            let diff = try await library.releaseDiff(between: id, and: other, inProject: project.id)
+            comparison = (pair, .loaded(ReleaseComparisonPresentation.display(of: diff)))
+        } catch {
+            comparison = (pair, .failed(ReleaseComparisonPresentation.failed(error)))
         }
     }
 

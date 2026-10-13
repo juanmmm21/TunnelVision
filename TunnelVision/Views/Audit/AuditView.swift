@@ -7,6 +7,9 @@ import SwiftUI
 enum AuditRoute: Hashable {
     case project(Int64)
     case session(Int64)
+    /// La sesión desde la que se compara y la otra. El orden es el del toque, no el del tiempo:
+    /// cuál es la anterior lo decide el modelo.
+    case comparison(session: Int64, other: Int64)
 }
 
 /// La pestaña de auditoría (`docs/ux/audit.md`): los proyectos, cuál está grabando, y la entrada a
@@ -44,6 +47,8 @@ struct AuditView: View {
                         AuditProjectView(viewModel: viewModel, projectID: id)
                     case .session(let id):
                         AuditSessionView(viewModel: viewModel, sessionID: id)
+                    case .comparison(let session, let other):
+                        ReleaseComparisonView(viewModel: viewModel, sessionID: session, otherID: other)
                     }
                 }
                 .sheet(isPresented: $isCreatingProject) {

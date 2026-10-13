@@ -70,6 +70,14 @@ public struct AuditSessionActivity: Sendable, Equatable {
 /// hay aquí nace de gestos del usuario, una conexión viva toda la vida de la app no compra nada, y
 /// una apertura fallida guardada pegaría ese fallo a la pantalla para siempre. Lo único que añade
 /// sobre el store es clasificar lo que lanza, para que por encima no viaje un error sin tipar.
+/// Lo que hace falta leer del historial para comparar dos sesiones.
+private struct ReleaseDiffInput: Sendable {
+    let project: AuditProject?
+    let sessions: [AuditSession]
+    let firstFlows: [StoredFlow]
+    let secondFlows: [StoredFlow]
+}
+
 public actor AuditLibrary {
 
     private let openStore: @Sendable () throws -> FlowStore
@@ -106,6 +114,38 @@ public actor AuditLibrary {
                 flowCount: try await store.flowCount(inAuditSession: id)
             )
         }
+    }
+
+    /// El diff entre dos sesiones de un proyecto, leído de una vez.
+    ///
+    /// Lo que se lee va por `perform`, como todo; **el diff se construye fuera**, porque sus
+    /// negativas (`ReleaseDiff.Refusal`) son reglas del modelo y no fallos del historial, y por
+    /// dentro saldrían clasificadas como uno.
+    public func releaseDiff(
+        between first: Int64, and second: Int64, inProject projectID: Int64
+    ) async throws -> ReleaseDiff {
+        let read = try await perform { store in
+            ReleaseDiffInput(
+                project: try await store.auditProjects().first { $0.id == projectID },
+                sessions: try await store.auditSessions(forProject: projectID),
+                firstFlows: try await store.flows(inAuditSession: first, limit: .max),
+                secondFlows: try await store.flows(inAuditSession: second, limit: .max)
+            )
+        }
+        guard let project = read.project else { throw ReleaseComparisonError.projectNotFound(projectID) }
+        guard let firstSession = read.sessions.first(where: { $0.id == first }) else {
+            throw ReleaseComparisonError.sessionNotFound(first)
+        }
+        guard let secondSession = read.sessions.first(where: { $0.id == second }) else {
+            throw ReleaseComparisonError.sessionNotFound(second)
+        }
+        return try ReleaseDiff(
+            between: firstSession,
+            flows: read.firstFlows,
+            and: secondSession,
+            flows: read.secondFlows,
+            project: project
+        )
     }
 
     // MARK: - Proyectos
