@@ -85,6 +85,9 @@ final class CaptureFixtureTests: XCTestCase {
             XCTAssertEqual(record.resolvedName, flow.resolvedName)
             XCTAssertEqual(record.quic, flow.quic)
             XCTAssertEqual(record.clientTLS, flow.clientTLS)
+            XCTAssertEqual(record.serverTLS, flow.serverTLS)
+            XCTAssertEqual(record.serverCertificates, flow.serverCertificates)
+            XCTAssertEqual(record.streamOpening, flow.streamOpening)
             XCTAssertEqual(record.id, 0, "sin persistir: el rowid lo pone el UPSERT del store")
         }
     }
@@ -254,9 +257,91 @@ final class CaptureFixtureTests: XCTestCase {
             XCTAssertEqual(offer.omittedApplicationProtocols, 0)
             XCTAssertFalse(offer.hasEncryptedClientHello)
         }
-        // Fuera de QUIC nadie la lleva: un flujo TCP del fixture no dice qué ofreció su cliente,
-        // y darle una oferta sin haberlo decidido cambiaría lo que el informe dice de su TLS.
-        XCTAssertTrue(flows.filter { $0.quic == nil }.allSatisfy { $0.clientTLS == nil })
+        // Y de un flujo QUIC no hay respuesta del servidor que leer: su ServerHello va cifrado.
+        XCTAssertTrue(flows.filter { $0.quic != nil }.allSatisfy { $0.serverTLS == nil })
+    }
+
+    /// Lo que la extensión lee del arranque de un stream TCP, coherente con el estado del flujo:
+    /// el que va en claro arrancó con una petición HTTP y no tiene handshake; el resto arrancó
+    /// con uno y lleva sus dos mitades, la oferta y la respuesta. Lo que no es TCP no tiene
+    /// arranque que leer.
+    func testEveryTCPFlowCarriesWhatItsOpeningShowed() {
+        let flows = CaptureFixture.make(spec(bulkFlowCount: 240)).flows
+
+        for flow in flows where flow.key.proto == .tcp {
+            if flow.tlsStatus == .plaintext {
+                XCTAssertEqual(flow.streamOpening, .httpRequest, "\(flow.key)")
+                XCTAssertNil(flow.clientTLS)
+                XCTAssertNil(flow.serverTLS)
+            } else {
+                XCTAssertEqual(flow.streamOpening, .tlsHandshake, "\(flow.key)")
+                XCTAssertNotNil(flow.clientTLS)
+                XCTAssertNotNil(flow.serverTLS)
+            }
+        }
+        XCTAssertTrue(flows.filter { $0.key.proto != .tcp }.allSatisfy { $0.streamOpening == nil })
+    }
+
+    /// De dónde sale la lectura del servidor lo decide quién terminó el TLS: en un flujo que
+    /// pasa intacto es su propio ServerHello; en uno que el túnel terminó —descifrado o
+    /// rechazado por la app— es la conexión de subida del túnel, que no es lo que negoció la app.
+    func testTheSourceOfAServerAnswerFollowsWhoTerminatedTheFlow() throws {
+        let flows = CaptureFixture.make(spec(bulkFlowCount: 240)).flows
+        var sources: [TLSInspectionStatus: Set<TLSAnswerSource>] = [:]
+
+        for flow in flows {
+            guard case .negotiated(let negotiated) = flow.serverTLS else { continue }
+            sources[flow.tlsStatus, default: []].insert(negotiated.source)
+        }
+        XCTAssertEqual(sources[.encrypted], [.serverHello])
+        XCTAssertEqual(sources[.inspected], [.upstreamConnection])
+        XCTAssertEqual(sources[.notInspectable], [.upstreamConnection])
+        XCTAssertNil(sources[.plaintext])
+    }
+
+    /// Las tres lecturas de versión que una auditoría distingue, escritas a mano: la corriente,
+    /// la única admitida cuyo certificado viaja en claro, y una por debajo del mínimo — con la
+    /// oferta que la hace posible, porque una lista con 1.3 y 1.2 no puede acabar en TLS 1.0.
+    func testCoversTheThreeTLSVersionReadings() throws {
+        let flows = CaptureFixture.make(spec()).flows
+        func negotiated(_ version: TLSProtocolVersion) -> [FixtureFlow] {
+            flows.filter {
+                guard case .negotiated(let answer) = $0.serverTLS else { return false }
+                return answer.version == version
+            }
+        }
+
+        XCTAssertFalse(negotiated(.tls13).isEmpty)
+        XCTAssertEqual(negotiated(.tls12).count, 1)
+        let weak = try XCTUnwrap(negotiated(.tls10).first)
+        XCTAssertEqual(negotiated(.tls10).count, 1, "un solo hallazgo de versión en toda la captura")
+        XCTAssertEqual(weak.clientTLS?.versions, .upTo(.tls12))
+    }
+
+    /// Un certificado solo se lee donde viaja en claro: por debajo de TLS 1.3 y del ServerHello
+    /// de la propia conexión. Y el sembrado no caduca dentro de la captura: un certificado
+    /// vencido en la muestra sería un hallazgo que nadie decidió enseñar.
+    func testACertificateChainIsSeededOnlyWhereItTravelsInTheClear() throws {
+        let fixture = CaptureFixture.make(spec())
+        let ending = try XCTUnwrap(fixture.wallClockSpan).upperBound
+        var chains = 0
+
+        for flow in fixture.flows {
+            guard let reading = flow.serverCertificates else { continue }
+            guard case .negotiated(let negotiated) = flow.serverTLS,
+                  case .chain(let chain) = reading
+            else {
+                XCTFail("una cadena sin respuesta negociada delante: \(flow.key)")
+                continue
+            }
+            chains += 1
+            XCTAssertEqual(negotiated.source, .serverHello)
+            XCTAssertNotEqual(negotiated.version, .tls13)
+            XCTAssertTrue(chain.isComplete)
+            XCTAssertEqual(chain.certificates.first?.subject.text, flow.sni.map { "CN=\($0)" })
+            XCTAssertTrue(chain.certificates.allSatisfy { $0.notAfter > ending })
+        }
+        XCTAssertEqual(chains, 2, "el flujo en TLS 1.2 y el que queda por debajo del mínimo")
     }
 
     /// QUIC nunca se inspecciona (ADR 0006): que un flujo tenga nombre anunciado no lo cambia.
