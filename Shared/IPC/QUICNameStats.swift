@@ -37,8 +37,15 @@ public struct QUICNameStats: Sendable, Equatable, Codable {
 
     public init() {}
 
+    /// Flujos cuya lectura terminó sin llegar a un ClientHello entero. Va aparte de
+    /// `withoutServerName` porque es la otra mitad de la distinción por la que existen estas
+    /// cifras: aquí no se sabe si el cliente anunciaba un nombre.
+    public var flowsNotRead: UInt64 {
+        unreadableClientHello &+ cryptoStreamAbandoned &+ initialsExhausted
+    }
+
     /// Flujos cuya lectura terminó sin nombre, por el motivo que fuera.
     public var flowsLeftUnnamed: UInt64 {
-        withoutServerName &+ unreadableClientHello &+ cryptoStreamAbandoned &+ initialsExhausted
+        withoutServerName &+ flowsNotRead
     }
 }

@@ -36,6 +36,20 @@ final class QUICNameStatsTests: XCTestCase {
         XCTAssertEqual(stats.flowsLeftUnnamed, 15)
     }
 
+    /// Lo que no se llegó a leer es todo lo que se quedó sin nombre **menos** lo que se leyó entero
+    /// y no lo anunciaba: son las dos mitades que *Session diagnostics* enseña por separado.
+    func testFlowsNotReadLeavesOutTheOnesReadWholeWithoutAName() {
+        var stats = QUICNameStats()
+        stats.withoutServerName = 1
+        stats.unreadableClientHello = 2
+        stats.cryptoStreamAbandoned = 4
+        stats.initialsExhausted = 8
+        stats.flowsNamed = 100
+
+        XCTAssertEqual(stats.flowsNotRead, 14)
+        XCTAssertEqual(stats.flowsNotRead + stats.withoutServerName, stats.flowsLeftUnnamed)
+    }
+
     func testSurvivesCodingWithEveryCounterSet() throws {
         var stats = QUICNameStats()
         stats.initialsOpened = 1
