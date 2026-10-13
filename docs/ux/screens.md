@@ -261,6 +261,36 @@ side**, which is the one comparison the header is asked for. The grid also **los
 being a card: an explanation with nothing to open is a note under its heading, not a row. The header card
 gave back 70 pt and the packet list starts **94 pt higher** — one more packet visible without scrolling.
 
+**How it was encrypted (2026-10-13).** Under the header, a section that exists only when something
+was read from the connection's handshake: the TLS version the server chose and *where that was read*,
+what the app offered (versions and application protocols), and the certificate when it travelled in
+the clear. They are the fields the evidence bundle writes to `flows.json`, which until now could only
+be seen by exporting a session. The decisions are in `FlowHandshakePresentation`, pure and tested, and
+each one is about not changing the owner of a reading:
+
+- **A version negotiated by the tunnel is never shown as the app's.** On an inspected connection, or
+  one whose app refused the local certificate, *Read from* says *Tunnel's connection* and a sentence
+  under the grid says what that means. The same on the certificate: what the app received was
+  TunnelVision's own, and the server's is not recorded.
+- **A ceiling is not written as a list.** A ClientHello without `supported_versions` says how high the
+  client goes and nothing about what it accepts below: *Up to TLS 1.2*, never *TLS 1.2*.
+- **QUIC shows its QUIC version, not a TLS one**, and who said it: the server's packets (the version in
+  use) or only the app's (a proposal). For versions 1 and 2 a sentence says they carry TLS 1.3 and that
+  the server's answer and certificate are never read; of any other version nothing is claimed.
+- **A certificate is shown with the sentence that nothing about it was validated**, and with its
+  issuer in that sentence. When there is none, the reason is said only if it is a fact about the
+  connection — TLS 1.3 encrypts it, the session was resumed, the handshake carried none — and not when
+  it is merely a reading that was not made.
+- **No sentence gives a verdict.** The section lists readings; whether TLS 1.0 is acceptable is the
+  audit's business ([`audit.md`](audit.md)), not this screen's.
+
+It is a section of its own rather than more pairs in the header because not every connection has it
+— a ping negotiates nothing — and because every fact in it carries a caveat a grid cell cannot hold.
+Measured on the Simulator: its columns fall on the header's (x = 32 and 205), rows at the same 46 pt
+pitch; at the largest accessibility size the facts stack one per row, values wrap to two lines and
+nothing truncates. **The cost, measured and accepted:** with three pairs and a note the packet list
+starts just below the fold (y ≈ 871 of 874) instead of two thirds down the screen.
+
 **Still not built:** the export / copy / block actions.
 
 ## Decrypted content
@@ -570,7 +600,7 @@ QUIC, no opening packet opened, none was readable, or none announced a host — 
 connection keeps the name a lookup gave it.
 
 **And one section says where names came from when no connection announced one.** *Names from lookups*
-sits under the announced names — *Names*, the hosts TCP connections announce, and *Names from QUIC* — and counts what the tunnel
+sits under the announced names — *Names from TCP*, the hosts TCP connections announce, and *Names from QUIC* — and counts what the tunnel
 could do with the answers to name lookups it saw: how many gave addresses, how many addresses, how
 many connections were named after them, and how many answers taught nothing or could not be read.
 Its footer is a sentence, and the one that matters is the one for a session where all of it is zero:
