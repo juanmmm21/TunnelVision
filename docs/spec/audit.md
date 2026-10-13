@@ -468,6 +468,11 @@ with a `TLSVersionObservation`: the version **and where it came from**), `notAss
 | No reading, but the status is not `plaintext` or a ClientHello was read | `notAssessed(.serverAnswerNotRead)` |
 | No reading and no sign of TLS or QUIC | `notApplicable` |
 
+- **A QUIC flow's offer is not consulted.** Since its ClientHello is read, a QUIC flow carries
+  `clientTLS` too, and the QUIC rows above ignore it on purpose: the version of QUIC is what says
+  TLS 1.3, and a client may not offer anything older inside QUIC (RFC 9001 § 4.2), so the offer
+  could neither weaken an `acceptable` nor settle a version that was only proposed — what is
+  missing there is the server's word, not the client's.
 - **An upstream reading answers the tunnel's ClientHello, not the app's**
   ([`relay-and-tls.md`](relay-and-tls.md) § *What an inspected flow's server chose*). A weak one is
   still a finding — a server that gives a modern client no more than that gave the app no more
@@ -555,6 +560,13 @@ every flow went somewhere, so an unnamed flow is not set aside from the check �
   **not** one of them: it is a fact of the session, told by tunnel counters that are not stored
   with it, so the report cannot derive it from the flows. An IP literal is not asserted either —
   `serverNameNotAnnounced` is what such a connection looks like, not proof of one.
+- **The three reasons mean the same on QUIC as on TCP.** A QUIC flow's ClientHello travels in its
+  Initial packets and is read there into the same two fields
+  ([`packet-parsing.md`](packet-parsing.md) § *Naming a QUIC flow*): an announced name is judged
+  like any SNI, an offer without a name is `serverNameNotAnnounced` or `encryptedClientHello`, and
+  `noClientHelloRead` on a QUIC flow is a connection whose start the tunnel did not see, or a
+  ClientHello it could not read or did not try to — never "it was QUIC". Nothing in this type
+  changed for it; `QUICNamedFlowAssessmentTests` holds what each check says of such a flow.
 - **The remote address is not read.** Nothing here needs to know which end of the flow is the
   device, so local-network traffic (mDNS, a router) is unnamed like anything else.
 

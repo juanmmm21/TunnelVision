@@ -12,8 +12,9 @@ public enum UnnamedFlowReason: String, Sendable, Hashable, Codable {
     /// Se leyó el ClientHello, no anunciaba nombre y llevaba Encrypted Client Hello: el nombre de
     /// verdad puede ir cifrado dentro.
     case encryptedClientHello
-    /// No se leyó ningún ClientHello del que sacar un nombre: el flujo no es TLS sobre TCP (QUIC,
-    /// otro protocolo), o su handshake pasó antes de la captura o no se dejó recorrer.
+    /// No se leyó ningún ClientHello del que sacar un nombre: el flujo no es TLS ni QUIC, o su
+    /// handshake pasó antes de la captura o no se dejó recorrer. El de un flujo QUIC se lee de
+    /// sus paquetes Initial, así que hablar QUIC ya no es por sí solo un motivo.
     case noClientHelloRead
 }
 
