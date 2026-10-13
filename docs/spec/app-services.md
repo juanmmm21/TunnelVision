@@ -1494,12 +1494,50 @@ the same fact.
 
 It is **not a banner**. None of its cases asks anything of the reader — encrypted DNS is the device's
 choice, not a failure — so `dnsNamingNote(for:)` is the footer of its own section, *Names from
-lookups*, which sits right after *Names* (the hosts connections announce) and, unlike it, is present
-when the relay did not answer: the counters are the pipeline's. The sentence carries no figures; they
+lookups*, which sits after the announced names (*Names*, then *Names from QUIC*) and, unlike *Names*,
+is present when the relay did not answer: the counters are the pipeline's. The sentence carries no figures; they
 are in the rows above it. `.noTraffic` has no sentence. The section has five rows, all plain readings:
 the six reasons a readable reply teaches nothing are **added up in one row**, because apart they are
 six rows a healthy session fills anyway, and a datagram that did not parse is not work lost — it was
 forwarded and recorded like any other.
+
+### The fourth verdict: names read from QUIC
+
+`DiagnosticsPresentation.quicNamingVerdict(for:)` reads `PipelineStats.quicNames`
+([`packet-parsing.md`](packet-parsing.md) § *Above L4: naming a QUIC flow*). It is apart from the
+third because it answers another question: a QUIC flow can carry the name that was **asked for** in
+DNS and not the one its client **announces**, and "no QUIC at all", "no Initial opened", "not read to
+the end" and "announced no name" all leave flows equally unnamed.
+
+| Condition (in order) | Verdict | What it means |
+|---|---|---|
+| `flowsNamed > 0` | `.naming` | QUIC flows carry the host their client announced |
+| `withoutServerName > 0` | `.nothingAnnounced` | ClientHellos were read whole and none named a host |
+| `initialsOpened > 0`, `flowsNotRead > 0` | `.notReadable` | Initials opened and no read ended in a whole ClientHello |
+| `initialsOpened > 0` | `.reading` | Initials opened and no flow has an outcome yet |
+| `initialsNotOpened > 0` or `initialsSkippedAtCapacity > 0` | `.notOpening` | Initials were seen and not one was opened |
+| `packetsHandled > 0` | `.nothingToRead` | traffic, and no client Initial: nothing spoke QUIC to port 443 |
+| otherwise | `.noTraffic` | nothing has passed |
+
+Same order as the others, from what refutes most to what refutes least: one named flow proves the
+chain, and one ClientHello read whole proves the reader works and that what was missing was the
+announcement. A flow that spent its budget of Initials **without opening one** counts in
+`initialsExhausted` and still ends in `.notOpening`, because that is the truer thing to say of it.
+Initials skipped by the quota count as seen. Restarts decide nothing: a Retry is part of an ordinary
+start. `QUICNameStats.flowsNotRead` is the sum of the three ways of not reaching a whole ClientHello
+(`unreadableClientHello`, `cryptoStreamAbandoned`, `initialsExhausted`), kept apart from
+`withoutServerName` because that split is what the counters exist for.
+
+It is a footer too (`quicNamingNote(for:)`), under *Names from QUIC*, which sits between *Names* and
+*Names from lookups* so that everything announced is above everything asked for. No case asks
+anything of the reader: an unnamed QUIC flow is forwarded untouched
+([ADR 0006](../decisions/0006-udp-quic-passthrough.md)) and keeps whatever name DNS gave it, and
+each unnamed case says so. The normal case is where the boundary is written for the person looking
+at the screen: the tunnel opens the client's opening packets, reads the host and **nothing else**,
+and the connection is never decrypted. The section has seven rows, flows first and packets after —
+named, no host announced, not read to the end; Initials opened, not opened, reads restarted, skipped
+at capacity — all plain readings: a packet that did not open or was skipped was forwarded like any
+other, so none of it is work lost.
 
 ### The view model
 
@@ -1555,3 +1593,14 @@ every other verdict says something different; that having nothing to read is exp
 DNS; that the sentence never repeats a figure of its rows; that the section is there without the
 relay and follows the announced names with it; that nothing in it is marked as a fault; and that the
 seeded counters add up to the replies the seeded relay received.
+
+The QUIC half (`QUICNamingDiagnosticsTests`): every verdict of the fourth table, including that each
+of the three ways of not reading a ClientHello ends in *not readable*, that one read whole outranks
+them, that a flow which spent its Initials without opening one is still *not opening*, that skipped
+Initials count as seen and that restarts alone claim nothing; that only the absence of traffic has no
+sentence and every other verdict says something different; that the normal case draws the line at
+the opening packets; that every unnamed case says what the connections keep; that the sentence never
+repeats a figure of its rows; the seven rows in order, with the ways of not reading added up apart
+from the ones without a name; that nothing is marked as a fault; that the section is there without
+the relay and follows *Names* with it; and that the seeded counters fit inside the seeded UDP flows
+that are not lookups.

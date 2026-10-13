@@ -522,7 +522,7 @@ smaller than the one iOS shows; *Delete everything* names it too.
 
 The last row of Settings, and the only screen in the product written for someone who is **debugging**:
 it says in one sentence whether looking inside secure traffic is working, and then shows the counters
-that sentence was read from (inspection, names, names from lookups, decrypted content, recording,
+that sentence was read from (inspection, names, names from QUIC, names from lookups, decrypted content, recording,
 forwarding, and the last errors). It is a row of its own at the end rather than a control among the switches because it decides
 nothing — it answers *is what I think is happening actually happening?*.
 
@@ -555,8 +555,19 @@ were handled, how many of them produced new servers, and how many failed. Those 
 reading together, because they are the live measurement of whether the tunnel can still see past
 itself after it becomes the primary interface.
 
+**Between the two sits what QUIC connections announce** (2026-10-13). *Names from QUIC* counts the
+connections whose host was read from their opening packets, the ones that announced none, the ones
+whose handshake could not be read to the end, and then the packets behind those figures: opened, not
+opened, reads started over, and skipped because too many were being read at once. Its footer follows
+the same rule as the one below it — a sentence, no figures, never a notice — and in the ordinary case
+it says the one thing a reader of this product is owed about it: the tunnel opens those opening
+packets to read the host **and nothing else**, and the connection itself is forwarded untouched and
+never decrypted. When there is no name, it says which of the four reasons applies — nothing used
+QUIC, no opening packet opened, none was readable, or none announced a host — and that the
+connection keeps the name a lookup gave it.
+
 **And one section says where names came from when no connection announced one.** *Names from lookups*
-sits right under *Names* — the hosts connections announce themselves — and counts what the tunnel
+sits under the announced names — *Names*, the hosts TCP connections announce, and *Names from QUIC* — and counts what the tunnel
 could do with the answers to name lookups it saw: how many gave addresses, how many addresses, how
 many connections were named after them, and how many answers taught nothing or could not be read.
 Its footer is a sentence, and the one that matters is the one for a session where all of it is zero:
