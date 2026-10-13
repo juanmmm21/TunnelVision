@@ -452,8 +452,8 @@ local port being 443 not counting, and the route staying passthrough with inspec
 `QUICVarint.swift`. The long header says which version a flow speaks; the name the client asks for
 is one layer down, in the ClientHello that the client's first packets carry. This section is the
 part that gets to those bytes: **a client Initial in, its frames out.** It is pure — no flow, no
-pipeline, no state — and nothing calls it yet. Reading the frames and naming the flow are separate
-pieces of work.
+pipeline, no state. Reading the frames and naming the flow are separate pieces of work, described
+in the two sections after this one; the pipeline calls all three since 2026-10-12.
 
 ```swift
 public struct QUICInitialKeys: Sendable, Equatable {          // the client's, never the server's
@@ -572,7 +572,8 @@ as a protocol violation, and an observer that dropped the packet would only know
 - **Frames.** `frames` is the payload as decrypted: CRYPTO frames, PADDING, sometimes PING or ACK.
   Walking them and reassembling CRYPTO by offset, across several Initial packets, into a
   ClientHello is the next section.
-- **The hookup.** Nothing in the pipeline calls this; no flow gains a name from it yet.
+- **The hookup.** Where the pipeline calls this and what a flow gains from it is
+  [*Naming a QUIC flow*](#above-l4-naming-a-quic-flow).
 - **Other versions.** A version gets keys when its RFC's salt and labels are added to
   `QUICInitialKeys`, with that RFC's sample packet as the test.
 
@@ -603,8 +604,8 @@ The expected values are the ones the RFCs print, **copied from the documents, no
 `Shared/QUIC/QUICInitialFrames.swift` and `QUICCryptoStream.swift`, both pure, and
 `PacketTunnel/TLS/QUICClientHelloScanner.swift`, which joins them to the ClientHello reader that
 TCP flows already use. **The decrypted payloads of a client's Initial packets in, the name it
-announced out.** Still called by nothing: which Initials of a flow are opened, with which keys, and
-where the name goes are the hookup's decisions.
+announced out.** Which Initials of a flow are opened, with which keys, and where the name goes are
+the hookup's decisions ([*Naming a QUIC flow*](#above-l4-naming-a-quic-flow)).
 
 ```swift
 public struct QUICCryptoFrame: Sendable, Equatable {           // Shared/QUIC

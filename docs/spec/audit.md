@@ -657,6 +657,15 @@ later one contacted that the earlier one did not, the ones it stopped contacting
 in the TLS of those that remain. Like the classifier it is pure and decides no verdict. It is built
 on `SessionDomains`, the inventory of **one** session, which compares nothing.
 
+**From the screen (2026-10-13).** `AuditLibrary.releaseDiff(between:and:inProject:)` reads the
+project, its sessions and the flows of both in one visit to the store and builds the diff *outside*
+that visit: a `ReleaseDiff.Refusal` is a rule of the model, and inside it would come out classified
+as a history that did not answer. `AuditViewModel` keeps the comparison it has open together with
+the pair of sessions it belongs to — a comparison read for another pair is never drawn under this
+title — and what is said of it is `ReleaseComparisonPresentation`
+([`../ux/audit.md`](../ux/audit.md) § *Comparing two versions*). The bundle still exports one
+session and does not include a diff.
+
 ```swift
 public struct DomainObservation: Sendable, Hashable {      // one domain in one session
     public let host: String                                // normalised, as a finding cites it

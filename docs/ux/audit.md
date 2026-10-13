@@ -8,6 +8,7 @@ plus a baseline) and the **markers** placed inside a session. The model undernea
 
 ```
 Audit (tab) ──▶ Project ──▶ Session ──▶ Evidence bundle (sheet, once the session has ended)
+   │              │            └─────▶ Comparison (with another ended audit session)
    │              │  └─ Start session (sheet)
    │              └─ Edit project (sheet)
    └─ New project (sheet)
@@ -139,6 +140,44 @@ the screen so that the notice appears where the row was tapped.
 
 Closing the sheet does not delete the archive: the system share sheet may still be reading it. The
 next export does — there is at most one bundle on disk, in the app's temporary directory.
+
+## Comparing two versions
+
+An ended **audit** session lists, under its evidence bundle, the project's other ended audit
+sessions: *Compare with*. The section is absent when there is none — a heading over "nothing to
+compare" would take room in the first session of every project, where it is least needed. A
+baseline is not offered and offers nothing: it observes no version, and the model refuses it
+([`../spec/audit.md`](../spec/audit.md) § *Release diff*). Neither is a session still recording.
+
+The comparison is its own pushed screen, ordered by the question that opens it — *what is new in
+this version?*:
+
+1. **Which session is which, and the three counts**: later, earlier, new domains, no longer
+   contacted, in both. The footer says the rule nobody guesses: the later one is the session that
+   **started** later, whatever its version number.
+2. **New domains**, each with what the allowlist says of it. **Only a new domain the allowlist does
+   not cover is marked** — symbol and colour, never colour alone. One it covers is listed without
+   alarm, and with an empty allowlist nothing is marked: there is nothing to measure against, and
+   flagging every domain would call "no list was written" a finding. The footer says what *new*
+   means here — not contacted while the earlier session was recording — and that it is not
+   attributed to the app. When there is none the section says *no named domain is new*, and
+   "named" is deliberate.
+3. **TLS version changed**, only if any did: the domain, the versions in each session, and **who
+   negotiated them**. A change read from the connection TunnelVision opened to inspect the traffic
+   says it is not what the app negotiated. A floor that went down is marked; one that went up is
+   listed.
+4. **No longer contacted**, last: it is what the screen is least opened for.
+5. **What the lists cannot say**, as a closing paragraph when it applies: how many connections had
+   no name in each session — a new destination among them would not show — and how many domains
+   were only another name of a shared address, which are in neither list.
+
+All of it is decided in `ReleaseComparisonPresentation`, pure and tested; the view draws. A
+comparison that can no longer be made — the other session was deleted between being offered and
+being tapped — is a sentence on the screen, not a spinner.
+
+Measured on the Simulator with the seeded project (version 2.4.0 against 2.3.1): nine new domains,
+forty in both; the longest host name wraps to a second line in the `literal` role instead of
+truncating, and its verdict line stays under it.
 
 ## The two forms
 
