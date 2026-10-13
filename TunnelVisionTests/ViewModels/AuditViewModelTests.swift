@@ -602,4 +602,68 @@ final class AuditViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.notice, AuditPresentation.evidenceExportFailed(.sessionStillOpen))
         XCTAssertNil(viewModel.pendingEvidence)
     }
+
+    // MARK: - Comparar dos versiones
+
+    /// Graba y cierra una sesión de auditoría, y devuelve su id.
+    private func recordSession(
+        _ viewModel: AuditViewModel, projectID: Int64, version: String, build: String
+    ) async throws -> Int64 {
+        let issue = await viewModel.startSession(auditForm(version: version, build: build), projectID: projectID)
+        XCTAssertNil(issue)
+        let session = try XCTUnwrap(viewModel.overview.recording?.session)
+        await viewModel.endSession(id: session.id)
+        return session.id
+    }
+
+    /// De punta a punta contra un historial de verdad: dos versiones grabadas se ofrecen la una a
+    /// la otra, y compararlas deja la pantalla con qué pintar y sabiendo cuál es la posterior.
+    func testTwoEndedReleasesCanBeComparedWithEachOther() async throws {
+        let viewModel = makeViewModel()
+        let project = try await makeProject(viewModel)
+        let older = try await recordSession(viewModel, projectID: project, version: "2.3.1", build: "172")
+        let newer = try await recordSession(viewModel, projectID: project, version: "2.4.0", build: "187")
+
+        XCTAssertEqual(viewModel.comparisonCandidates(forSession: newer).map(\.id), [older])
+        XCTAssertEqual(viewModel.comparisonCandidates(forSession: older).map(\.id), [newer])
+        // Antes de leerla, la de este par está cargando: nunca se pinta la de otro par.
+        XCTAssertEqual(viewModel.comparisonState(of: newer, with: older), .loading)
+
+        await viewModel.loadComparison(of: newer, with: older)
+
+        guard case .loaded(let display) = viewModel.comparisonState(of: newer, with: older) else {
+            return XCTFail("dos sesiones cerradas del mismo proyecto se comparan")
+        }
+        XCTAssertEqual(display.laterTitle, "Version 2.4.0 (187)")
+        XCTAssertEqual(display.earlierTitle, "Version 2.3.1 (172)")
+        // El par no tiene orden: se llegue desde la sesión que se llegue, es la misma comparación.
+        XCTAssertEqual(viewModel.comparisonState(of: older, with: newer), .loaded(display))
+    }
+
+    /// Una sola sesión no tiene con quién, y una que sigue grabando tampoco se ofrece.
+    func testASessionWithNothingToCompareWithOffersNothing() async throws {
+        let viewModel = makeViewModel()
+        let project = try await makeProject(viewModel)
+        let only = try await recordSession(viewModel, projectID: project, version: "2.3.1", build: "172")
+        XCTAssertTrue(viewModel.comparisonCandidates(forSession: only).isEmpty)
+
+        _ = await viewModel.startSession(auditForm(), projectID: project)
+        XCTAssertTrue(viewModel.comparisonCandidates(forSession: only).isEmpty)
+    }
+
+    /// Si la otra sesión se borró entre que se ofreció y que se tocó, la pantalla lo dice.
+    func testComparingWithASessionThatIsGoneFailsWithASentence() async throws {
+        let viewModel = makeViewModel()
+        let project = try await makeProject(viewModel)
+        let older = try await recordSession(viewModel, projectID: project, version: "2.3.1", build: "172")
+        let newer = try await recordSession(viewModel, projectID: project, version: "2.4.0", build: "187")
+        await viewModel.deleteSession(id: older)
+
+        await viewModel.loadComparison(of: newer, with: older)
+
+        guard case .failed(let notice) = viewModel.comparisonState(of: newer, with: older) else {
+            return XCTFail("una sesión que ya no existe no se compara")
+        }
+        XCTAssertTrue(notice.message.contains("can no longer be compared"))
+    }
 }

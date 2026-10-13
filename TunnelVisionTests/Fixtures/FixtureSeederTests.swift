@@ -440,8 +440,9 @@ final class FixtureSeederTests: XCTestCase {
     // MARK: - La auditoría
 
     /// La pestaña de auditoría se tiene que poder mirar en el Simulator, donde nada etiqueta flujos:
-    /// el sembrador deja un proyecto con una baseline y una auditoría **cerradas**, cada una con su
-    /// tramo de flujos, y la mitad del tráfico fuera de toda sesión.
+    /// el sembrador deja un proyecto con una baseline y dos auditorías **cerradas** —la versión
+    /// auditada y la anterior—, cada una con su tramo de flujos, y parte del tráfico fuera de toda
+    /// sesión.
     func testSeedingLeavesAnAuditProjectWithItsSessionsTagged() async throws {
         let (seeder, database, _, _) = try makeSeeder()
         let fixture = CaptureFixture.make(spec(bulkFlowCount: 12))
@@ -454,13 +455,14 @@ final class FixtureSeederTests: XCTestCase {
         XCTAssertFalse(projects[0].allowlist.isEmpty)
 
         let sessions = try await store.auditSessions(forProject: projects[0].id)
-        XCTAssertEqual(sessions.count, 2)
+        XCTAssertEqual(sessions.count, 3)
         // Ninguna abierta: una sesión abierta enseñaría su franja en la Dashboard.
         let open = try await store.openAuditSession()
         XCTAssertNil(open)
 
         let baseline = try XCTUnwrap(sessions.first { $0.kind == .baseline })
-        let audit = try XCTUnwrap(sessions.first { $0.kind != .baseline })
+        let audit = try XCTUnwrap(sessions.first { $0.kind.release?.version == "2.4.0" })
+        let previous = try XCTUnwrap(sessions.first { $0.kind.release?.version == "2.3.1" })
         // La baseline se graba **antes**, sin la app auditada instalada.
         XCTAssertLessThanOrEqual(baseline.startedAt, audit.startedAt)
         XCTAssertTrue(audit.inspection.supportsPinningEvidence)
@@ -473,7 +475,20 @@ final class FixtureSeederTests: XCTestCase {
             XCTAssertEqual(count, quarter)
             tagged += count
         }
-        XCTAssertLessThan(tagged, fixture.flows.count, "la mayor parte del tráfico no es de ninguna auditoría")
+        XCTAssertLessThan(tagged, fixture.flows.count, "parte del tráfico no es de ninguna auditoría")
+
+        // La versión anterior empezó antes, y por eso la comparación llama posterior a la que se
+        // audita: es lo que hace que la pantalla de comparar diga lo que se espera de ella.
+        XCTAssertLessThan(previous.startedAt, audit.startedAt)
+        let diff = try ReleaseDiff(
+            between: audit,
+            flows: try await store.flows(inAuditSession: audit.id, limit: .max),
+            and: previous,
+            flows: try await store.flows(inAuditSession: previous.id, limit: .max),
+            project: projects[0]
+        )
+        XCTAssertEqual(diff.later.id, audit.id)
+        XCTAssertEqual(diff.earlier.id, previous.id)
 
         let markers = try await store.markers(forSession: audit.id)
         XCTAssertEqual(markers.first?.kind, .consentGiven)
@@ -497,7 +512,7 @@ final class FixtureSeederTests: XCTestCase {
         let projects = try await store.auditProjects()
         XCTAssertEqual(projects.count, 1)
         let sessions = try await store.auditSessions(forProject: projects[0].id)
-        XCTAssertEqual(sessions.count, 2)
+        XCTAssertEqual(sessions.count, 3)
     }
 
     /// El directorio de capturas es compartido: el sembrador se lleva las capturas nuestras y **solo**
