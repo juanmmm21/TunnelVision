@@ -108,6 +108,9 @@ final class FixtureSeederTests: XCTestCase {
         for flow in fixture.flows {
             let read = try XCTUnwrap(byKey[flow.key])
             XCTAssertEqual(read.stored.sni, flow.sni)
+            XCTAssertEqual(read.stored.resolvedName, flow.resolvedName)
+            XCTAssertEqual(read.stored.quic, flow.quic)
+            XCTAssertEqual(read.stored.clientTLS, flow.clientTLS)
             XCTAssertEqual(read.stored.tlsStatus, flow.tlsStatus)
             XCTAssertEqual(read.stored.packetCount, flow.record.packetCount)
             XCTAssertEqual(read.stored.bytesOut, flow.record.bytesOut)

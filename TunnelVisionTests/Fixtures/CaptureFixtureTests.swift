@@ -82,6 +82,9 @@ final class CaptureFixtureTests: XCTestCase {
             XCTAssertEqual(record.lastSeen, flow.packets.map(\.timestamp).max())
             XCTAssertEqual(record.key, flow.key)
             XCTAssertEqual(record.sni, flow.sni)
+            XCTAssertEqual(record.resolvedName, flow.resolvedName)
+            XCTAssertEqual(record.quic, flow.quic)
+            XCTAssertEqual(record.clientTLS, flow.clientTLS)
             XCTAssertEqual(record.id, 0, "sin persistir: el rowid lo pone el UPSERT del store")
         }
     }
@@ -207,6 +210,60 @@ final class CaptureFixtureTests: XCTestCase {
             flows.contains { ($0.sni?.count ?? 0) > 50 },
             "hace falta un host que no quepa en una línea"
         )
+    }
+
+    /// Las dos formas en que un flujo QUIC llega a tener nombre, que la app enseña distinto: el que
+    /// anuncia el suyo en el ClientHello de sus paquetes Initial —la fila lleva el nombre a secas y
+    /// la ficha dice que lo anunció— y el que solo tiene el que el DNS dio a su dirección.
+    func testCoversAQUICFlowThatAnnouncesItsNameAndOneNamedOnlyByDNS() throws {
+        let quic = CaptureFixture.make(spec()).flows.filter { $0.quic != nil }
+
+        let announcing = try XCTUnwrap(
+            quic.first { $0.sni != nil },
+            "hace falta un flujo QUIC con nombre anunciado"
+        )
+        XCTAssertEqual(announcing.record.name?.origin, .sni)
+        XCTAssertEqual(
+            announcing.resolvedName?.name, announcing.sni,
+            "el dispositivo preguntó por ese nombre antes de conectar: el resuelto se conserva aparte"
+        )
+
+        let lookedUp = try XCTUnwrap(
+            quic.first { $0.sni == nil },
+            "hace falta un flujo QUIC que solo tenga el nombre del DNS"
+        )
+        XCTAssertEqual(lookedUp.record.name?.origin, .dns)
+        XCTAssertFalse(
+            lookedUp.record.name?.otherCandidates.isEmpty ?? true,
+            "es la única conexión cuya ficha enseña los otros candidatos de su dirección"
+        )
+    }
+
+    /// El nombre y la oferta de un flujo QUIC salen del mismo ClientHello, así que van los dos o
+    /// ninguno. Y la oferta es la que cabe dentro de QUIC: TLS 1.3 y nada por debajo
+    /// (RFC 9001 § 4.2), sin ECH — con ECH el nombre leído sería el de fuera y las comprobaciones
+    /// de auditoría lo tratarían como flujo sin nombre.
+    func testAQUICFlowCarriesAnOfferExactlyWhenItAnnouncesItsName() {
+        let flows = CaptureFixture.make(spec()).flows
+
+        for flow in flows where flow.quic != nil {
+            XCTAssertEqual(flow.sni == nil, flow.clientTLS == nil, "\(flow.key)")
+            guard let offer = flow.clientTLS else { continue }
+            XCTAssertEqual(offer.versions, .listed([.tls13]))
+            XCTAssertEqual(offer.applicationProtocols, ["h3"])
+            XCTAssertEqual(offer.omittedApplicationProtocols, 0)
+            XCTAssertFalse(offer.hasEncryptedClientHello)
+        }
+        // Fuera de QUIC nadie la lleva: un flujo TCP del fixture no dice qué ofreció su cliente,
+        // y darle una oferta sin haberlo decidido cambiaría lo que el informe dice de su TLS.
+        XCTAssertTrue(flows.filter { $0.quic == nil }.allSatisfy { $0.clientTLS == nil })
+    }
+
+    /// QUIC nunca se inspecciona (ADR 0006): que un flujo tenga nombre anunciado no lo cambia.
+    func testNoQUICFlowIsInspected() {
+        let quic = CaptureFixture.make(spec(bulkFlowCount: 240)).flows.filter { $0.quic != nil }
+        XCTAssertFalse(quic.isEmpty)
+        XCTAssertTrue(quic.allSatisfy { $0.tlsStatus == .encrypted })
     }
 
     /// Los siete sucesos que la pantalla de un paquete sabe traducir. `PacketEvent` vive en la app y
